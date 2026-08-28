@@ -30,16 +30,20 @@ Configuration is **hierarchical TOML**, merged from lowest to highest precedence
 The schema:
 
 ```toml
-# Ecosystem participation. Names are catalog ids (ADR 0003).
-[ecosystems]
-enable  = ["python.venv"]      # turn on a `default_on = false` artifact
-disable = ["terraform"]        # turn an ecosystem off entirely
+# Top-level keys must precede every table header: TOML assigns a bare key to the table
+# most recently opened, so `exclude` written below `[ecosystems]` becomes
+# `ecosystems.exclude` and is rejected by `deny_unknown_fields`.
 
 # Paths never scanned or deleted, relative to this file or absolute. Always wins.
 exclude = ["~/work/client-x/**", "**/fixtures/**"]
 
 # Extra paths to sweep that no marker anchors. Explicit user intent (ADR 0002).
 include = ["~/scratch/build-junk"]
+
+# Ecosystem participation. Names are catalog ids (ADR 0003).
+[ecosystems]
+enable  = ["python.venv"]      # turn on a `default_on = false` artifact
+disable = ["terraform"]        # turn an ecosystem off entirely
 
 # Keep policies. Default scope; overridable per ecosystem and per path.
 [keep]

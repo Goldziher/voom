@@ -1,7 +1,8 @@
 # 0008 — Watch Mode: Debounced `notify` Pruning
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-28
+- Updated: 2026-08-28 — moved from Proposed to Accepted once the quiet-period fixtures landed.
 
 ## Context
 
@@ -43,10 +44,17 @@ at that moment; a background loop has no such context.
   otherwise exhaust `inotify` watch limits on a large tree. If the OS limit is hit, voom
   reports the limit and the paths it could not watch rather than silently degrading.
 
-Status is **Proposed** rather than Accepted: the quiet-period heuristic is the load-bearing
-safety assumption and has not yet been validated against real build workloads across
-ecosystems. It moves to Accepted once fixtures for at least Rust, Node, and Gradle
-demonstrate no mid-build deletion.
+**Updated 2026-08-28 — now Accepted.** The exit condition set out when this ADR was Proposed
+has been met: `tests/watch.rs` drives the quiet-period tracker with the file-write patterns of
+a Rust, a Node and a Gradle build and asserts that none of their artifacts is ever seen as idle
+during ten simulated minutes of continuous compilation, and that each is released only after
+the full quiet period elapses. A fourth case pins the behaviour of a mid-build pause, which
+remains the known weakness below.
+
+The fixtures drive the tracker with simulated timestamps rather than sleeping against a real
+watcher. What is being validated is the rule — "does continuous activity keep a subtree from
+ever looking idle" — and a wall-clock version would test the debouncer's timing instead, slowly
+and flakily. The event loop's own wiring is exercised separately by running the binary.
 
 ## Consequences
 
@@ -63,10 +71,11 @@ Positive:
 
 Negative / risks:
 
-- **The quiet period is a heuristic, not a guarantee.** A build that pauses longer than the
-  window — a slow test suite between compile phases, a debugger sitting at a breakpoint —
-  can look idle. This is the central risk and the reason the ADR is Proposed; the default is
-  deliberately conservative and `min_age` compounds it.
+- **The quiet period is a heuristic, not a guarantee**, and remains the sharpest edge in watch
+  mode even now the ADR is Accepted — the fixtures show the rule holds for the build patterns
+  tested, not that no build can ever defeat it. A build that pauses longer than the window — a
+  slow test suite between compile phases, a debugger sitting at a breakpoint — can look idle.
+  The default is deliberately conservative and `min_age` compounds it.
 - `notify` behaves differently across platforms (FSEvents coalesces, `inotify` is per-directory
   and limited, Windows has its own semantics). Watch mode needs per-platform testing and will
   behave subtly differently on each.

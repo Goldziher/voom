@@ -34,7 +34,7 @@ Each entry declares:
 | `default_on` | Whether the entry participates without explicit opt-in |
 | `note` | Why an entry is off by default, surfaced in `voom catalog` |
 
-The initial catalog covers **23 ecosystems**:
+The initial catalog covers **24 ecosystems**:
 
 | id | Markers | Artifacts | Anchor |
 | --- | --- | --- | --- |
@@ -95,7 +95,7 @@ Negative / risks:
 
 - A compiled-in catalog means a new ecosystem requires a release. Acceptable: ADR 0004's
   configuration lets a user define a custom rule locally in the meantime.
-- Twenty-three entries is already more than one person can hold in their head; the invariant
+- Twenty-four entries is already more than one person can hold in their head; the invariant
   tests, not review attention, have to be what keeps it correct.
 - The `†` defaults will read as under-delivery to users who expect `build/` swept everywhere.
   The `--verbose` skip reason and `voom catalog` must make the opt-in obvious.

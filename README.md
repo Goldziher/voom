@@ -89,7 +89,7 @@ cd voom
 cargo install --path .
 ```
 
-Requires Rust 1.85+ (edition 2024).
+Requires Rust 1.88+ (edition 2024).
 
 </details>
 
@@ -175,16 +175,16 @@ Full reasoning in [ADR 0002](adrs/0002-marker-anchored-classification.md) and
 | Swift | `Package.swift` | `.build/` |
 | Xcode | `*.xcodeproj` | `DerivedData/` |
 | Maven | `pom.xml` | `target/` |
-| Gradle / Kotlin | `build.gradle{,.kts}` | `build/`, `.gradle/` |
+| Gradle / Kotlin | `build.gradle`, `build.gradle.kts` | `build/`, `.gradle/` |
 | .NET | `*.csproj`, `*.sln` | `bin/`, `obj/` |
 | CMake / C++ | `CMakeLists.txt` | `build/`, `cmake-build-*/`, `CMakeFiles/` |
 | Dart / Flutter | `pubspec.yaml` | `.dart_tool/`, `build/` |
 | Elixir | `mix.exs` | `_build/`, `.elixir_ls/` |
 | Ruby | `Gemfile`, `*.gemspec` | `.bundle/`, `vendor/bundle/`, `coverage/`, `pkg/`†, `tmp/`† |
 | PHP | `composer.json` | `.phpunit.cache/` |
-| Scala | `build.sbt` | `target/`, `project/target/`, `.bloop/`, `.metals/` |
+| Scala / sbt | `build.sbt` | `target/`, `project/target/`, `.bloop/`, `.metals/` |
 | Haskell | `*.cabal`, `stack.yaml` | `dist-newstyle/`, `.stack-work/` |
-| OCaml | `dune-project` | `_build/` |
+| OCaml / dune | `dune-project` | `_build/` |
 | Julia | `Project.toml` | `deps/build/`† |
 | R | `DESCRIPTION` | `*.Rcheck/`, `src/*.o`, `src/*.so` |
 | Nim | `*.nimble` | `nimcache/` |
@@ -203,12 +203,13 @@ voom merges configuration from built-in defaults, `~/.config/voom/config.toml`, 
 therefore protect its own quirks and still be swept correctly from `$HOME`.
 
 ```toml
+# Top-level keys come first: TOML would otherwise read them as part of the table above.
+exclude = ["~/work/client-x/**", "**/fixtures/**"]   # never scanned, always wins
+include = ["~/scratch/build-junk"]                   # swept without a marker — explicit intent
+
 [ecosystems]
 enable  = ["python.venv"]     # opt into a † artifact
 disable = ["terraform"]
-
-exclude = ["~/work/client-x/**", "**/fixtures/**"]   # never scanned, always wins
-include = ["~/scratch/build-junk"]                   # swept without a marker — explicit intent
 
 [keep]
 min_age  = "7d"      # never remove something modified more recently
