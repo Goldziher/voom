@@ -24,6 +24,7 @@ fn options(root: &Path) -> RunOptions {
         dry_run: false,
         jobs: Some(2),
         one_file_system: true,
+        caches: false,
         verbose: true,
         config: None,
         progress: false,

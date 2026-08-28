@@ -78,6 +78,7 @@ fn options(root: &Path) -> RunOptions {
         dry_run: true,
         jobs: Some(2),
         one_file_system: true,
+        caches: false,
         verbose: false,
         config: None,
         progress: false,

@@ -278,6 +278,8 @@ pub enum SkipReason {
         /// Why it is off by default, when the catalog says.
         note: Option<&'static str>,
     },
+    /// It is a machine-global tool cache or an installed toolchain (ADR 0001).
+    ToolCache,
     /// A configured `exclude` matched.
     Excluded {
         /// The pattern that matched.
@@ -305,6 +307,7 @@ impl SkipReason {
         match self {
             Self::NoMarker { .. } => "no_marker",
             Self::NotEnabled { .. } => "not_enabled",
+            Self::ToolCache => "tool_cache",
             Self::Excluded { .. } => "excluded",
             Self::KeptByPolicy { .. } => "kept_by_policy",
             Self::FilesystemBoundary => "filesystem_boundary",
@@ -327,6 +330,7 @@ impl fmt::Display for SkipReason {
                 Some(note) => write!(f, "not enabled — {note} Enable with `{spec}`"),
                 None => write!(f, "not enabled — enable with `{spec}`"),
             },
+            Self::ToolCache => write!(f, "a tool cache, not build output — `--caches` sweeps these too"),
             Self::Excluded { pattern } => write!(f, "excluded by `{pattern}`"),
             Self::KeptByPolicy { rule, detail } => write!(f, "kept by {rule} ({detail})"),
             Self::FilesystemBoundary => write!(f, "on a different filesystem than the scan root"),

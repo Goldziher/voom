@@ -16,6 +16,7 @@
 /// The version of the `voom` crate, as published.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod caches;
 pub mod catalog;
 pub mod classify;
 pub mod error;

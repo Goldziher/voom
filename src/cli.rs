@@ -174,6 +174,13 @@ pub struct PruneArgs {
     #[arg(long, value_name = "GLOB", help_heading = "Selection")]
     pub exclude: Vec<String>,
 
+    /// Also sweep machine-global tool caches and installed toolchains.
+    ///
+    /// Skipped by default: `~/.cargo/registry`, `~/.pyenv`, `~/google-cloud-sdk` and friends are
+    /// shared across every project or are installed programs, not this tree's build output.
+    #[arg(long, help_heading = "Selection")]
+    pub caches: bool,
+
     /// Use this configuration file instead of the discovered hierarchy.
     #[arg(long, value_name = "PATH", help_heading = "Selection")]
     pub config: Option<PathBuf>,
@@ -260,6 +267,7 @@ impl PruneArgs {
             dry_run: self.dry_run,
             jobs: self.jobs,
             one_file_system: self.one_file_system,
+            caches: self.caches,
             // JSON always carries skip detail — a machine consumer has no `--verbose` to reach
             // for and paying for the detail is cheaper than a second run.
             verbose: self.verbose || self.format == Format::Json,

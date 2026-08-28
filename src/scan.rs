@@ -16,6 +16,7 @@ use std::sync::mpsc;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::{WalkBuilder, WalkState};
 
+use crate::caches::CacheRoots;
 use crate::classify::{Classifier, Finding, SkipReason, Verdict, is_dependency_dir};
 use crate::error::{Error, Result};
 
@@ -100,6 +101,8 @@ pub struct ScanOptions {
     pub collect_skips: bool,
     /// Paths never scanned.
     pub exclude: ExcludeSet,
+    /// Tool caches and installed toolchains never descended into (ADR 0001).
+    pub caches: CacheRoots,
 }
 
 impl Default for ScanOptions {
@@ -109,6 +112,7 @@ impl Default for ScanOptions {
             one_file_system: true,
             collect_skips: false,
             exclude: ExcludeSet::default(),
+            caches: CacheRoots::default(),
         }
     }
 }
@@ -275,6 +279,14 @@ impl Visitor<'_> {
             return WalkState::Skip;
         }
 
+        // After `exclude`, which ADR 0004 makes absolute, and before anything that could
+        // classify: an installed toolchain is shaped exactly like a project, so the classifier
+        // would prove it correctly and take it (ADR 0001).
+        if is_dir && self.options.caches.contains(path) {
+            self.note_skip(sender, path, SkipReason::ToolCache);
+            return WalkState::Skip;
+        }
+
         if is_dir && is_pruned(entry.file_name()) {
             // Two catalog entries declare build output *inside* a dependency directory
             // (Ruby's `vendor/bundle/`, Julia's `deps/build/`). Check those exact paths
@@ -389,6 +401,53 @@ mod tests {
             collect_skips: true,
             ..ScanOptions::default()
         }
+    }
+
+    /// An installed toolchain is shaped exactly like a project — `~/.cache/node/corepack` really
+    /// does hold a `package.json` beside a `dist/` — so the classifier proves it and would take
+    /// it. Only its location distinguishes an installed program from a built one.
+    #[test]
+    fn should_never_descend_into_a_tool_cache() {
+        let fixture = tree(&[
+            ".npm/_cacache/pkg/package.json",
+            ".npm/_cacache/pkg/dist/bundle.js",
+            "project/package.json",
+            "project/dist/bundle.js",
+        ]);
+        let options = ScanOptions {
+            caches: CacheRoots::under(fixture.path(), fixture.path()),
+            ..verbose()
+        };
+
+        let scan = run(fixture.path(), &options);
+
+        assert_eq!(found(&scan, fixture.path()), vec!["project/dist"]);
+        assert!(
+            scan.skips.iter().any(|skip| skip.reason == SkipReason::ToolCache),
+            "the skip is reported, not silent"
+        );
+    }
+
+    /// The same tree with `--caches`, which is the whole point of the flag.
+    #[test]
+    fn should_descend_into_a_tool_cache_when_asked_to() {
+        let fixture = tree(&[
+            ".npm/_cacache/pkg/package.json",
+            ".npm/_cacache/pkg/dist/bundle.js",
+            "project/package.json",
+            "project/dist/bundle.js",
+        ]);
+        let options = ScanOptions {
+            caches: CacheRoots::for_root(fixture.path(), true),
+            ..verbose()
+        };
+
+        let scan = run(fixture.path(), &options);
+
+        assert_eq!(
+            found(&scan, fixture.path()),
+            vec![".npm/_cacache/pkg/dist", "project/dist"]
+        );
     }
 
     /// The regression test the walker configuration exists for.

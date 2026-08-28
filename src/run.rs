@@ -16,6 +16,7 @@ use std::time::{Duration, Instant, SystemTime};
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use rayon::prelude::*;
 
+use crate::caches::CacheRoots;
 use crate::classify::{ArtifactId, Classifier, Finding, Selection, SkipReason};
 use crate::config::resolve::Flags;
 use crate::config::{Resolved, Resolver, discover};
@@ -40,6 +41,9 @@ pub struct RunOptions {
     pub jobs: Option<usize>,
     /// Stay on the scan root's filesystem.
     pub one_file_system: bool,
+    /// Sweep machine-global tool caches and installed toolchains too, which are skipped by
+    /// default (ADR 0001).
+    pub caches: bool,
     /// Record why candidates were passed over.
     pub verbose: bool,
     /// `--config`, which replaces the discovered hierarchy.
@@ -175,6 +179,7 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
         one_file_system: options.one_file_system,
         collect_skips: options.verbose,
         exclude: ExcludeSet::new(at_root.exclude.clone())?,
+        caches: CacheRoots::for_root(root, options.caches),
     };
     // Progress goes to stderr so it never contaminates piped stdout, and only when stderr is a
     // terminal — a redirected run gets nothing.
@@ -285,6 +290,7 @@ mod tests_support {
             dry_run: false,
             jobs: Some(2),
             one_file_system: true,
+            caches: false,
             verbose: true,
             config: None,
             flags: Flags::default(),
