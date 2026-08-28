@@ -52,21 +52,75 @@ pub fn measure(path: &Path) -> u64 {
         return file_size(&metadata);
     }
 
-    let mut total = file_size(&metadata);
-    let mut stack = vec![path.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-        for entry in entries.flatten() {
-            let Ok(metadata) = entry.metadata_no_follow() else {
-                continue;
-            };
-            total += file_size(&metadata);
-            if metadata.is_dir() {
-                stack.push(entry.path());
-            }
-        }
+    file_size(&metadata) + measure_dir(path, FANOUT_DEPTH)
+}
+
+/// How many levels of a tree are divided across `rayon` before the walk goes serial.
+///
+/// It bounds recursion depth, and that is the reason it exists rather than a tuning knob.
+/// Recursing per directory reads well and overflows the stack: a 400-level chain — still inside
+/// `PATH_MAX`, so an ordinary filesystem holds one — aborted the test suite on a `rayon`
+/// worker's stack before this bound was added. Ten frames cannot.
+///
+/// Ten is also more than enough to divide the work. Branching even twice per level is a
+/// thousand independent tasks, and a build tree reaches its wide directories (`target/debug/
+/// deps/`, `build/`) within three or four.
+const FANOUT_DEPTH: u32 = 10;
+
+/// The recursive half of [`measure`], dividing each level across `rayon` until the bound.
+///
+/// Fanning out *within* one artifact, rather than only across artifacts, is what keeps sizing
+/// off the critical path. A sweep's artifacts are wildly uneven — one `target/` was 79 GB of a
+/// 127 GB total on the tree this was measured against — so `measure_all`'s per-artifact
+/// parallelism left the largest tree to a single thread while every other core idled. Dividing
+/// inside it took a `~/workspace` dry run from 6.88 s to 4.63 s (hyperfine, 8 runs).
+fn measure_dir(dir: &Path, fanout: u32) -> u64 {
+    let (total, subdirectories) = list(dir);
+    if fanout == 0 {
+        return total + subdirectories.iter().map(|path| measure_serially(path)).sum::<u64>();
     }
     total
+        + match subdirectories.as_slice() {
+            [] => 0,
+            // Nothing to divide, and the frame still counts against the bound — a deep, narrow
+            // chain is exactly the shape that would otherwise recurse without limit.
+            [only] => measure_dir(only, fanout - 1),
+            many => many.par_iter().map(|path| measure_dir(path, fanout - 1)).sum(),
+        }
+}
+
+/// Everything below one directory, on one thread, with an explicit stack and no depth bound.
+fn measure_serially(root: &Path) -> u64 {
+    let mut total = 0;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let (bytes, subdirectories) = list(&dir);
+        total += bytes;
+        stack.extend(subdirectories);
+    }
+    total
+}
+
+/// One directory's own bytes, and the subdirectories below it.
+///
+/// An unreadable directory contributes nothing rather than failing the run: a size is an
+/// estimate in a report, not a precondition for anything.
+fn list(dir: &Path) -> (u64, Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return (0, Vec::new());
+    };
+    let mut total = 0;
+    let mut subdirectories = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(metadata) = entry.metadata_no_follow() else {
+            continue;
+        };
+        total += file_size(&metadata);
+        if metadata.is_dir() {
+            subdirectories.push(entry.path());
+        }
+    }
+    (total, subdirectories)
 }
 
 /// `DirEntry::metadata` follows symlinks on some platforms; this never does.
@@ -95,6 +149,29 @@ mod tests {
     fn should_measure_a_file() {
         let fixture = tree(&["file.txt"]);
         assert!(measure(&fixture.path().join("file.txt")) > 0);
+    }
+
+    /// The recursion runs on a `rayon` worker's stack rather than the main one, so a long chain
+    /// has to return a number rather than overflow it.
+    ///
+    /// 400 levels is close to the real ceiling, and the ceiling is not the stack: single-letter
+    /// components under a `TempDir` prefix put a deeper chain past `PATH_MAX`, which fails at
+    /// `create_dir_all` with `File name too long`. The operating system bounds the depth far
+    /// below anything a few hundred bytes of stack frame could exhaust.
+    #[test]
+    fn should_measure_a_chain_deeper_than_any_build_tool_produces() {
+        let fixture = tempfile::TempDir::new().expect("a temp dir");
+        let mut deep = fixture.path().to_path_buf();
+        for _ in 0..400 {
+            deep.push("d");
+        }
+        std::fs::create_dir_all(&deep).expect("a deep chain");
+        std::fs::write(deep.join("leaf.o"), b"output").expect("a leaf file");
+
+        assert!(
+            measure(fixture.path()) > 0,
+            "a 400-deep chain is measured rather than overflowing the stack"
+        );
     }
 
     #[test]
