@@ -37,10 +37,19 @@ instead.
   `--force` never relaxes a safety rail. Every part of it takes a path that has already passed
   all six, and there is no way to obtain one otherwise. It never follows a symlink, and never
   touches anything outside the artifact — **including the artifact's own parent**, so an
-  artifact held by a read-only parent is reported rather than forced. Watch mode never forces.
+  artifact held by a read-only parent is reported rather than forced. It also never widens a
+  hard-linked file: a mode bit belongs to the inode, so relaxing one would change data voom is
+  not deleting, possibly outside the scan root entirely. Watch mode never forces.
 
 ### Fixed
 
+- **A symlinked artifact is named in the report instead of counted.** A `target/` that is a
+  symlink was turned into a skip and never entered the pipeline, so it showed up only inside the
+  anonymous "candidates passed over" number unless `-v` was given. A link standing exactly where
+  an artifact belongs is the shape of a mistake worth looking at. It is now a finding the same
+  safety rail refuses by name — `refused 0 B rust target — is a symlink` — which also makes the
+  catalog's claim about Bazel's `bazel-*` convenience links true. Nothing about the rail changed
+  and it cannot become a deletion.
 - **The `uvx` channel of both git hooks now runs.** `voom` was taken on PyPI, so the
   distribution is `voom-cli` while the command it installs is `voom` — and `uvx` looks for a
   command matching the *package* name, finds none, and refuses. Both published hooks pinned
