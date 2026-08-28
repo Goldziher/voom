@@ -270,3 +270,75 @@ fn no_source_file_exceeds_the_module_size_cap() {
         over.join("\n  ")
     );
 }
+
+/// Every text file in the repository that claims a number of supported ecosystems.
+///
+/// Returns `(path, claimed)` for each occurrence of the phrase the project's one-line
+/// description uses everywhere it appears: `across`, a count, then the words below.
+fn ecosystem_count_claims() -> Vec<(std::path::PathBuf, String)> {
+    const PHRASE: &str = " language ecosystems";
+    const SKIP: [&str; 4] = ["target", ".git", "node_modules", "__pycache__"];
+
+    fn walk(dir: &std::path::Path, found: &mut Vec<(std::path::PathBuf, String)>) {
+        let Ok(entries) = fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            if SKIP.iter().any(|skip| name == *skip) {
+                continue;
+            }
+            if path.is_dir() {
+                walk(&path, found);
+                continue;
+            }
+            // Binary files (the banner PNGs, the compiled Python) simply do not read as UTF-8.
+            let Ok(text) = fs::read_to_string(&path) else { continue };
+            for line in text.lines() {
+                for (index, _) in line.match_indices(PHRASE) {
+                    let before = &line[..index];
+                    if let Some(claim) = before.rsplit(' ').next()
+                        && before.trim_end().ends_with(&format!("across {claim}"))
+                    {
+                        found.push((path.clone(), claim.to_owned()));
+                    }
+                }
+            }
+        }
+    }
+
+    let mut found = Vec::new();
+    walk(std::path::Path::new("."), &mut found);
+    found
+}
+
+/// The ecosystem count in the project's description, wherever it appears.
+///
+/// The number is written out by hand in ten places — the crate, npm and `PyPI` manifests, three
+/// READMEs, the `--help` text, the generated Homebrew formula, and the two generated agent
+/// files — and it went stale the moment ecosystems 21 through 24 landed. A count nobody checks
+/// is a claim that drifts, and this one is on the first line a reader sees on four registries.
+///
+/// Discovery is by walking the tree rather than by a fixed list, so a surface added later is
+/// covered without anyone remembering to add it here.
+#[test]
+fn every_stated_ecosystem_count_matches_the_catalog() {
+    let claims = ecosystem_count_claims();
+    assert!(
+        claims.len() >= 8,
+        "the description is stated in many places; the walk found only {} — is the phrase right?",
+        claims.len()
+    );
+
+    let expected = CATALOG.len().to_string();
+    let stale: Vec<String> = claims
+        .iter()
+        .filter(|(_, claimed)| *claimed != expected)
+        .map(|(path, claimed)| format!("{} says {claimed}", path.display()))
+        .collect();
+
+    assert!(
+        stale.is_empty(),
+        "the catalog ships {expected} ecosystems, and these disagree:\n  {}",
+        stale.join("\n  ")
+    );
+}

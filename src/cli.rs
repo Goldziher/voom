@@ -14,7 +14,7 @@ use crate::report::{RunResult, human, json};
 use crate::run::RunOptions;
 use crate::watch::WatchOptions;
 
-/// Fast, safe, parallel build-artifact pruning across 20+ language ecosystems.
+/// Fast, safe, parallel build-artifact pruning across 24 language ecosystems.
 ///
 /// voom deletes by default. `--dry-run` previews. There is no confirmation prompt — the safety
 /// comes from marker anchoring and the rails, not from a question you would learn to click
