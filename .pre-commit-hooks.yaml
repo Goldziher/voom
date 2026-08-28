@@ -1,0 +1,28 @@
+# voom exposes two hooks. `voom-report` is the one to adopt: it reports and fails the
+# commit but deletes nothing. `voom-prune` actually removes artifacts and is opt-in.
+# See adrs/0009-git-hook-integration.md.
+#
+# voom operates on a tree, not a staged file list, so both hooks set
+# pass_filenames: false and always_run: true.
+
+- id: voom-report
+  name: voom (report)
+  description: Report reclaimable build artifacts without deleting anything
+  entry: voom
+  args: ["--dry-run", "--report", "--exit-code", "."]
+  language: rust
+  pass_filenames: false
+  always_run: true
+  require_serial: true
+  minimum_pre_commit_version: "2.9.0"
+
+- id: voom-prune
+  name: voom (prune)
+  description: Remove build artifacts from the repository — deletes files, opt in deliberately
+  entry: voom
+  args: ["."]
+  language: rust
+  pass_filenames: false
+  always_run: true
+  require_serial: true
+  minimum_pre_commit_version: "2.9.0"

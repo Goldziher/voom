@@ -1,0 +1,127 @@
+[defaults]
+line_length = 120
+line_ending = "lf"
+final_newline = true
+trim_trailing_whitespace = true
+
+[discovery]
+exclude = [
+  "**/*.lock",
+  "**/Cargo.lock",
+  "**/package-lock.json",
+  "**/pnpm-lock.yaml",
+  "**/uv.lock",
+  "dist/**",
+  "node_modules/**",
+  "target/**",
+  "tests/fixtures/**",
+]
+
+[lint.markdown.rumdl]
+disable = ["MD013", "MD024", "MD033", "MD036", "MD041"]
+
+[fmt.markdown.rumdl]
+disable = ["MD013", "MD024", "MD033", "MD036", "MD041"]
+
+[lint.uncomment]
+enabled = true
+remove_todos = false
+remove_fixme = false
+remove_docs = false
+use_default_ignores = true
+preserve_patterns = [
+  "SAFETY",
+  "HACK",
+  "WORKAROUND",
+  "NOTE",
+  "Copyright",
+  "Licensed",
+  "License",
+  "SPDX",
+  "Apache",
+  "MIT",
+  "WITHOUT WARRANTIES",
+  "limitations under the License",
+  "copyright",
+  "licensed",
+  "license",
+  "apache",
+  "you may not use this file except in compliance",
+  "You may obtain a copy of the License",
+  "you may obtain a copy of the license",
+  "http://www.apache.org/licenses/LICENSE-2.0",
+  "http://www.apache.org/licenses/license-2.0",
+  "Unless required by applicable law",
+  "unless required by applicable law",
+  "distributed under the License",
+  "distributed under the license",
+  "AS IS",
+  "as is",
+  "without warranties",
+  "specific language governing permissions",
+  "limitations under the license",
+]
+
+[lint.typos]
+# `wrok` appears in ADR 0006 as a deliberate example of a mistyped path.
+extend_words = { ser = "ser", certifi = "certifi", voom = "voom", Voom = "Voom", wrok = "wrok" }
+extend_exclude = ["tests/fixtures/**"]
+
+[per-file-ignores]
+# Fixture trees are deliberate fakes — real-looking marker files and artifact
+# directories for the catalog tests. They are data, not source.
+"tests/fixtures/**" = ["comment", "doc-comment"]
+"**/generated/**" = ["comment", "doc-comment"]
+"**/*.generated.*" = ["comment", "doc-comment"]
+
+[tools.shfmt]
+enabled = true
+
+[tools.shellcheck]
+enabled = true
+
+[hooks]
+stages = ["pre-commit"]
+
+[hooks.builtin]
+lint = { exclude = [
+  "**/*.lock",
+  "**/Cargo.lock",
+  "**/package-lock.json",
+  "**/pnpm-lock.yaml",
+  "**/uv.lock",
+  "dist/**",
+  "node_modules/**",
+  "target/**",
+  "tests/fixtures/**",
+] }
+fmt = { exclude = [
+  "**/*.lock",
+  "**/Cargo.lock",
+  "**/package-lock.json",
+  "**/pnpm-lock.yaml",
+  "**/uv.lock",
+  "dist/**",
+  "node_modules/**",
+  "target/**",
+  "tests/fixtures/**",
+] }
+commit = { stages = ["commit-msg"] }
+file_safety = { exclude = [
+  "**/*.lock",
+  "**/Cargo.lock",
+  "**/package-lock.json",
+  "**/pnpm-lock.yaml",
+  "**/uv.lock",
+  "dist/**",
+  "node_modules/**",
+  "target/**",
+  "tests/fixtures/**",
+] }
+cargo = true
+
+[[hooks.sources]]
+id = "ai-rulez"
+git = "https://github.com/Goldziher/ai-rulez.git"
+revision = "v4.9.3"
+hooks = ["ai-rulez-validate"]

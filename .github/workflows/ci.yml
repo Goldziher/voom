@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Check formatting
+        run: cargo fmt --check
+      - uses: Swatinem/rust-cache@v2
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run tests
+        run: cargo test --all-targets
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release
+        run: cargo build --release
+
+  deny:
+    name: Licences and advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  scripts:
+    name: Shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: shellcheck
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          shellcheck scripts/*.sh
+
+  # The release workflow gates on these five agreeing. Catching drift on the PR that
+  # introduces it is cheaper than catching it at tag time. See adrs/0010.
+  versions:
+    name: Version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Compare version surfaces
+        run: |
+          set -euo pipefail
+          cargo_v="$(grep -E '^version = "' Cargo.toml | head -1 | cut -d'"' -f2)"
+          npm_v="$(jq -r '.version' npm-package/package.json)"
+          pypi_v="$(grep -E '^version = "' pip-package/pyproject.toml | head -1 | cut -d'"' -f2)"
+          init_v="$(grep -E '^__version__ = "' pip-package/voom/__init__.py | cut -d'"' -f2)"
+          echo "Cargo=$cargo_v npm=$npm_v pypi=$pypi_v __init__=$init_v"
+          fail=0
+          [[ "$npm_v"  == "$cargo_v" ]] || { echo "::error::npm-package/package.json=$npm_v != $cargo_v"; fail=1; }
+          [[ "$init_v" == "$pypi_v"  ]] || { echo "::error::__init__.py=$init_v != pyproject=$pypi_v"; fail=1; }
+          stale="$(grep -oE '(@goldziher/voom@|voom-cli==)[0-9][^ "]*' poly-hooks.toml \
+                   | sed -E 's/.*(@|==)//' | sort -u | grep -v "^${cargo_v}$" || true)"
+          [[ -z "$stale" ]] || { echo "::error::poly-hooks.toml pins stale version(s): $stale"; fail=1; }
+          exit $fail

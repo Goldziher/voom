@@ -1,0 +1,8 @@
+# The published package is defined by "files" in package.json (install.js + README.md).
+# The binary is downloaded by postinstall into bin/ and must never be committed or packed —
+# it is ~5 MB per platform and would be wrong for four out of five of them.
+bin/
+node_modules/
+*.tgz
+*.tar.gz
+*.zip

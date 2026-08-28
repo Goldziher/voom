@@ -1,0 +1,36 @@
+version = "4.0"
+name = "voom"
+description = "Fast, safe, parallel build-artifact pruning across 20+ language ecosystems — a single pure-Rust binary that recursively finds and removes build output anywhere in a tree, proving every candidate against an ecosystem marker file before it deletes."
+gitignore = true
+
+presets = ["claude", "codex"]
+
+builtins = ["rust", "security", "git-workflow", "code-quality", "testing", "documentation", "default-commands"]
+
+[[mcp_servers]]
+name = "poly"
+description = "Lint, format, and cache over MCP — the poly binary's stdio server."
+command = "poly"
+args = ["mcp"]
+
+[[marketplaces]]
+name = "basemind"
+source = "Goldziher/basemind"
+type = "github"
+
+[[marketplaces]]
+name = "poly"
+source = "Goldziher/poly"
+type = "github"
+
+[[plugins]]
+marketplace = "basemind"
+name = "basemind"
+scope = "project"
+enabled = true
+
+[[plugins]]
+marketplace = "poly"
+name = "poly"
+scope = "project"
+enabled = true

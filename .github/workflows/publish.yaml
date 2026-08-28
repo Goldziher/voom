@@ -1,0 +1,432 @@
+# The FILENAME of this workflow is load-bearing. OIDC trusted publishing on crates.io, npm,
+# and PyPI is bound to `publish.yaml` by name. Renaming this file — including "normalizing"
+# the extension to .yml — silently breaks publishing on all three registries at once.
+# See adrs/0010-distribution-and-naming.md.
+name: Publish Packages
+
+on:
+  push:
+    tags: ["v[0-9]+.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g., v0.1.0)"
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY: voom
+
+jobs:
+  meta:
+    name: Resolve release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      python_version: ${{ steps.resolve.outputs.python_version }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+      crates_exists: ${{ steps.probe.outputs.crates_exists }}
+      npm_exists: ${{ steps.probe.outputs.npm_exists }}
+      pypi_exists: ${{ steps.probe.outputs.pypi_exists }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve tag and versions
+        id: resolve
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          # PyPI normalizes 0.2.0-rc.1 to 0.2.0rc1 (PEP 440). The inverse lives in
+          # pip-package/voom/downloader.py, which maps the PyPI version back to the
+          # git tag it must download. Only -rc.N pre-releases are supported.
+          python_version="${version/-rc./rc}"
+          prerelease=false
+          case "$tag" in *-rc.*|*-beta*|*-alpha*) prerelease=true ;; esac
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "python_version=$python_version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+      # The five version surfaces must agree. There is a bump script
+      # (scripts/bump-version.sh) that rewrites all of them; this gate catches the
+      # case where someone edited one by hand. See adrs/0010.
+      - name: Verify version consistency across all surfaces
+        run: |
+          set -euo pipefail
+          target="${{ steps.resolve.outputs.version }}"
+          target_py="${{ steps.resolve.outputs.python_version }}"
+          fail=0
+
+          check() {
+            local label="$1" actual="$2" expected="$3"
+            if [[ "$actual" != "$expected" ]]; then
+              echo "::error::$label is '$actual', expected '$expected'"
+              fail=1
+            else
+              echo "ok: $label = $actual"
+            fi
+          }
+
+          check "Cargo.toml" \
+            "$(grep -E '^version = "' Cargo.toml | head -1 | cut -d'"' -f2)" "$target"
+          check "npm-package/package.json" \
+            "$(jq -r '.version' npm-package/package.json)" "$target"
+          check "pip-package/pyproject.toml" \
+            "$(grep -E '^version = "' pip-package/pyproject.toml | head -1 | cut -d'"' -f2)" "$target_py"
+          check "pip-package/voom/__init__.py" \
+            "$(grep -E '^__version__ = "' pip-package/voom/__init__.py | cut -d'"' -f2)" "$target_py"
+
+          # poly-hooks.toml pins the version into every channel string (ADR 0009).
+          # A missed bump here ships hooks that install the previous release.
+          stale="$(grep -oE '(@goldziher/voom@|voom-cli==)[0-9][^ "]*' poly-hooks.toml \
+                   | sed -E 's/.*(@|==)//' | sort -u | grep -v "^${target}$" || true)"
+          if [[ -n "$stale" ]]; then
+            echo "::error::poly-hooks.toml pins stale version(s): $stale (expected $target)"
+            fail=1
+          else
+            echo "ok: poly-hooks.toml pins $target"
+          fi
+
+          exit $fail
+
+      # Probing each registry makes the whole workflow safely re-runnable: a failure in
+      # one channel can be retried without the already-succeeded channels erroring out.
+      - name: Probe registries for existing releases
+        id: probe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          version="${{ steps.resolve.outputs.version }}"
+          python_version="${{ steps.resolve.outputs.python_version }}"
+
+          crates_exists=false
+          curl -fsS -A "voom-release-ci" \
+            "https://crates.io/api/v1/crates/voom/${version}" >/dev/null 2>&1 && crates_exists=true
+
+          npm_exists=false
+          npm view "@goldziher/voom@${version}" version >/dev/null 2>&1 && npm_exists=true
+
+          pypi_exists=false
+          curl -fsS "https://pypi.org/pypi/voom-cli/${python_version}/json" >/dev/null 2>&1 && pypi_exists=true
+
+          {
+            echo "crates_exists=$crates_exists"
+            echo "npm_exists=$npm_exists"
+            echo "pypi_exists=$pypi_exists"
+          } >> "$GITHUB_OUTPUT"
+
+  create_release:
+    name: Create draft release
+    needs: meta
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      # Created as a draft and only published by finalize_release once every archive
+      # verifies, so a partial release is never visible to users.
+      - name: Create draft release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ needs.meta.outputs.tag }}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $tag already exists"
+            exit 0
+          fi
+          prerelease=""
+          [[ "${{ needs.meta.outputs.prerelease }}" == "true" ]] && prerelease="--prerelease"
+          gh release create "$tag" --title "$tag" --notes "Release $tag" \
+            --verify-tag --draft $prerelease --repo "$GITHUB_REPOSITORY"
+
+  build-macos:
+    name: Build ${{ matrix.triple }}
+    needs: [meta, create_release]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - triple: aarch64-apple-darwin
+            runner: macos-latest
+          - triple: x86_64-apple-darwin
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.triple }}
+      - name: Build
+        run: cargo build --release --bin voom --target "${{ matrix.triple }}"
+      - name: Package
+        run: tar czf "voom-${{ matrix.triple }}.tar.gz" -C "target/${{ matrix.triple }}/release" voom
+      - name: Upload
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.meta.outputs.tag }}" \
+            "voom-${{ matrix.triple }}.tar.gz" --clobber --repo "$GITHUB_REPOSITORY"
+
+  build-windows:
+    name: Build x86_64-pc-windows-gnu
+    needs: [meta, create_release]
+    runs-on: ubuntu-latest
+    env:
+      TRIPLE: x86_64-pc-windows-gnu
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-pc-windows-gnu
+      # Cross-compiled with mingw rather than built on a Windows runner. Windows-specific
+      # regressions are therefore only caught by the binstall smoke test.
+      - name: Install mingw toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 zip
+      - name: Build
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
+          CC_x86_64_pc_windows_gnu: x86_64-w64-mingw32-gcc
+          AR_x86_64_pc_windows_gnu: x86_64-w64-mingw32-ar
+        run: cargo build --release --bin voom --target x86_64-pc-windows-gnu
+      - name: Package
+        run: zip -j "voom-${TRIPLE}.zip" "target/${TRIPLE}/release/voom.exe"
+      - name: Upload
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.meta.outputs.tag }}" \
+            "voom-${TRIPLE}.zip" --clobber --repo "$GITHUB_REPOSITORY"
+
+  build-linux:
+    name: Build ${{ matrix.triple }}
+    needs: [meta, create_release]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - triple: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            image: quay.io/pypa/manylinux_2_28_x86_64
+          - triple: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            image: quay.io/pypa/manylinux_2_28_aarch64
+    runs-on: ${{ matrix.runner }}
+    # manylinux gives a low glibc floor so the binaries run on older distributions.
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
+      # The container runs as root while the workspace is owned by the runner uid,
+      # which git rejects as "dubious ownership".
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "${GITHUB_WORKSPACE:-/__w/voom/voom}"
+      # rustup must land in absolute paths: later steps run with a different $HOME
+      # inside the container and would not find a home-relative toolchain.
+      - name: Install Rust
+        run: |
+          set -euo pipefail
+          export CARGO_HOME=/opt/cargo RUSTUP_HOME=/opt/rustup
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "CARGO_HOME=/opt/cargo" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=/opt/rustup" >> "$GITHUB_ENV"
+          echo "/opt/cargo/bin" >> "$GITHUB_PATH"
+      - name: Install gh
+        run: |
+          set -euo pipefail
+          dnf install -y dnf-plugins-core
+          dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+          dnf install -y gh
+      - name: Build
+        run: cargo build --release --bin voom --target "${{ matrix.triple }}"
+      - name: Package
+        run: tar czf "voom-${{ matrix.triple }}.tar.gz" -C "target/${{ matrix.triple }}/release" voom
+      - name: Upload
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.meta.outputs.tag }}" \
+            "voom-${{ matrix.triple }}.tar.gz" --clobber --repo "$GITHUB_REPOSITORY"
+
+  checksums:
+    name: Publish checksums
+    needs: [meta, build-macos, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    # No checkout here, so every gh call must name --repo explicitly.
+    steps:
+      - name: Download archives and emit checksums
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ needs.meta.outputs.tag }}"
+          version="${{ needs.meta.outputs.version }}"
+          expected=(
+            "voom-aarch64-apple-darwin.tar.gz"
+            "voom-x86_64-apple-darwin.tar.gz"
+            "voom-x86_64-pc-windows-gnu.zip"
+            "voom-x86_64-unknown-linux-gnu.tar.gz"
+            "voom-aarch64-unknown-linux-gnu.tar.gz"
+          )
+          for asset in "${expected[@]}"; do
+            gh release download "$tag" -p "$asset" --repo "$GITHUB_REPOSITORY" --clobber
+            [[ -f "$asset" ]] || { echo "::error::missing $asset"; exit 1; }
+          done
+          sha256sum "${expected[@]}" | sort > "voom_${version}_checksums.txt"
+          cat "voom_${version}_checksums.txt"
+          gh release upload "$tag" "voom_${version}_checksums.txt" \
+            --clobber --repo "$GITHUB_REPOSITORY"
+
+  finalize_release:
+    name: Publish release
+    needs: [meta, checksums]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify assets then undraft
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ needs.meta.outputs.tag }}"
+          version="${{ needs.meta.outputs.version }}"
+          assets="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          for asset in \
+            "voom-aarch64-apple-darwin.tar.gz" \
+            "voom-x86_64-apple-darwin.tar.gz" \
+            "voom-x86_64-pc-windows-gnu.zip" \
+            "voom-x86_64-unknown-linux-gnu.tar.gz" \
+            "voom-aarch64-unknown-linux-gnu.tar.gz" \
+            "voom_${version}_checksums.txt"; do
+            grep -qx "$asset" <<< "$assets" || { echo "::error::missing $asset — leaving draft"; exit 1; }
+          done
+          gh release edit "$tag" --draft=false --repo "$GITHUB_REPOSITORY"
+
+  publish_crates:
+    name: Publish to crates.io
+    needs: meta
+    if: needs.meta.outputs.crates_exists != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: crates_auth
+      - name: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates_auth.outputs.token }}
+        run: |
+          set -uo pipefail
+          if cargo publish 2>cargo-publish.err; then exit 0; fi
+          if grep -Eq "crate .* already exists|already uploaded" cargo-publish.err; then
+            echo "already published"
+            exit 0
+          fi
+          cat cargo-publish.err >&2
+          exit 1
+
+  publish_npm:
+    name: Publish to npm
+    needs: [meta, finalize_release]
+    if: needs.meta.outputs.npm_exists != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      # NOTE: OIDC trusted publishing needs npm >= 11.5.1. Node 22 ships npm 10, and
+      # NOTE: npm@latest is npm 12, which requires Node >= 22.22 (EBADENGINE). Pin npm 11.
+      - name: Pin npm 11
+        run: npm install -g npm@11
+      - name: npm publish
+        env:
+          NODE_AUTH_TOKEN: ""
+        run: |
+          set -euo pipefail
+          unset NODE_AUTH_TOKEN
+          cd npm-package
+          version="${{ needs.meta.outputs.version }}"
+          if [[ "$version" == *"-rc."* ]]; then npm_tag="beta"; else npm_tag="latest"; fi
+          npm publish --provenance --access public --tag "$npm_tag"
+
+  publish_pypi:
+    name: Publish to PyPI
+    needs: [meta, finalize_release]
+    if: needs.meta.outputs.pypi_exists != 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Build distributions
+        run: |
+          python -m pip install --upgrade build
+          cd pip-package && python -m build
+      # Uses OIDC trusted publishing when configured. PYPI_API_TOKEN is a fallback
+      # so the first release is not blocked on the trusted publisher existing.
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: pip-package/dist
+          skip-existing: true
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+  publish_homebrew:
+    name: Update Homebrew formula
+    needs: [meta, finalize_release]
+    if: needs.meta.outputs.prerelease != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
+      - name: Generate formula and push to tap
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TOKEN: ${{ secrets.HOMEBREW_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ needs.meta.outputs.tag }}"
+          version="${{ needs.meta.outputs.version }}"
+          gh release download "$tag" -p "voom_${version}_checksums.txt" -O checksums.txt \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          ./scripts/update-homebrew-formula.sh "$version" checksums.txt > voom.rb
+          git clone --depth 1 \
+            "https://x-access-token:${HOMEBREW_TOKEN}@github.com/Goldziher/homebrew-tap.git" tap
+          cp voom.rb tap/Formula/voom.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/voom.rb
+          git diff --cached --quiet || (git commit -m "voom ${version}" && git push)

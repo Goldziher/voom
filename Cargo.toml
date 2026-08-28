@@ -1,0 +1,94 @@
+[package]
+name = "voom"
+version = "0.1.0"
+authors = ["Na'aman Hirschfeld <nhirschfeld@gmail.com>"]
+description = "Fast, safe, parallel build-artifact pruning across 20+ language ecosystems"
+edition = "2024"
+rust-version = "1.85"
+keywords = ["cleanup", "build", "artifacts", "disk-space", "prune"]
+categories = ["command-line-utilities", "development-tools", "filesystem"]
+license = "MIT"
+repository = "https://github.com/Goldziher/voom"
+homepage = "https://github.com/Goldziher/voom"
+documentation = "https://github.com/Goldziher/voom#readme"
+readme = "README.md"
+exclude = [
+  ".ai-rulez/**",
+  ".github/**",
+  "adrs/**",
+  "npm-package/**",
+  "pip-package/**",
+  "scripts/**",
+  "tests/fixtures/**",
+]
+
+# ~keep cargo-binstall metadata: fetch prebuilt archives from GitHub releases.
+# ~keep archive-suffix resolves to .tar.gz on unix and .zip on windows, matching our release assets.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/voom-{ target }{ archive-suffix }"
+bin-dir = "{ bin }{ binary-ext }"
+
+# SCAFFOLDING: src/ is still a stub, so cargo-machete correctly reports every
+# dependency below as unused. This block silences it until the modules in
+# .ai-rulez/context/architecture.md land. DELETE IT with the first real
+# implementation PR — leaving it in place would hide genuinely unused deps.
+[package.metadata.cargo-machete]
+ignored = [
+  "anstream",
+  "anyhow",
+  "clap",
+  "dirs",
+  "globset",
+  "humansize",
+  "ignore",
+  "indicatif",
+  "notify",
+  "notify-debouncer-full",
+  "owo-colors",
+  "rayon",
+  "serde",
+  "serde_json",
+  "thiserror",
+  "toml",
+]
+
+[lib]
+name = "voom"
+path = "src/lib.rs"
+
+[[bin]]
+name = "voom"
+path = "src/main.rs"
+
+[dependencies]
+anstream = "1.0"
+anyhow = "1.0"
+clap = { version = "4.6", features = ["derive", "color", "wrap_help"] }
+dirs = "6.0"
+globset = "0.4"
+humansize = "2.1"
+ignore = "0.4.31"
+indicatif = "0.18"
+notify = "8.0"
+notify-debouncer-full = "0.5"
+owo-colors = "4"
+rayon = "1.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+toml = "1.1"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+insta = { version = "1.44", features = ["json"] }
+predicates = "3.1"
+pretty_assertions = "1.4"
+tempfile = "3.27"
+
+# A speed-marketed binary ships optimized. Costs release build time, which is paid
+# once per release in CI rather than by anyone running the tool.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"

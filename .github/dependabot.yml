@@ -1,0 +1,103 @@
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "Goldziher"
+    assignees:
+      - "Goldziher"
+    commit-message:
+      prefix: "build(deps)"
+      prefix-development: "build(dev-deps)"
+      include: "scope"
+    pull-request-branch-name:
+      separator: "/"
+    groups:
+      dev-dependencies:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+      production-dependencies:
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "npm"
+    directory: "/npm-package"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:30"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "Goldziher"
+    assignees:
+      - "Goldziher"
+    commit-message:
+      prefix: "build(deps)"
+      prefix-development: "build(dev-deps)"
+      include: "scope"
+    pull-request-branch-name:
+      separator: "/"
+    ignore:
+      - dependency-name: "tar"
+        update-types: ["version-update:semver-major"]
+    groups:
+      npm-dependencies:
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "pip"
+    directory: "/pip-package"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "10:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "Goldziher"
+    assignees:
+      - "Goldziher"
+    commit-message:
+      prefix: "build(deps)"
+      prefix-development: "build(dev-deps)"
+      include: "scope"
+    pull-request-branch-name:
+      separator: "/"
+    groups:
+      python-dependencies:
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "10:30"
+    open-pull-requests-limit: 3
+    reviewers:
+      - "Goldziher"
+    assignees:
+      - "Goldziher"
+    commit-message:
+      prefix: "ci(deps)"
+      include: "scope"
+    pull-request-branch-name:
+      separator: "/"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

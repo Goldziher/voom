@@ -1,0 +1,64 @@
+# poly hook catalog for voom. Consumers opt in with:
+#
+#   [[hooks.sources]]
+#   id = "voom"
+#   git = "https://github.com/Goldziher/voom.git"
+#   revision = "v0.1.0"
+#   hooks = ["voom-report"]
+#
+# `voom-report` reports and deletes nothing — adopt that one first. `voom-prune`
+# deletes. See adrs/0009-git-hook-integration.md.
+#
+# NOTE: the version is pinned in every `run` and `install` string below so consumer
+# behaviour cannot drift on a new release. scripts/bump-version.sh rewrites all of
+# them, and CI fails the release if any are stale.
+
+version = 1
+
+[[hooks]]
+id = "voom-report"
+stages = ["pre-commit"]
+args = ["--dry-run", "--report", "--exit-code", "."]
+workspace = true
+pass_filenames = false
+
+[[hooks.paths]]
+channel = "system"
+check = "command -v voom"
+run = "voom"
+
+[[hooks.paths]]
+channel = "npx"
+check = "command -v npx"
+run = "npx -y @goldziher/voom@0.1.0"
+install = "npx -y @goldziher/voom@0.1.0 --version"
+
+[[hooks.paths]]
+channel = "uvx"
+check = "command -v uvx"
+run = "uvx voom-cli==0.1.0"
+install = "uvx voom-cli==0.1.0 --version"
+
+[[hooks]]
+id = "voom-prune"
+stages = ["pre-commit"]
+args = ["."]
+workspace = true
+pass_filenames = false
+
+[[hooks.paths]]
+channel = "system"
+check = "command -v voom"
+run = "voom"
+
+[[hooks.paths]]
+channel = "npx"
+check = "command -v npx"
+run = "npx -y @goldziher/voom@0.1.0"
+install = "npx -y @goldziher/voom@0.1.0 --version"
+
+[[hooks.paths]]
+channel = "uvx"
+check = "command -v uvx"
+run = "uvx voom-cli==0.1.0"
+install = "uvx voom-cli==0.1.0 --version"

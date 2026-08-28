@@ -1,0 +1,59 @@
+/target
+/dist
+
+# poly (polylint) local cache
+/.polylint
+
+# Machine-local poly settings (hook channel preferences)
+poly.local.toml
+
+# Editor scratch
+*.swp
+.DS_Store
+
+# npm wrapper: the binary is downloaded by postinstall, never committed
+/npm-package/bin/
+/npm-package/node_modules
+/npm-package/*.tgz
+
+# pip wrapper build output
+/pip-package/build
+/pip-package/dist
+/pip-package/*.egg-info
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Local secrets — never commit
+.env
+.env.*
+!.env.example
+*token*.txt
+
+# ai-rulez harness outputs for presets this repo does not generate.
+# Every file here carries the "AI-RULEZ :: GENERATED FILE" header — derived from
+# .ai-rulez/, regenerable, and machine-local, so it stays out of git like the rest of
+# the generated harness surface.
+.cline/
+.clinerules/
+.continue/
+.cursor/
+.gemini/
+.junie/
+.opencode/
+.windsurf/
+GEMINI.md
+.github/copilot-instructions.md
+.github/agents/
+.github/commands/
+.github/skills/
+
+# BEGIN ai-rulez (DO NOT EDIT - managed by ai-rulez)
+.ai-rulez/.generated-manifest.json
+.claude/
+.codex/
+.mcp.json
+AGENTS.md
+CLAUDE.md
+# END ai-rulez

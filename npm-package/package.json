@@ -1,0 +1,33 @@
+{
+  "name": "@goldziher/voom",
+  "version": "0.1.0",
+  "description": "Fast, safe, parallel build-artifact pruning across 20+ language ecosystems",
+  "bin": {
+    "voom": "bin/voom"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "keywords": ["cleanup", "build", "artifacts", "disk-space", "cli", "prune", "rust", "monorepo"],
+  "author": "Na'aman Hirschfeld <nhirschfeld@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Goldziher/voom.git"
+  },
+  "homepage": "https://github.com/Goldziher/voom#readme",
+  "bugs": {
+    "url": "https://github.com/Goldziher/voom/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "adm-zip": "^0.6.0",
+    "tar": "^6.0.0"
+  },
+  "files": ["install.js", "README.md"],
+  "engines": {
+    "node": ">=14"
+  }
+}
