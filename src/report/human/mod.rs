@@ -24,12 +24,13 @@ use std::path::{Path, PathBuf};
 use humansize::{DECIMAL, format_size};
 use owo_colors::{OwoColorize, Style};
 
+mod table;
+
+use table::{GUTTER, Line, write_block};
+
 use super::{Entry, RunResult};
 use crate::classify::Provenance;
 use crate::delete::Outcome;
-
-/// Spaces between two columns.
-const GUTTER: &str = "  ";
 
 /// Introduces the explanation that follows a path.
 ///
@@ -52,14 +53,6 @@ const UNANCHORED: &str = "unanchored";
 /// destructive act (ADR 0006) and is never elided.
 const MAX_ECOSYSTEMS_NAMED: usize = 6;
 
-/// The widest a path column is padded out to before its explanation.
-///
-/// Alignment stops paying once the column no longer fits the terminal: past this, padding a
-/// short path out to match a long sibling pushes the explanation off the right edge, which
-/// costs more than the ragged edge it buys. A path over the cap simply runs on and takes its
-/// explanation with it — nothing is elided.
-const MAX_PATH_COLUMN: usize = 40;
-
 /// How much to show.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct HumanOptions {
@@ -76,7 +69,7 @@ pub struct HumanOptions {
 /// state a reader most needs to notice — is cyan, and the ecosystem it displaced is dim. That
 /// also leaves the ecosystem column quiet and the `unanchored` case loud, which is the emphasis
 /// ADR 0004 asks for.
-mod palette {
+pub(super) mod palette {
     use owo_colors::Style;
 
     pub fn removed() -> Style {
@@ -122,130 +115,6 @@ fn outcome_style(outcome: &Outcome) -> Style {
         Outcome::Refused(_) => palette::refused(),
         Outcome::Failed(_) => palette::failed(),
     }
-}
-
-/// One rendered line, with every column held as plain text.
-///
-/// Rows are built before anything is written so a block's column widths can be measured. The
-/// alternative — one fixed width per column for the whole report — is what left the skip lines
-/// with an empty size and ecosystem, which reads as a hole in the table rather than as a
-/// different kind of row.
-struct Line {
-    label: &'static str,
-    label_style: Style,
-    /// `None` for rows that have no size, which collapses the column for the whole block.
-    size: Option<String>,
-    /// The ecosystem, or [`UNANCHORED`]. `None` collapses the column for the whole block.
-    tag: Option<&'static str>,
-    tag_style: Style,
-    path: String,
-    detail: Option<String>,
-}
-
-/// The widest plain text in each column of one block.
-#[derive(Debug, Default, Clone, Copy)]
-struct Widths {
-    label: usize,
-    size: usize,
-    tag: usize,
-    /// Zero when no row in the block has a detail, so the last column is never padded and the
-    /// output never carries trailing whitespace.
-    path: usize,
-}
-
-impl Widths {
-    fn measure(lines: &[Line]) -> Self {
-        let mut widths = Self::default();
-        for line in lines {
-            widths.label = widths.label.max(width_of(line.label));
-            if let Some(size) = &line.size {
-                widths.size = widths.size.max(width_of(size));
-            }
-            if let Some(tag) = line.tag {
-                widths.tag = widths.tag.max(width_of(tag));
-            }
-            // Only the rows that carry an explanation are measured: they are the only ones the
-            // column exists to line up. A block of removals whose longest path is 106 characters
-            // would otherwise pad the one refusal in it out to 106 and push its reason off the
-            // right edge, which is the opposite of what alignment is for.
-            if line.detail.is_some() {
-                widths.path = widths.path.max(width_of(&line.path));
-            }
-        }
-        widths.path = widths.path.min(MAX_PATH_COLUMN);
-        widths
-    }
-}
-
-/// The column count `text` occupies.
-///
-/// Characters rather than bytes, which is right for the accented and non-Latin path components
-/// a filesystem tool meets. It is still not the terminal's idea of width for wide CJK glyphs;
-/// getting that right needs a dependency, and the cost of being wrong is a ragged column rather
-/// than a wrong answer.
-fn width_of(text: &str) -> usize {
-    text.chars().count()
-}
-
-fn write_fill(out: &mut impl io::Write, spaces: usize) -> io::Result<()> {
-    write!(out, "{:spaces$}", "")
-}
-
-/// Writes `text` in `style`, then pads it out to `width` columns.
-///
-/// The fill is written *outside* the styled span, deliberately. `owo-colors` forwards the
-/// formatter to the value it wraps, so `{:<12}` over a styled `&str` does align on the plain
-/// text — but it emits the blanks between the escapes, painting them, and it silently stops
-/// padding at all for any wrapped type whose `Display` does not call `Formatter::pad`.
-/// Measuring here removes both hazards.
-fn write_column(out: &mut impl io::Write, text: &str, style: Style, width: usize) -> io::Result<()> {
-    write!(out, "{}", style.style(text))?;
-    write_fill(out, width.saturating_sub(width_of(text)))
-}
-
-fn write_column_right(out: &mut impl io::Write, text: &str, style: Style, width: usize) -> io::Result<()> {
-    write_fill(out, width.saturating_sub(width_of(text)))?;
-    write!(out, "{}", style.style(text))
-}
-
-fn write_line(line: &Line, widths: Widths, out: &mut impl io::Write) -> io::Result<()> {
-    write!(out, "{GUTTER}")?;
-    write_column(out, line.label, line.label_style, widths.label)?;
-
-    if widths.size > 0 {
-        write!(out, "{GUTTER}")?;
-        write_column_right(
-            out,
-            line.size.as_deref().unwrap_or_default(),
-            palette::quiet(),
-            widths.size,
-        )?;
-    }
-    if widths.tag > 0 {
-        write!(out, "{GUTTER}")?;
-        write_column(out, line.tag.unwrap_or_default(), line.tag_style, widths.tag)?;
-    }
-
-    write!(out, "{GUTTER}{}", line.path)?;
-    match &line.detail {
-        None => writeln!(out),
-        Some(detail) => {
-            write_fill(out, widths.path.saturating_sub(width_of(&line.path)))?;
-            writeln!(
-                out,
-                "{GUTTER}{}",
-                format_args!("{BECAUSE}{detail}").style(palette::quiet())
-            )
-        }
-    }
-}
-
-fn write_block(lines: &[Line], out: &mut impl io::Write) -> io::Result<()> {
-    let widths = Widths::measure(lines);
-    for line in lines {
-        write_line(line, widths, out)?;
-    }
-    Ok(())
 }
 
 /// The directory the report prints paths relative to.
@@ -509,6 +378,8 @@ fn write_footer(
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+
+    use super::table::{MAX_PATH_COLUMN, Widths};
 
     use super::*;
     use crate::classify::SkipReason;
