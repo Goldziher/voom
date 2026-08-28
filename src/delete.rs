@@ -251,13 +251,15 @@ fn same_volume(left: &Path, right: &Path) -> bool {
 pub enum Refusal {
     /// The path is a symlink. Never followed, never deleted through.
     Symlink,
-    /// The path is a Windows reparse point that is not a symlink — a directory junction being
-    /// the one that matters, since it is the no-privilege way to produce the exact hazard
-    /// [`Refusal::Symlink`] exists for.
+    /// The path is a Windows reparse point that Rust does not report as a symlink.
     ///
-    /// Reported apart from a symlink because the other reparse tags are not links at all: a
-    /// `OneDrive` Files-On-Demand placeholder is refused here too, and telling that user their
-    /// directory "is a symlink" would send them looking for something that is not there.
+    /// Junctions are not this: `FileType::is_symlink` reports them, so a junction is refused as
+    /// a [`Refusal::Symlink`] — verified on the Windows CI leg rather than assumed. What lands
+    /// here is every *other* reparse tag, none of which is a link: a `OneDrive` Files-On-Demand
+    /// placeholder, a dedup stub, a volume mount point. They are refused because following a
+    /// redirection voom did not expect can cost work that cannot be got back, and reported
+    /// apart from symlinks because telling that user their directory "is a symlink" would send
+    /// them looking for something that is not there.
     ReparsePoint,
     /// The path is on the protected denylist.
     Protected,
@@ -424,11 +426,11 @@ impl Guard {
         }
         #[cfg(windows)]
         if is_reparse_point(&metadata) {
-            // A junction is a symlink for every purpose that matters here: `remove_dir_all`
-            // through one that points at a source tree deletes that source tree. Every other
-            // reparse tag is refused with it — a OneDrive placeholder or a dedup stub left on
-            // disk costs the user gigabytes, and following a redirection we did not expect
-            // costs them work they cannot get back.
+            // The backstop for rail 1. Junctions are already caught above — Rust reports them
+            // as symlinks — so what reaches here is the reparse tags it does not classify: a
+            // mount point, a OneDrive placeholder, a dedup stub. Refused rather than followed,
+            // because a redirection voom did not expect costs work that cannot be got back,
+            // while a directory left on disk costs only the space it occupies.
             return Err(Refusal::ReparsePoint);
         }
 
@@ -716,7 +718,11 @@ mod tests {
         let guard = guard(fixture.path());
         assert_eq!(
             guard.remove(&fixture.path().join("target"), false),
-            Outcome::Refused(Refusal::ReparsePoint)
+            // Refused as a symlink, not as a bare reparse point: Rust's `is_symlink` does
+            // report junctions on Windows, so rail 1 catches this before the reparse backstop.
+            // The variant matters less than the refusal, but pin it so a change to either is
+            // noticed rather than absorbed.
+            Outcome::Refused(Refusal::Symlink)
         );
         assert!(
             fixture.path().join("source/precious.rs").exists(),

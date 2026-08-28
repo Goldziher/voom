@@ -343,6 +343,15 @@ mod tests_support {
     pub(super) fn write(root: &Path, relative: &str, contents: &str) {
         std::fs::write(root.join(relative), contents).expect("a config file");
     }
+
+    /// Renders a path as a TOML *literal* string, in single quotes.
+    ///
+    /// A Windows path in a TOML basic string is a parse error, not a path: `"C:\Users\..."`
+    /// reads `\U` as the start of a unicode escape. Literal strings take no escapes at all,
+    /// which is what a user on Windows has to write too.
+    pub(super) fn toml_path(path: &Path) -> String {
+        format!("'{}'", path.display())
+    }
 }
 
 #[cfg(test)]
@@ -754,11 +763,11 @@ mod config_tests {
             "play/target/app",
             "voom.toml",
         ]);
-        let pattern = format!("{}/work/**", fixture.path().display());
+        let pattern = toml_path(&fixture.path().join("work").join("**"));
         write(
             fixture.path(),
             "voom.toml",
-            &format!("[[paths]]\nmatch = \"{pattern}\"\nkeep = {{ min_age = \"30d\" }}\n"),
+            &format!("[[paths]]\nmatch = {pattern}\nkeep = {{ min_age = \"30d\" }}\n"),
         );
 
         run(&options(fixture.path())).expect("the run completes");
@@ -815,7 +824,7 @@ mod config_tests {
         write(
             fixture.path(),
             "voom.toml",
-            &format!("include = [\"{}\"]\n", outside.path().display()),
+            &format!("include = [{}]\n", toml_path(outside.path())),
         );
 
         let result = run(&options(fixture.path())).expect("the run completes");
@@ -833,8 +842,8 @@ mod config_tests {
             "drop/target/app",
             "voom.toml",
         ]);
-        let pattern = format!("{}/keep/**", fixture.path().display());
-        write(fixture.path(), "voom.toml", &format!("exclude = [\"{pattern}\"]\n"));
+        let pattern = toml_path(&fixture.path().join("keep").join("**"));
+        write(fixture.path(), "voom.toml", &format!("exclude = [{pattern}]\n"));
 
         run(&options(fixture.path())).expect("the run completes");
 
@@ -859,7 +868,7 @@ mod config_tests {
         write(
             &link,
             "voom.toml",
-            &format!("exclude = [\"{}/keep/**\"]\n", link.display()),
+            &format!("exclude = [{}]\n", toml_path(&link.join("keep").join("**"))),
         );
 
         let mut options = options(fixture.path());

@@ -417,12 +417,15 @@ mod tests {
             .findings
             .iter()
             .map(|finding| {
+                // `/` on every platform: these are compared against `/`-separated literals,
+                // and `display()` renders the platform separator.
                 finding
                     .path
                     .strip_prefix(root)
                     .unwrap_or(&finding.path)
                     .display()
                     .to_string()
+                    .replace(std::path::MAIN_SEPARATOR, "/")
             })
             .collect();
         paths.sort();
