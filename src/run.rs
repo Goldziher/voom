@@ -70,15 +70,24 @@ struct Collected {
 ///
 /// [`Error::ReadDir`] if a scan root cannot be resolved — a root that does not exist is a usage
 /// error and must stop the run before anything is removed — [`Error::Config`] for a broken
-/// configuration file, or [`Error::CatalogPattern`] for an exclusion glob that will not compile.
+/// configuration file, [`Error::CatalogPattern`] for an exclusion glob that will not compile, or
+/// [`Error::ThreadPool`] if `-j` asks for a pool that cannot be built.
 pub fn run(options: &RunOptions) -> Result<RunResult> {
     let started = Instant::now();
     let mut collected = Collected::default();
 
     let roots = normalize_roots(&options.roots)?;
-    for root in &roots {
-        sweep(root, options, &mut collected)?;
-    }
+    let pool = build_pool(options.jobs)?;
+
+    // Sizing and removal fan out over rayon, which otherwise runs on a process-wide pool sized
+    // to every logical core. `-j` is the escape hatch for spinning disks and network
+    // filesystems (ADR 0005), so it has to bound the removal storm and not just the walk.
+    pool.install(|| -> Result<()> {
+        for root in &roots {
+            sweep(root, options, &mut collected)?;
+        }
+        Ok(())
+    })?;
 
     let mut result = RunResult {
         roots,
@@ -91,6 +100,23 @@ pub fn run(options: &RunOptions) -> Result<RunResult> {
     };
     result.sort();
     Ok(result)
+}
+
+/// Builds the worker pool that sizes and removes artifacts.
+///
+/// Scoped rather than [`rayon::ThreadPoolBuilder::build_global`], which is process-wide and
+/// one-shot: a second call fails, so a global pool would break both the test suite and any
+/// program that uses voom as a library and has its own pool.
+///
+/// # Errors
+///
+/// [`Error::ThreadPool`] if the pool cannot be built.
+fn build_pool(jobs: Option<usize>) -> Result<rayon::ThreadPool> {
+    let jobs = jobs.map_or(0, |jobs| jobs.max(1));
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(jobs)
+        .build()
+        .map_err(|source| Error::ThreadPool { jobs, source })
 }
 
 /// Resolves the roots to their real locations, drops duplicates, and drops any root that sits
@@ -511,6 +537,63 @@ mod tests {
             vec![fixture.path().join("outer")],
             "the path as typed is kept"
         );
+    }
+
+    /// `-j` bounded the walk but not the rayon fan-out that sizes and removes, so `-j 2` on a
+    /// network filesystem meant a throttled walk followed by a full-core removal storm.
+    #[test]
+    fn should_bound_the_worker_pool_to_the_requested_jobs() {
+        assert_eq!(build_pool(Some(1)).expect("a pool").current_num_threads(), 1);
+        assert_eq!(build_pool(Some(3)).expect("a pool").current_num_threads(), 3);
+        assert!(
+            build_pool(None).expect("a pool").current_num_threads() > 0,
+            "no request means available parallelism, not zero threads"
+        );
+    }
+
+    /// `-j 0` is a plausible typo for "no limit"; it must not mean "no workers".
+    #[test]
+    fn should_treat_a_request_for_no_threads_as_a_request_for_one() {
+        assert_eq!(build_pool(Some(0)).expect("a pool").current_num_threads(), 1);
+    }
+
+    /// The thread count alone would be satisfied by a pool nothing runs in, so this checks that
+    /// work sent through it is actually held to that width.
+    #[test]
+    fn should_hold_parallel_work_to_the_width_of_the_pool() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let pool = build_pool(Some(2)).expect("a pool");
+        let in_flight = AtomicUsize::new(0);
+        let peak = AtomicUsize::new(0);
+
+        pool.install(|| {
+            (0..64).into_par_iter().for_each(|_| {
+                let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(2));
+                in_flight.fetch_sub(1, Ordering::SeqCst);
+            });
+        });
+
+        assert!(peak.load(Ordering::SeqCst) <= 2, "the pool did not bound the work");
+    }
+
+    /// Throttling changes how fast the work happens, never what it does.
+    #[test]
+    fn should_sweep_identically_however_many_workers_it_is_given() {
+        let paths = &["a/Cargo.toml", "a/target/app", "b/package.json", "b/dist/app.js"];
+
+        let unbounded = tree(paths);
+        let throttled = tree(paths);
+        let mut throttled_options = options(throttled.path());
+        throttled_options.jobs = Some(1);
+
+        let wide = run(&options(unbounded.path())).expect("the run completes");
+        let narrow = run(&throttled_options).expect("the run completes");
+
+        assert_eq!(wide.entries.len(), narrow.entries.len());
+        assert_eq!(snapshot(unbounded.path()), snapshot(throttled.path()));
     }
 
     /// The doc comment promises a bad root stops the run before anything is removed. With one

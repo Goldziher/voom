@@ -76,6 +76,20 @@ pub enum Error {
         reason: &'static str,
     },
 
+    /// The worker pool that sizes and removes artifacts could not be built.
+    ///
+    /// Fatal rather than a fallback to the default pool: `-j` exists to keep voom from
+    /// saturating a spinning disk or a network filesystem, so quietly ignoring it would do the
+    /// one thing the user asked it not to.
+    #[error("building a worker pool of {jobs} threads")]
+    ThreadPool {
+        /// How many threads were asked for.
+        jobs: usize,
+        /// The underlying failure.
+        #[source]
+        source: rayon::ThreadPoolBuildError,
+    },
+
     /// A directory could not be listed.
     #[error("reading directory `{}`", path.display())]
     ReadDir {
