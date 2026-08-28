@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "voom-cli"
-version = "0.1.0"
+version = "0.1.1"
 description = "Fast, safe, parallel build-artifact pruning across 24 language ecosystems"
 readme = "README.md"
 license = { text = "MIT" }

@@ -33,6 +33,7 @@ use std::path::{Path, PathBuf};
 /// filesystem when a scan starts — a name that does not exist on this machine costs nothing.
 const CACHE_DIRS: &[&str] = &[
     // Rust
+    ".cargo/bin",
     ".cargo/git",
     ".cargo/registry",
     ".rustup",
@@ -72,12 +73,16 @@ const CACHE_DIRS: &[&str] = &[
     ".pub-cache",
     ".swiftpm",
     "fvm",
+    "go/bin",
     "go/pkg",
     // Version managers and SDKs
     ".asdf",
     ".nodenv",
     ".terraform.d",
     "google-cloud-sdk",
+    // Installed toolchains and tool extensions
+    ".local/share/gh",
+    "Library/Developer/Toolchains",
     // Editor and agent state
     ".antigravity",
     ".hermes",
@@ -251,8 +256,14 @@ mod tests {
         const REQUIRED: &[&str] = &[
             ".bun",
             ".cache",
+            // The three below hold *installed binaries*, and a sweep of a real machine found
+            // them reachable: `bin/` is a catalog candidate, so `~/go/bin` needed only a
+            // `go.mod` beside it and `--enable go.bin` to be swept. 5.6 GB of installed tools
+            // were resting on the marker rule alone.
+            ".cargo/bin",
             ".cargo/git",
             ".cargo/registry",
+            ".local/share/gh",
             ".gem",
             ".gradle",
             ".m2",
@@ -262,6 +273,8 @@ mod tests {
             ".rustup",
             "Library/Application Support",
             "Library/Caches",
+            "Library/Developer/Toolchains",
+            "go/bin",
             "google-cloud-sdk",
             "miniforge3",
         ];

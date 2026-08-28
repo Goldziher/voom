@@ -9,6 +9,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-28
+
+### Fixed
+
+- **The `uvx` channel of both git hooks now runs.** `voom` was taken on PyPI, so the
+  distribution is `voom-cli` while the command it installs is `voom` — and `uvx` looks for a
+  command matching the *package* name, finds none, and refuses. Both published hooks pinned
+  `uvx voom-cli`, so that channel failed for every user on first run. It is
+  `uvx --from voom-cli voom` now, in the hooks and in both READMEs, with a test pinning the
+  form because the asymmetry is permanent (see
+  [ADR 0010](adrs/0010-distribution-and-naming.md)).
+- **The crates.io publish no longer fails on its own error log.** The release workflow
+  redirected `cargo publish`'s stderr to a file inside the checkout; the shell creates that file
+  before cargo runs, and `cargo publish` refuses a working directory with uncommitted changes.
+  0.1.0 reached crates.io only on a re-run.
+
 ## [0.1.0] - 2026-08-28
 
 The first functional release. `0.0.0` on crates.io and PyPI was a name placeholder and does
@@ -87,5 +103,6 @@ nothing; this is the tool.
 - Size accounting sums allocated blocks, so on a copy-on-write filesystem such as APFS the bytes
   reported can exceed the space actually freed where files are shared between clones.
 
-[Unreleased]: https://github.com/Goldziher/voom/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Goldziher/voom/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Goldziher/voom/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Goldziher/voom/releases/tag/v0.1.0

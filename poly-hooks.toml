@@ -30,14 +30,14 @@ run = "voom"
 [[hooks.paths]]
 channel = "npx"
 check = "command -v npx"
-run = "npx -y @goldziher/voom@0.1.0"
-install = "npx -y @goldziher/voom@0.1.0 --version"
+run = "npx -y @goldziher/voom@0.1.1"
+install = "npx -y @goldziher/voom@0.1.1 --version"
 
 [[hooks.paths]]
 channel = "uvx"
 check = "command -v uvx"
-run = "uvx --from voom-cli==0.1.0 voom"
-install = "uvx --from voom-cli==0.1.0 voom --version"
+run = "uvx --from voom-cli==0.1.1 voom"
+install = "uvx --from voom-cli==0.1.1 voom --version"
 
 [[hooks]]
 id = "voom-prune"
@@ -54,11 +54,11 @@ run = "voom"
 [[hooks.paths]]
 channel = "npx"
 check = "command -v npx"
-run = "npx -y @goldziher/voom@0.1.0"
-install = "npx -y @goldziher/voom@0.1.0 --version"
+run = "npx -y @goldziher/voom@0.1.1"
+install = "npx -y @goldziher/voom@0.1.1 --version"
 
 [[hooks.paths]]
 channel = "uvx"
 check = "command -v uvx"
-run = "uvx --from voom-cli==0.1.0 voom"
-install = "uvx --from voom-cli==0.1.0 voom --version"
+run = "uvx --from voom-cli==0.1.1 voom"
+install = "uvx --from voom-cli==0.1.1 voom --version"
