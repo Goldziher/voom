@@ -39,7 +39,7 @@ jobs:
       npm_exists: ${{ steps.probe.outputs.npm_exists }}
       pypi_exists: ${{ steps.probe.outputs.pypi_exists }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Resolve tag and versions
         id: resolve
@@ -134,7 +134,7 @@ jobs:
     needs: meta
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # Created as a draft and only published by finalize_release once every archive
       # verifies, so a partial release is never visible to users.
       - name: Create draft release
@@ -165,7 +165,7 @@ jobs:
             runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
@@ -192,7 +192,7 @@ jobs:
     env:
       TRIPLE: x86_64-pc-windows-gnu
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
@@ -237,7 +237,7 @@ jobs:
     # manylinux gives a low glibc floor so the binaries run on older distributions.
     container: ${{ matrix.image }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.tag }}
       # The container runs as root while the workspace is owned by the runner uid,
@@ -330,7 +330,7 @@ jobs:
     if: needs.meta.outputs.crates_exists != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
@@ -355,7 +355,7 @@ jobs:
     if: needs.meta.outputs.npm_exists != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.tag }}
       - uses: actions/setup-node@v7
@@ -384,7 +384,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.tag }}
       - uses: actions/setup-python@v7
@@ -408,7 +408,7 @@ jobs:
     if: needs.meta.outputs.prerelease != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.tag }}
       - name: Generate formula and push to tap
