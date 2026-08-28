@@ -346,3 +346,78 @@ fn should_suppress_color_when_asked() {
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
     assert!(!stdout.contains('\u{1b}'), "no ANSI escapes when color is off");
 }
+
+/// The argument lists the two committed hook manifests actually publish.
+///
+/// Extracted from the files rather than retyped, because the point is that *those* files keep
+/// working. A retyped copy would pass while the published manifest passed something voom no
+/// longer accepts, which is the failure this guards. Extraction is a line scan rather than a
+/// YAML and a TOML parser: both lines have a fixed shape, and the helper fails loudly if it
+/// stops matching rather than quietly returning nothing.
+fn published_hook_args(manifest: &str, marker: &str) -> Vec<String> {
+    let line = manifest
+        .lines()
+        .find(|line| line.trim_start().starts_with(marker))
+        .unwrap_or_else(|| panic!("no line starting `{marker}` — the manifest format changed"));
+    let list = line
+        .split_once('[')
+        .and_then(|(_, rest)| rest.rsplit_once(']'))
+        .unwrap_or_else(|| panic!("no argument list in `{line}`"))
+        .0;
+    let args: Vec<String> = list
+        .split(',')
+        .map(|arg| arg.trim().trim_matches('"').to_owned())
+        .filter(|arg| !arg.is_empty())
+        .collect();
+    assert!(!args.is_empty(), "no arguments parsed from `{line}`");
+    args
+}
+
+/// ADR 0009's contract, against the manifests as committed: report, delete nothing, exit 3 so
+/// the commit fails. These files are a release surface — consumers pin them by git revision —
+/// so a flag voom stopped accepting would break every consumer at their next hook run, not
+/// ours.
+#[test]
+fn should_honour_the_published_reporting_hook_arguments() {
+    let manifests = [
+        published_hook_args(include_str!("../.pre-commit-hooks.yaml"), "args:"),
+        published_hook_args(include_str!("../poly-hooks.toml"), "args ="),
+    ];
+
+    for args in manifests {
+        assert!(
+            args.iter().any(|arg| arg == "--exit-code"),
+            "the reporting hook must ask for the findings exit code: {args:?}"
+        );
+
+        let tree = mixed_tree();
+        let before = snapshot(tree.path());
+        voom().current_dir(tree.path()).args(&args).assert().code(3);
+        assert_eq!(snapshot(tree.path()), before, "the reporting hook deletes nothing");
+
+        let clean = TempDir::new().unwrap();
+        fs::write(clean.path().join("README.md"), b"clean").unwrap();
+        voom().current_dir(clean.path()).args(&args).assert().success();
+    }
+}
+
+/// An unanchored removal has to be visible in the machine-readable output too, because a hook
+/// consuming JSON is exactly the caller that cannot see the human column (ADR 0004).
+#[test]
+fn should_mark_an_unanchored_removal_in_json() {
+    let root = TempDir::new().unwrap();
+    fs::create_dir_all(root.path().join("junk")).unwrap();
+    fs::write(root.path().join("junk/leftovers.o"), b"output").unwrap();
+    fs::write(
+        root.path().join("voom.toml"),
+        format!("include = ['{}']\n", root.path().join("junk").display()),
+    )
+    .unwrap();
+
+    voom()
+        .args(["--dry-run", "--format", "json"])
+        .arg(root.path())
+        .assert()
+        .success()
+        .stdout(contains("\"source\": \"config-include\"").and(contains("\"ecosystem\": null")));
+}
