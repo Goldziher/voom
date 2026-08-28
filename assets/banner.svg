@@ -1,111 +1,83 @@
-<svg
-  xmlns="http://www.w3.org/2000/svg"
-  viewBox="0 0 1200 340"
-  width="1200"
-  height="340"
-  role="img"
-  aria-label="voom — clean up the pink snow"
->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 340" width="1200" height="340" role="img" aria-label="voom">
+  <title>voom</title>
   <defs>
-    <radialGradient id="glowTeal" cx="32%" cy="24%" r="64%">
-      <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0.20" />
-      <stop offset="100%" stop-color="#2dd4bf" stop-opacity="0" />
-    </radialGradient>
-    <radialGradient id="glowPink" cx="74%" cy="80%" r="58%">
-      <stop offset="0%" stop-color="#f472b6" stop-opacity="0.14" />
+    <linearGradient id="beam" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#5eead4" stop-opacity="0.26" />
+      <stop offset="48%" stop-color="#0d9488" stop-opacity="0.09" />
+      <stop offset="100%" stop-color="#000000" stop-opacity="0" />
+    </linearGradient>
+    <radialGradient id="blush" cx="86%" cy="82%" r="62%">
+      <stop offset="0%" stop-color="#f472b6" stop-opacity="0.20" />
       <stop offset="100%" stop-color="#f472b6" stop-opacity="0" />
     </radialGradient>
     <linearGradient id="rule" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0" />
-      <stop offset="50%" stop-color="#2dd4bf" stop-opacity="0.55" />
-      <stop offset="100%" stop-color="#2dd4bf" stop-opacity="0" />
+      <stop offset="12%" stop-color="#2dd4bf" />
+      <stop offset="52%" stop-color="#fbbf24" />
+      <stop offset="86%" stop-color="#f472b6" />
+      <stop offset="100%" stop-color="#f472b6" stop-opacity="0" />
     </linearGradient>
+    <linearGradient id="sweep" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="20%" stop-color="#ffffff" stop-opacity="0" />
+      <stop offset="66%" stop-color="#ffffff" stop-opacity="0.45" />
+      <stop offset="100%" stop-color="#ffffff" />
+    </linearGradient>
+    <!-- The pink pixels are the snow the Voom is clearing. The mask, not the pattern, carries
+     the direction of travel: dense ahead of the wordmark, swept to nothing behind it. -->
+    <pattern id="snow" width="44" height="44" patternUnits="userSpaceOnUse">
+      <g fill="#f472b6">
+        <rect x="4" y="7" width="9" height="9" opacity="0.5" />
+        <rect x="29" y="19" width="6" height="6" opacity="0.62" />
+        <rect x="17" y="33" width="4" height="4" opacity="0.42" />
+        <rect x="36" y="2" width="4" height="4" opacity="0.3" />
+        <rect x="21" y="12" width="3" height="3" opacity="0.28" />
+        <rect x="7" y="27" width="5" height="5" opacity="0.36" />
+      </g>
+    </pattern>
+    <pattern id="grain" width="7" height="7" patternUnits="userSpaceOnUse">
+      <rect width="1" height="1" fill="#ffffff" opacity="0.08" />
+      <rect x="4" y="5" width="1" height="1" fill="#2dd4bf" opacity="0.12" />
+      <rect x="6" y="2" width="1" height="1" fill="#fbbf24" opacity="0.08" />
+    </pattern>
+    <mask id="drift"><rect width="1200" height="340" fill="url(#sweep)" /></mask>
+    <g id="wm" shape-rendering="crispEdges">
+      <rect x="170" y="84" width="32" height="32" />
+      <rect x="186" y="116" width="32" height="32" />
+      <rect x="202" y="148" width="32" height="32" />
+      <rect x="218" y="180" width="32" height="32" />
+      <rect x="298" y="84" width="32" height="32" />
+      <rect x="282" y="116" width="32" height="32" />
+      <rect x="266" y="148" width="32" height="32" />
+      <rect x="250" y="180" width="32" height="32" />
+      <rect x="234" y="212" width="32" height="32" />
+      <rect x="410" y="84" width="96" height="32" />
+      <rect x="378" y="116" width="32" height="96" />
+      <rect x="506" y="116" width="32" height="96" />
+      <rect x="410" y="212" width="96" height="32" />
+      <rect x="618" y="84" width="96" height="32" />
+      <rect x="586" y="116" width="32" height="96" />
+      <rect x="714" y="116" width="32" height="96" />
+      <rect x="618" y="212" width="96" height="32" />
+      <rect x="794" y="84" width="224" height="32" />
+      <rect x="794" y="116" width="32" height="128" />
+      <rect x="890" y="116" width="32" height="128" />
+      <rect x="986" y="116" width="32" height="128" />
+    </g>
+    <clipPath id="frame"><rect width="1200" height="340" rx="14" /></clipPath>
   </defs>
-
-  <rect width="1200" height="340" rx="20" fill="#0d1117" />
-  <rect width="1200" height="340" rx="20" fill="url(#glowTeal)" />
-  <rect width="1200" height="340" rx="20" fill="url(#glowPink)" />
-
-  <!-- The mark and the snow are the same pixel grid in two colours: one being cleared away by
-       the other. The trail thins to the left because the V is moving right. -->
-  <g>
-    <rect x="489" y="95" width="10" height="10" rx="1" fill="#f472b6" opacity="0.8" />
-    <rect x="489" y="128" width="10" height="10" rx="1" fill="#f472b6" opacity="0.66" />
-    <rect x="478" y="106" width="10" height="10" rx="1" fill="#f472b6" opacity="0.72" />
-    <rect x="478" y="139" width="10" height="10" rx="1" fill="#f472b6" opacity="0.48" />
-    <rect x="467" y="84" width="10" height="10" rx="1" fill="#f472b6" opacity="0.55" />
-    <rect x="467" y="117" width="10" height="10" rx="1" fill="#f472b6" opacity="0.6" />
-    <rect x="456" y="95" width="10" height="10" rx="1" fill="#f472b6" opacity="0.4" />
-    <rect x="456" y="128" width="10" height="10" rx="1" fill="#f472b6" opacity="0.34" />
-    <rect x="445" y="106" width="10" height="10" rx="1" fill="#f472b6" opacity="0.3" />
-    <rect x="445" y="139" width="10" height="10" rx="1" fill="#f472b6" opacity="0.22" />
-    <rect x="434" y="84" width="10" height="10" rx="1" fill="#f472b6" opacity="0.2" />
-    <rect x="434" y="117" width="10" height="10" rx="1" fill="#f472b6" opacity="0.24" />
-    <rect x="423" y="95" width="10" height="10" rx="1" fill="#f472b6" opacity="0.14" />
-    <rect x="423" y="128" width="10" height="10" rx="1" fill="#f472b6" opacity="0.12" />
-    <rect x="412" y="106" width="10" height="10" rx="1" fill="#f472b6" opacity="0.09" />
+  <g clip-path="url(#frame)">
+    <rect width="1200" height="340" fill="#070f0e" />
+    <path d="M56 60L352 46L104 254L0 292L0 120Z" fill="url(#beam)" opacity="0.85" />
+    <rect width="1200" height="340" fill="url(#blush)" />
+    <rect width="1200" height="340" fill="url(#snow)" mask="url(#drift)" />
+    <path d="M30 30H1170V310H30Z" fill="none" stroke="#2dd4bf" stroke-width="2" />
+    <path d="M44 44H1156V296H44Z" fill="none" stroke="#5eead4" stroke-width="0.75" opacity="0.3" />
+    <g transform="translate(594 164) skewX(-9) translate(-594 -164)">
+      <use href="#wm" x="12" y="13" fill="#f472b6" />
+      <use href="#wm" x="-5" y="-6" fill="#fbbf24" />
+      <use href="#wm" fill="#2dd4bf" />
+    </g>
+    <rect x="30" y="303" width="1140" height="7" fill="url(#rule)" />
+    <rect width="1200" height="340" fill="url(#grain)" opacity="0.38" />
   </g>
-  <g>
-    <rect x="500" y="84" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="511" y="84" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="577" y="84" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="588" y="84" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="500" y="95" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="511" y="95" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="577" y="95" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="588" y="95" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="500" y="106" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="511" y="106" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="577" y="106" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="588" y="106" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="511" y="117" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="522" y="117" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="566" y="117" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="577" y="117" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="511" y="128" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="522" y="128" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="566" y="128" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="577" y="128" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="522" y="139" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="533" y="139" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="555" y="139" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="566" y="139" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="533" y="150" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="544" y="150" width="10" height="10" rx="1" fill="#2dd4bf" />
-    <rect x="555" y="150" width="10" height="10" rx="1" fill="#2dd4bf" />
-  </g>
-
-  <text
-    x="643"
-    y="152"
-    font-family="'JetBrains Mono','SF Mono','DejaVu Sans Mono',ui-monospace,monospace"
-    font-size="58"
-    font-weight="700"
-    letter-spacing="-1.5"
-  >
-    <tspan fill="#2dd4bf">v</tspan>
-    <tspan fill="#c9d1d9">oom</tspan>
-  </text>
-
-  <text
-    x="600"
-    y="220"
-    text-anchor="middle"
-    font-family="'JetBrains Mono','SF Mono','DejaVu Sans Mono',ui-monospace,monospace"
-    font-size="25"
-    fill="#c9d1d9"
-    letter-spacing="0.5"
-  >Clean up the pink snow.</text>
-
-  <line x1="470" y1="254" x2="730" y2="254" stroke="url(#rule)" stroke-width="2" />
-
-  <text
-    x="600"
-    y="292"
-    text-anchor="middle"
-    font-family="'SF Pro Text','DejaVu Sans',ui-sans-serif,system-ui,sans-serif"
-    font-size="14"
-    fill="#6b7280"
-    letter-spacing="2.5"
-  >24 ECOSYSTEMS &#183; MARKER-ANCHORED &#183; PARALLEL &#183; $HOME-SAFE</text>
 </svg>

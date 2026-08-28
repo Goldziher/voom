@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="voom">
+  <title>voom</title>
+  <defs>
+    <linearGradient id="beam" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#5eead4" stop-opacity="0.24" />
+      <stop offset="50%" stop-color="#0d9488" stop-opacity="0.08" />
+      <stop offset="100%" stop-color="#000000" stop-opacity="0" />
+    </linearGradient>
+    <radialGradient id="blush" cx="86%" cy="82%" r="60%">
+      <stop offset="0%" stop-color="#f472b6" stop-opacity="0.22" />
+      <stop offset="100%" stop-color="#f472b6" stop-opacity="0" />
+    </radialGradient>
+    <pattern id="grain" width="7" height="7" patternUnits="userSpaceOnUse">
+      <rect width="1" height="1" fill="#ffffff" opacity="0.08" />
+      <rect x="4" y="5" width="1" height="1" fill="#2dd4bf" opacity="0.12" />
+    </pattern>
+    <!-- Only the V, because the mark has to survive 32px: three flat offset copies and nothing
+     that depends on detail smaller than a grid cell. -->
+    <g id="v" shape-rendering="crispEdges">
+      <rect x="35" y="46" width="32" height="32" />
+      <rect x="51" y="78" width="32" height="32" />
+      <rect x="67" y="110" width="32" height="32" />
+      <rect x="83" y="142" width="32" height="32" />
+      <rect x="163" y="46" width="32" height="32" />
+      <rect x="147" y="78" width="32" height="32" />
+      <rect x="131" y="110" width="32" height="32" />
+      <rect x="115" y="142" width="32" height="32" />
+      <rect x="99" y="174" width="32" height="32" />
+    </g>
+    <clipPath id="frame"><rect width="256" height="256" rx="26" /></clipPath>
+  </defs>
+  <g clip-path="url(#frame)">
+    <rect width="256" height="256" fill="#070f0e" />
+    <path d="M14 32L124 24L40 186L0 208L0 68Z" fill="url(#beam)" />
+    <rect width="256" height="256" fill="url(#blush)" />
+    <path d="M16 16H240V240H16Z" fill="none" stroke="#2dd4bf" stroke-width="4" />
+    <g transform="translate(128 126) skewX(-6) translate(-128 -126)">
+      <use href="#v" x="10" y="11" fill="#f472b6" />
+      <use href="#v" x="-4" y="-5" fill="#fbbf24" />
+      <use href="#v" fill="#2dd4bf" />
+    </g>
+    <rect width="256" height="256" fill="url(#grain)" opacity="0.4" />
+  </g>
+</svg>

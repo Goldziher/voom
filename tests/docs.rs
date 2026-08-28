@@ -296,11 +296,10 @@ fn states_an_ecosystem_count(line: &str) -> bool {
 /// can tell "nothing is broken" apart from "the walk found nothing to look at".
 fn hard_coded_ecosystem_counts() -> (Vec<(std::path::PathBuf, String)>, usize) {
     const SKIP: [&str; 4] = ["target", ".git", "node_modules", "__pycache__"];
-    // Dated records, not live surfaces. `CHANGELOG.md` and the ADRs describe what was true at
-    // a point in time and are wrong to update; `assets/social.svg` is the rendered social
-    // preview card, whose text is regenerated with the branding rather than maintained here.
-    // This file is exempt because a test forbidding a phrase has to be able to quote it.
-    const EXEMPT: [&str; 4] = ["./CHANGELOG.md", "./adrs", "./assets/social.svg", "./tests/docs.rs"];
+    // Dated records, not live surfaces: `CHANGELOG.md` and the ADRs describe what was true at a
+    // point in time and would be wrong to update. This file is exempt because a test forbidding
+    // a phrase has to be able to quote it.
+    const EXEMPT: [&str; 3] = ["./CHANGELOG.md", "./adrs", "./tests/docs.rs"];
 
     fn walk(dir: &std::path::Path, found: &mut Vec<(std::path::PathBuf, String)>, scanned: &mut usize) {
         let Ok(entries) = fs::read_dir(dir) else { return };
