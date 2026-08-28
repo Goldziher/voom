@@ -127,6 +127,9 @@ voom --dry-run --format json ~ | jq '.totals'
 # Cap parallelism (useful on spinning disks or network filesystems)
 voom -j 4 ~
 
+# Include tool caches and installed toolchains, which are skipped by default
+voom --dry-run --caches ~
+
 # What does voom know about?
 voom catalog
 ```
@@ -152,12 +155,20 @@ and hand-written source in another. voom leaves every unproven one alone, and
 in the catalog and no flag adds them. Deleting them costs you a re-download and breaks
 offline work.
 
-**3. The rails you cannot switch off.** Symlinks are never followed or deleted through.
+**3. Tool caches and installed toolchains are skipped.** `~/.cargo/registry`, `~/.npm`,
+`~/.pyenv`, `~/miniforge3`, `~/google-cloud-sdk` and friends are machine-global or are installed
+programs, not this tree's build output. An installed pnpm under `~/.cache/node/corepack` sits
+beside a real `package.json` and is, to the classifier, indistinguishable from a project someone
+built — so location draws the line that a marker cannot. On the author's machine this is the
+difference between 469 artifacts and 174. `--caches` opts back in, and naming one of those paths
+as a scan root sweeps it without the flag.
+
+**4. The rails you cannot switch off.** Symlinks are never followed or deleted through.
 Filesystem boundaries are not crossed (`--one-file-system=false` to opt out). Every target is
 canonicalized and must resolve strictly below a scan root. A hard-coded denylist protects
 `/`, `$HOME` itself, `/usr`, `/System`, `.git` and friends.
 
-**4. `--dry-run` is the real pipeline with the last step withheld**, not a simulation, so
+**5. `--dry-run` is the real pipeline with the last step withheld**, not a simulation, so
 what it prints is exactly what a real run would remove.
 
 Full reasoning in [ADR 0002](adrs/0002-marker-anchored-classification.md) and
@@ -222,6 +233,19 @@ min_age = "1d"
 [[paths]]
 match = "~/work/**"
 keep  = { min_age = "30d" }
+```
+
+Paths listed in `include` are swept without a marker proving them. That is the one place voom
+will remove something it cannot prove, so it is reported as `unanchored` rather than as an
+ecosystem, and JSON marks it `"source": "config-include"`. `exclude` always wins over
+`include`.
+
+**On Windows, write paths in single quotes.** TOML basic strings take escapes, so
+`exclude = ["C:\Users\me\work\**"]` fails to parse — `\U` starts a unicode escape. Use a TOML
+literal string instead, which takes none:
+
+```toml
+exclude = ['C:\Users\me\work\**']
 ```
 
 `voom config show` prints the fully merged result with the file each value came from.
