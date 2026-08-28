@@ -337,19 +337,20 @@ impl Visitor<'_> {
         }
 
         // A symlink is classified as though it were a directory so a symlinked `target/` is
-        // *seen* and reported rather than silently invisible — but it can never become a
-        // deletion, because ADR 0006 refuses to delete through one.
+        // *seen* rather than silently invisible. It can never become a deletion — the deletion
+        // guard refuses to remove through a link (ADR 0006) — but it is reported as a finding
+        // the guard then refuses, not folded into the anonymous skip count. A refusal names the
+        // path in the artifacts block; a skip is a number unless `-v` was passed, and a
+        // symlinked `target/` beside a real `Cargo.toml` is exactly the thing a reader wants
+        // told about.
         match self.classifier.classify(self.root, path, is_dir || is_symlink) {
             Verdict::Artifact(finding) => {
-                if is_symlink {
-                    self.note_skip(sender, path, SkipReason::Symlink);
-                    return WalkState::Skip;
-                }
                 let _ = sender.send(Message::Found(Box::new(finding)));
                 // A matched artifact is an indivisible unit: it is sized and removed wholesale,
                 // so walking inside it is wasted work and would produce nested findings that
-                // make the report unreadable.
-                if is_dir {
+                // make the report unreadable. A symlink is not descended for the older reason:
+                // the walker does not follow links at all.
+                if is_dir || is_symlink {
                     return WalkState::Skip;
                 }
             }
@@ -373,11 +374,10 @@ impl Visitor<'_> {
             let Ok(metadata) = std::fs::symlink_metadata(&candidate) else {
                 continue;
             };
-            if metadata.file_type().is_symlink() {
-                self.note_skip(sender, &candidate, SkipReason::Symlink);
-                continue;
-            }
-            match self.classifier.classify(self.root, &candidate, metadata.is_dir()) {
+            // Same rule as the walk above: a symlinked artifact is reported and then refused,
+            // never quietly counted.
+            let is_dir = metadata.is_dir() || metadata.file_type().is_symlink();
+            match self.classifier.classify(self.root, &candidate, is_dir) {
                 Verdict::Artifact(finding) => {
                     let _ = sender.send(Message::Found(Box::new(finding)));
                 }
@@ -661,17 +661,52 @@ mod tests {
     }
 
     /// A symlinked `target/` pointing at a source tree must never become a deletion of that
-    /// source tree. It is seen and reported, which is more useful than being invisible.
+    /// source tree — and the user has to be *told* it is there, because a link standing where an
+    /// artifact belongs is the shape of a mistake worth looking at.
+    ///
+    /// It used to be turned into a skip here, which meant it appeared as part of an anonymous
+    /// count unless `-v` was passed. It is a finding now, and the deletion guard refuses it by
+    /// name in the artifacts block. The refusal, not this module, is what keeps the target safe;
+    /// [`should_never_delete_through_a_symlink`](../../tests/safety.rs) is the test for that.
     #[test]
     #[cfg(unix)]
-    fn should_report_a_symlinked_artifact_as_skipped_rather_than_found() {
+    fn should_report_a_symlinked_artifact_as_a_finding() {
         let fixture = tree(&["Cargo.toml", "elsewhere/precious.txt"]);
         std::os::unix::fs::symlink(fixture.path().join("elsewhere"), fixture.path().join("target")).expect("a symlink");
 
         let scan = run(fixture.path(), &verbose());
-        assert!(found(&scan, fixture.path()).is_empty(), "a symlink is never a finding");
-        assert!(scan.skips.iter().any(|skip| skip.reason == SkipReason::Symlink));
+
+        assert_eq!(
+            found(&scan, fixture.path()),
+            vec!["target".to_owned()],
+            "the link is named rather than counted"
+        );
+        assert!(
+            !scan.skips.iter().any(|skip| skip.reason == SkipReason::Symlink),
+            "and is not also folded into the skips"
+        );
         assert!(fixture.path().join("elsewhere/precious.txt").exists());
+    }
+
+    /// The walk stops at a symlinked artifact rather than enumerating what it points at, so a
+    /// link to a large tree costs one entry and the report gains no nested findings.
+    #[test]
+    #[cfg(unix)]
+    fn should_not_walk_inside_a_symlinked_artifact() {
+        let fixture = tree(&[
+            "Cargo.toml",
+            "elsewhere/nested/Cargo.toml",
+            "elsewhere/nested/target/app",
+        ]);
+        std::os::unix::fs::symlink(fixture.path().join("elsewhere"), fixture.path().join("target")).expect("a symlink");
+
+        let scan = run(fixture.path(), &verbose());
+
+        assert_eq!(
+            found(&scan, fixture.path()),
+            vec!["elsewhere/nested/target".to_owned(), "target".to_owned()],
+            "the real nested artifact is found by its own path, and nothing through the link"
+        );
     }
 
     /// Ruby's `vendor/bundle/` and Julia's `deps/build/` sit inside directories the walker

@@ -199,3 +199,35 @@ flag that pushes through. Watch mode forces it off — watch already re-runs, so
 inherent, and unattended repeated permission repair against a live build is the last place it
 belongs. `--dry-run --force` is accepted and is a strict no-op by construction, since force lives
 entirely after the step a dry run withholds.
+
+## Amendment — a refused symlink is named, not counted — 2026-08-28
+
+Rail 2 is unchanged: the walker still sets `follow_links(false)`, and deletion still refuses any
+path that resolves through a link. What changed is where the refusal appears.
+
+The walker used to convert a symlinked artifact into a `SkipReason::Symlink` and never pass it
+down the pipeline, so it landed in the "candidates passed over" count — a bare number unless the
+run was given `-v`. A link standing exactly where an artifact belongs is the shape of a mistake
+worth looking at, and a number does not tell anyone it is there. `src/catalog/infra.rs` already
+claimed Bazel's `bazel-*` convenience symlinks were "found, reported, and refused"; they were
+found and refused, and not reported.
+
+A symlinked artifact is now a `Finding` that rail 2 refuses by name:
+
+```text
+  refused           0 B  rust  target  — is a symlink
+```
+
+This is strictly a reporting change and cannot become a deletion: the finding reaches
+`Guard::check` like any other and is refused there, which is the same code path as before and is
+what `should_never_delete_through_a_symlink` asserts. Its size reads `0 B` because `size::measure`
+measures a link as a link — which is honest, since removing it would reclaim nothing.
+
+**Traversal was considered and not changed.** Following links was on the table for this release,
+and the measurement that settled it is worth recording so it is not re-opened without new
+evidence: a sweep of a real `~/workspace` found around 200 symlinked directories, roughly 190 of
+them pnpm's internal store, and following them surfaced **no artifact the walk did not already
+reach by its real path**. The reason is structural rather than incidental. A link's target is
+either below a scan root, in which case the walk arrives by the real name and descending is a
+duplicate, or it is not, in which case containment (rail 5) would refuse everything found there —
+so descending buys a wall of refusals and no reclaimable bytes. `follow_links(false)` stays.

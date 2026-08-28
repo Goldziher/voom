@@ -36,7 +36,12 @@ fn should_find_a_gitignored_artifact() {
     assert!(!root.path().join("target").exists());
 }
 
-/// A symlinked `target/` pointing at a source tree must not become a deletion of that tree.
+/// A symlinked `target/` pointing at a source tree must not become a deletion of that tree —
+/// and the user must be told the link is there, since one standing where an artifact belongs is
+/// the shape of a mistake worth looking at.
+///
+/// The walker used to turn it into a skip, which put it inside an anonymous count unless `-v`
+/// was passed. It is a finding now, refused by name.
 #[test]
 #[cfg(unix)]
 fn should_never_delete_through_a_symlink() {
@@ -46,13 +51,22 @@ fn should_never_delete_through_a_symlink() {
     fs::write(root.path().join("source/main.rs"), b"fn main() {}").unwrap();
     std::os::unix::fs::symlink(root.path().join("source"), root.path().join("target")).unwrap();
 
-    run(&options(root.path())).expect("the run completes");
+    let result = run(&options(root.path())).expect("the run completes");
 
     assert!(
         root.path().join("source/main.rs").exists(),
         "the symlink target survives"
     );
     assert!(root.path().join("target").is_symlink(), "the link itself survives");
+    assert_eq!(
+        result
+            .entries
+            .iter()
+            .map(|entry| (entry.path.file_name().and_then(std::ffi::OsStr::to_str), &entry.outcome))
+            .collect::<Vec<_>>(),
+        vec![(Some("target"), &Outcome::Refused(voom::delete::Refusal::Symlink))],
+        "and the report names it as refused rather than counting it"
+    );
 }
 
 /// A symlink pointing *outside* the scan root is the dangerous case: following it would delete
@@ -67,11 +81,19 @@ fn should_not_follow_a_symlink_out_of_the_scan_root() {
     fs::write(root.path().join("Cargo.toml"), b"[package]").unwrap();
     std::os::unix::fs::symlink(outside.path(), root.path().join("target")).unwrap();
 
-    run(&options(root.path())).expect("the run completes");
+    let result = run(&options(root.path())).expect("the run completes");
 
     assert!(
         outside.path().join("precious.txt").exists(),
         "the outside tree is untouched"
+    );
+    assert!(
+        result
+            .entries
+            .iter()
+            .all(|entry| matches!(entry.outcome, Outcome::Refused(voom::delete::Refusal::Symlink))),
+        "and every entry the run produced was refused: {:?}",
+        result.entries
     );
 }
 
