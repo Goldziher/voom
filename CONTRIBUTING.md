@@ -39,12 +39,18 @@ This is the most common contribution. The checklist:
 2. **Determine the anchor.** Is the marker a sibling of the artifact, or can it be up to `n`
    levels above? For `Ancestor(n)`, justify `n` from real project layouts.
 3. **Add the entry** to the right module under `src/catalog/`.
-4. **Write both fixtures** under `tests/`:
+4. **Check the fixtures the harness generates for you.** `tests/catalog_fixtures.rs` iterates
+   `CATALOG`, so adding an entry automatically gets it:
    - marker present + artifact present → the artifact is removed;
-   - **artifact present, marker absent → the artifact survives.**
+   - **artifact present, marker absent → the artifact survives** — the data-loss regression;
+   - `default_on: false` → survives until enabled explicitly;
+   - a dry run over it changes nothing and predicts the real run.
 
-   The second is mandatory. It is the regression test for data loss, and a PR without one
-   will not be merged.
+   Run `cargo test --test catalog_fixtures` and confirm your entry is covered. The generated
+   trees are **flat**, so an `Ancestor(n)` entry is only exercised at distance zero — if yours
+   climbs, it owes a nesting test of its own. See
+   `should_sweep_a_nested_dotnet_artifact_and_stop_at_the_ancestor_bound` in `tests/safety.rs`
+   for the shape.
 5. **Mark ambiguous artifacts `default_on: false`** with a `note` explaining the opt-in —
    for names that are also plausible source directories in that ecosystem (`build/`,
    `bin/`, `pkg/`) or where removal is expensive rather than cheap (`.venv/`).

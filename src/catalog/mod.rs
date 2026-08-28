@@ -169,7 +169,7 @@ pub struct Ecosystem {
     pub name: &'static str,
     /// Globs that prove the ecosystem. **At least one is mandatory** — an entry without a
     /// marker would be name-only matching, which `adrs/0002-marker-anchored-classification.md`
-    /// forbids and `markers_are_mandatory` rejects.
+    /// forbids and `every_entry_has_at_least_one_marker` rejects.
     pub markers: &'static [&'static str],
     /// Default anchor for this ecosystem's artifacts.
     pub anchor: Anchor,

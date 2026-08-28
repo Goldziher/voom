@@ -220,8 +220,6 @@ impl Selection {
 struct DirFacts {
     /// Bit `i` set means `CATALOG[i]`'s marker glob matched a name in this directory.
     markers: u32,
-    /// Whether a `voom.toml` sits here (ADR 0004's hierarchy, resolved from the same listing).
-    has_config: bool,
     /// Whether the directory could be listed at all. An unreadable directory proves nothing,
     /// which means its candidates survive — the safe direction.
     readable: bool,
@@ -230,7 +228,6 @@ struct DirFacts {
 impl DirFacts {
     const UNREADABLE: Self = Self {
         markers: 0,
-        has_config: false,
         readable: false,
     };
 }
@@ -483,11 +480,6 @@ impl Classifier {
             .collect()
     }
 
-    /// Whether a `voom.toml` sits in this directory, answered from the memoized listing.
-    pub fn has_config(&self, dir: &Path) -> bool {
-        self.facts(dir).has_config
-    }
-
     /// Decides what one directory entry is.
     ///
     /// `root` bounds the search: a marker above the scan root never proves an artifact inside
@@ -630,16 +622,11 @@ impl Classifier {
         };
         let mut facts = DirFacts {
             markers: 0,
-            has_config: false,
             readable: true,
         };
         for entry in entries.flatten() {
-            let name = entry.file_name();
-            if name == OsStr::new(CONFIG_FILE_NAME) {
-                facts.has_config = true;
-            }
             self.markers
-                .for_each_match(&name, |index| facts.markers |= 1_u32 << index);
+                .for_each_match(&entry.file_name(), |index| facts.markers |= 1_u32 << index);
         }
         facts
     }
@@ -891,14 +878,6 @@ mod tests {
     fn should_report_an_unknown_ecosystem_rather_than_ignoring_it() {
         let (_, unknown) = Selection::only(["rust", "rustlang"]);
         assert_eq!(unknown, vec!["rustlang".to_owned()]);
-    }
-
-    #[test]
-    fn should_discover_a_voom_toml_from_the_same_listing() {
-        let fixture = tree(&["Cargo.toml", "voom.toml", "target/"]);
-        let classifier = classifier();
-        assert!(classifier.has_config(fixture.path()));
-        assert!(!classifier.has_config(&fixture.path().join("target")));
     }
 
     /// Memoization is the reason ADR 0002's safety costs almost nothing. Twenty siblings that
