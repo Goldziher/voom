@@ -55,6 +55,45 @@ pub(super) fn ensure_git_available(timeout: Duration) -> Result<(), GitError> {
     }
 }
 
+/// A path in a form git will accept.
+///
+/// Windows `canonicalize` returns the extended-length verbatim form, and **git does not
+/// understand it**: every command answered `fatal: not a git repository` for a `--git-dir`
+/// spelled that way, which broke housekeeping on the platform entirely. The prefix is stripped
+/// here, at the one point a path leaves voom for git — the canonical form is what the containment
+/// and denylist rails compare, and they have to keep it.
+///
+/// This is the same trap ADR 0006's Windows amendment records for the protected-path denylist,
+/// arriving by a different route.
+#[cfg(windows)]
+fn for_git(path: &Path) -> std::borrow::Cow<'_, Path> {
+    use std::path::{Component, Prefix};
+
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return std::borrow::Cow::Borrowed(path);
+    };
+    let mut simplified = match prefix.kind() {
+        Prefix::VerbatimDisk(letter) => std::path::PathBuf::from(format!("{}:", letter as char)),
+        Prefix::VerbatimUNC(server, share) => {
+            let mut unc = std::path::PathBuf::from(r"\\");
+            unc.push(server);
+            unc.push(share);
+            unc
+        }
+        _ => return std::borrow::Cow::Borrowed(path),
+    };
+    // The root component after the prefix is re-added by `push`ing the rest, so skip it here.
+    simplified.extend(components.skip_while(|part| matches!(part, Component::RootDir)));
+    std::borrow::Cow::Owned(simplified)
+}
+
+/// Unix has no verbatim form, so there is nothing to simplify.
+#[cfg(not(windows))]
+fn for_git(path: &Path) -> &Path {
+    path
+}
+
 /// Where git may not look for code to run.
 ///
 /// `git gc --auto` calls the repository's `pre-auto-gc` hook, in the foreground, as the invoking
@@ -86,7 +125,7 @@ pub(super) fn run_step(
         GIT.to_owned(),
         "-c".to_owned(),
         NO_HOOKS.to_owned(),
-        format!("--git-dir={}", git_dir.display()),
+        format!("--git-dir={}", for_git(git_dir).display()),
     ];
     recorded.extend(args.iter().map(|arg| (*arg).to_owned()));
 
@@ -314,5 +353,29 @@ mod tests {
         let completed = run_command(&mut command, Instant::now() + Duration::from_secs(30)).expect("true exists");
         assert!(!completed.timed_out);
         assert_eq!(completed.code, Some(0));
+    }
+
+    /// git does not understand Windows' extended-length paths, so the one place a path leaves
+    /// voom for git strips the prefix. Without this every command answered
+    /// `fatal: not a git repository` and housekeeping did nothing on the platform at all —
+    /// caught by CI, because the failure cannot happen anywhere else.
+    #[test]
+    #[cfg(windows)]
+    fn should_hand_git_a_path_it_understands() {
+        use std::path::Path;
+
+        assert_eq!(
+            for_git(Path::new(r"\\?\C:\Users\r\project\.git")).as_ref(),
+            Path::new(r"C:\Users\r\project\.git")
+        );
+        assert_eq!(
+            for_git(Path::new(r"\\?\UNC\server\share\project\.git")).as_ref(),
+            Path::new(r"\\server\share\project\.git")
+        );
+        // An ordinary path is already something git accepts, and is returned untouched.
+        assert_eq!(
+            for_git(Path::new(r"C:\already\fine")).as_ref(),
+            Path::new(r"C:\already\fine")
+        );
     }
 }
