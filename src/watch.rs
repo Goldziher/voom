@@ -126,7 +126,13 @@ impl QuietTracker {
 #[must_use]
 pub fn should_watch(path: &Path) -> bool {
     let Some(name) = path.file_name() else { return true };
-    !(is_dependency_dir(name) || name == std::ffi::OsStr::new(".git"))
+    // The same list the walker never descends into, rather than a second copy of it: watching
+    // one of these burns an inotify watch on a subtree nothing here would ever act on, and two
+    // copies of a list like this drift.
+    let vcs = crate::scan::NEVER_DESCEND
+        .iter()
+        .any(|never| name == std::ffi::OsStr::new(never));
+    !(is_dependency_dir(name) || vcs)
 }
 
 /// Runs the watcher until interrupted.

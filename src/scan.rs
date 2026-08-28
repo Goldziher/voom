@@ -25,7 +25,7 @@ use crate::error::{Error, Result};
 /// `.git` is not an artifact and its contents are irreplaceable; the rest are the dependency
 /// caches ADR 0001 puts out of scope. Skipping them is where most of the saving comes from —
 /// they are the deepest and widest subtrees on a typical disk.
-const NEVER_DESCEND: &[&str] = &[".git", ".hg", ".svn"];
+pub const NEVER_DESCEND: &[&str] = &[".git", ".hg", ".svn"];
 
 /// A compiled set of configured path globs, and the pattern each match came from.
 ///
@@ -269,6 +269,9 @@ impl Visitor<'_> {
                     message: error.to_string(),
                     transient,
                 };
+                // Sends cannot fail here: `scan_root` owns the `Receiver` and holds it until
+                // `WalkBuilder::run` returns, which is after every worker has finished. The
+                // same is true of the other sends in this file.
                 let _ = sender.send(Message::Failure(Box::new(failure)));
                 return WalkState::Continue;
             }

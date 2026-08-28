@@ -842,6 +842,40 @@ mod config_tests {
         assert!(!fixture.path().join("drop/target").exists());
     }
 
+    /// `normalize_roots` walks the spelling the user typed rather than the canonical path
+    /// precisely so that this keeps working. Nothing pinned it until now.
+    #[test]
+    #[cfg(unix)]
+    fn should_keep_an_exclude_matching_when_the_root_is_reached_through_a_symlink() {
+        let fixture = tree(&[
+            "real/voom.toml",
+            "real/keep/Cargo.toml",
+            "real/keep/target/app",
+            "real/drop/Cargo.toml",
+            "real/drop/target/app",
+        ]);
+        let link = fixture.path().join("link");
+        std::os::unix::fs::symlink(fixture.path().join("real"), &link).expect("a symlink");
+        write(
+            &link,
+            "voom.toml",
+            &format!("exclude = [\"{}/keep/**\"]\n", link.display()),
+        );
+
+        let mut options = options(fixture.path());
+        options.roots = vec![link.clone()];
+        run(&options).expect("the run completes");
+
+        assert!(
+            fixture.path().join("real/keep/target/app").exists(),
+            "an exclusion written against the typed spelling still has to match"
+        );
+        assert!(
+            !fixture.path().join("real/drop/target").exists(),
+            "and the rest of the tree is still swept"
+        );
+    }
+
     #[test]
     fn should_reject_a_broken_config_and_name_the_file() {
         let fixture = tree(&["Cargo.toml", "target/app", "voom.toml"]);
