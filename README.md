@@ -311,8 +311,22 @@ voom is I/O-bound, so the wins come from not walking things: it prunes matched a
 `.git/`, and dependency directories at the directory level rather than descending into them,
 and fans the remaining work across every core.
 
-Measure your own with `hyperfine`. Numbers here will be filled in from a real corpus once
-`0.1.0` ships rather than estimated.
+Measured with `hyperfine` on an M-series Mac against a real machine — a 130 GB `~/workspace`
+holding 16 ecosystems, and a `$HOME` above it. Dry runs, so the walk and the size accounting
+are timed without the removal:
+
+| Sweep | Mean | Found |
+| --- | --- | --- |
+| `~/workspace` (130 GB) | 5.3 s ± 0.8 | 172 artifacts |
+| `$HOME` | 10.7 s ± 0.7 | 174 artifacts |
+| `$HOME --caches` | 15.3 s ± 3.0 | 475 artifacts |
+
+`-j` genuinely throttles the whole sweep, not just the walk: the same `~/workspace` run takes
+14.3 s ± 0.4 at `-j 1`, 2.7× the default. That is the point of the flag on a spinning disk or a
+network filesystem, where saturating the cores is the wrong thing to do.
+
+Measure your own the same way — and if you change the walk, measure before and after on the same
+tree and put both numbers in the pull request.
 
 ## Development
 
