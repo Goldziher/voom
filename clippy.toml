@@ -1,0 +1,6 @@
+# `unwrap_used` / `expect_used` are denied in Cargo.toml because a panic mid-run leaves the
+# user with a partially deleted tree and no report. Tests are the exception: there, a panic
+# *is* the failure report.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
