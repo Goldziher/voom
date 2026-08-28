@@ -1,6 +1,6 @@
 # @goldziher/voom
 
-Fast, safe, parallel build-artifact pruning across 24 language ecosystems.
+Fast, safe, parallel build-artifact pruning across every major language ecosystem.
 
 ```bash
 npm install -g @goldziher/voom

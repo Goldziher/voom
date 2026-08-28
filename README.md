@@ -20,7 +20,7 @@ Let me tell you it does clean up snow!
 <br>
 
 voom finds and removes build artifacts across your whole disk — `target/`, `dist/`,
-`__pycache__/`, `.gradle/`, `.zig-cache/` and the rest of 24 ecosystems — in one parallel pass.
+`__pycache__/`, `.gradle/`, `.zig-cache/` and the rest — in one parallel pass.
 It proves every candidate against an ecosystem marker file before it deletes, so it will
 never take your hand-written `bin/` directory.
 
@@ -57,8 +57,9 @@ stays exactly where it is.
 
 ## Features
 
-- **24 ecosystems** — Rust, Node, Python, Go, Zig, Swift, Xcode, Maven, Gradle, .NET, CMake,
-  Dart, Elixir, Ruby, PHP, Scala, Haskell, OCaml, Julia, R, Nim, Elm, Terraform, Bazel
+- **Every major ecosystem** — Rust, Node, Python, Go, Zig, Swift, Xcode, Maven, Gradle,
+  .NET, CMake, Dart, Elixir, Ruby, PHP, Scala, Haskell, OCaml, Julia, R, Nim, Elm,
+  Terraform, Bazel
 - **Marker-anchored** — never deletes on a directory name alone, so your `bin/`, `vendor/`
   and `obj/` source directories are safe
 - **Fast** — parallel traversal that prunes whole subtrees and saturates every core

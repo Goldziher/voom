@@ -49,6 +49,12 @@ GEMINI.md
 .github/commands/
 .github/skills/
 
+
+# Copied in from the root at publish time so the npm and PyPI tarballs carry the licence
+# text they declare. One source of truth; two copies would drift.
+npm-package/LICENSE
+pip-package/LICENSE
+
 # BEGIN ai-rulez (DO NOT EDIT - managed by ai-rulez)
 .ai-rulez/.generated-manifest.json
 .claude/
@@ -57,8 +63,3 @@ GEMINI.md
 AGENTS.md
 CLAUDE.md
 # END ai-rulez
-
-# Copied in from the root at publish time so the npm and PyPI tarballs carry the licence
-# text they declare. One source of truth; two copies would drift.
-npm-package/LICENSE
-pip-package/LICENSE

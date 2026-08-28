@@ -1,6 +1,6 @@
 version = "4.0"
 name = "voom"
-description = "Fast, safe, parallel build-artifact pruning across 24 language ecosystems — a single pure-Rust binary that recursively finds and removes build output anywhere in a tree, proving every candidate against an ecosystem marker file before it deletes."
+description = "Fast, safe, parallel build-artifact pruning across every major language ecosystem — a single pure-Rust binary that recursively finds and removes build output anywhere in a tree, proving every candidate against an ecosystem marker file before it deletes."
 gitignore = true
 
 presets = ["claude", "codex"]

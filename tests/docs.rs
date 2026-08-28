@@ -271,74 +271,118 @@ fn no_source_file_exceeds_the_module_size_cap() {
     );
 }
 
-/// Every text file in the repository that claims a number of supported ecosystems.
+/// Does this line write out a literal number of the ecosystems voom supports?
 ///
-/// Returns `(path, claimed)` for each occurrence of the phrase the project's one-line
-/// description uses everywhere it appears: `across`, a count, then the words below.
-fn ecosystem_count_claims() -> Vec<(std::path::PathBuf, String)> {
-    const PHRASE: &str = " language ecosystems";
-    const SKIP: [&str; 4] = ["target", ".git", "node_modules", "__pycache__"];
+/// Matches a run of digits sitting immediately before `ecosystem`/`ecosystems`, optionally
+/// with `language` between them. That covers every shape the count was ever written in: the
+/// one-line description's `across 24 language ecosystems`, the README feature list's
+/// `**24 ecosystems**`, and its opening paragraph's `the rest of 24 ecosystems`.
+///
+/// `holding N ecosystems` is the one exception, and it is not a support claim — it counts what
+/// was in the benchmark corpus the README's timings were measured against, which is a fact
+/// about that machine and would be wrong to erase.
+fn states_an_ecosystem_count(line: &str) -> bool {
+    line.match_indices("ecosystem").any(|(index, _)| {
+        let before = line[..index].trim_end();
+        let before = before.strip_suffix("language").map_or(before, str::trim_end);
+        let subject = before.trim_end_matches(|character: char| character.is_ascii_digit());
+        subject.len() != before.len() && !subject.trim_end().ends_with("holding")
+    })
+}
 
-    fn walk(dir: &std::path::Path, found: &mut Vec<(std::path::PathBuf, String)>) {
+/// Every live surface in the repository that writes the ecosystem count out by hand.
+///
+/// Returns the offending `(path, line)` pairs and the number of text files read, so a caller
+/// can tell "nothing is broken" apart from "the walk found nothing to look at".
+fn hard_coded_ecosystem_counts() -> (Vec<(std::path::PathBuf, String)>, usize) {
+    const SKIP: [&str; 4] = ["target", ".git", "node_modules", "__pycache__"];
+    // Dated records, not live surfaces. `CHANGELOG.md` and the ADRs describe what was true at
+    // a point in time and are wrong to update; `assets/social.svg` is the rendered social
+    // preview card, whose text is regenerated with the branding rather than maintained here.
+    // This file is exempt because a test forbidding a phrase has to be able to quote it.
+    const EXEMPT: [&str; 4] = ["./CHANGELOG.md", "./adrs", "./assets/social.svg", "./tests/docs.rs"];
+
+    fn walk(dir: &std::path::Path, found: &mut Vec<(std::path::PathBuf, String)>, scanned: &mut usize) {
         let Ok(entries) = fs::read_dir(dir) else { return };
         for entry in entries.flatten() {
             let path = entry.path();
             let name = entry.file_name();
-            if SKIP.iter().any(|skip| name == *skip) {
+            if SKIP.iter().any(|skip| name == *skip) || EXEMPT.iter().any(|exempt| path == std::path::Path::new(exempt))
+            {
                 continue;
             }
             if path.is_dir() {
-                walk(&path, found);
+                walk(&path, found, scanned);
                 continue;
             }
             // Binary files (the banner PNGs, the compiled Python) simply do not read as UTF-8.
             let Ok(text) = fs::read_to_string(&path) else { continue };
+            *scanned += 1;
             for line in text.lines() {
-                for (index, _) in line.match_indices(PHRASE) {
-                    let before = &line[..index];
-                    if let Some(claim) = before.rsplit(' ').next()
-                        && before.trim_end().ends_with(&format!("across {claim}"))
-                    {
-                        found.push((path.clone(), claim.to_owned()));
-                    }
+                if states_an_ecosystem_count(line) {
+                    found.push((path.clone(), line.trim().to_owned()));
                 }
             }
         }
     }
 
     let mut found = Vec::new();
-    walk(std::path::Path::new("."), &mut found);
-    found
+    let mut scanned = 0;
+    walk(std::path::Path::new("."), &mut found, &mut scanned);
+    (found, scanned)
 }
 
-/// The ecosystem count in the project's description, wherever it appears.
+/// No surface writes the ecosystem count out by hand.
 ///
-/// The number is written out by hand in ten places — the crate, npm and `PyPI` manifests, three
-/// READMEs, the `--help` text, the generated Homebrew formula, and the two generated agent
-/// files — and it went stale the moment ecosystems 21 through 24 landed. A count nobody checks
-/// is a claim that drifts, and this one is on the first line a reader sees on four registries.
+/// This replaces `every_stated_ecosystem_count_matches_the_catalog`, which asserted that the
+/// ten hand-written copies of the number agreed with `CATALOG`. That treated the symptom and
+/// kept the disease: adding an ecosystem still meant editing ten files, and all the test did
+/// was fail the build until you had. Forbidding the count outright is the stronger invariant —
+/// a number that is never written cannot go stale, and nobody has to remember to bump it.
+///
+/// Two surfaces still state how many there are, and neither can drift: `voom catalog` prints
+/// `CATALOG` directly, and the README's ecosystem table is checked against `CATALOG` in both
+/// directions by the tests above. Everything else — the crate, npm and `PyPI` manifests, the
+/// two package READMEs, the `--help` text, the generated Homebrew formula, `.ai-rulez/config.toml`
+/// and the agent files generated from it — carries prose with no number in it.
 ///
 /// Discovery is by walking the tree rather than by a fixed list, so a surface added later is
 /// covered without anyone remembering to add it here.
 #[test]
-fn every_stated_ecosystem_count_matches_the_catalog() {
-    let claims = ecosystem_count_claims();
+fn no_surface_hard_codes_an_ecosystem_count() {
     assert!(
-        claims.len() >= 8,
-        "the description is stated in many places; the walk found only {} — is the phrase right?",
-        claims.len()
+        states_an_ecosystem_count("build-artifact pruning across 24 language ecosystems"),
+        "the matcher no longer recognises the phrasing it exists to forbid"
+    );
+    assert!(
+        states_an_ecosystem_count("- **24 ecosystems** — Rust, Node, Python"),
+        "the matcher no longer recognises a bare count before the noun"
+    );
+    assert!(
+        !states_an_ecosystem_count("build-artifact pruning across every major language ecosystem"),
+        "the matcher flags countless prose, so it would fail no matter what anyone wrote"
+    );
+    assert!(
+        !states_an_ecosystem_count("a 130 GB `~/workspace` holding 16 ecosystems, and a `$HOME` above it"),
+        "the matcher flags the benchmark corpus, which counts a fixture tree and not what voom supports"
     );
 
-    let expected = CATALOG.len().to_string();
-    let stale: Vec<String> = claims
+    let (found, scanned) = hard_coded_ecosystem_counts();
+    assert!(
+        scanned > 50,
+        "the walk read only {scanned} text files — is the path right?"
+    );
+
+    let stated: Vec<String> = found
         .iter()
-        .filter(|(_, claimed)| *claimed != expected)
-        .map(|(path, claimed)| format!("{} says {claimed}", path.display()))
+        .map(|(path, line)| format!("{}: {line}", path.display()))
         .collect();
 
     assert!(
-        stale.is_empty(),
-        "the catalog ships {expected} ecosystems, and these disagree:\n  {}",
-        stale.join("\n  ")
+        stated.is_empty(),
+        "the number of ecosystems is written out by hand here:\n  {}\n\nSay it without a count. \
+         `voom catalog` prints the catalog and the README's table is checked against it, so those \
+         two are the only places the number belongs.",
+        stated.join("\n  ")
     );
 }

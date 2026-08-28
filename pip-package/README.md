@@ -1,6 +1,6 @@
 # voom-cli
 
-Fast, safe, parallel build-artifact pruning across 24 language ecosystems.
+Fast, safe, parallel build-artifact pruning across every major language ecosystem.
 
 ```bash
 pip install voom-cli
