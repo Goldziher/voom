@@ -2,28 +2,27 @@
 priority: high
 ---
 
-# Agent comms & basemind-first
+# Agent comms
 
-basemind is this repo's indexed context layer AND a multi-agent communication substrate. Two
-standing directives for any agent working here:
+**Coordinate when you are not alone.** You may be one of several agents working this repo at
+once — and this is a tool that deletes directories, so two agents editing the classifier or
+running a live sweep in the same tree is a real hazard, not a style problem. Say what you are
+doing before you start, and say what you did when you finish. If another agent is mid-run in
+this working tree, do not run `git checkout`, `git stash`, `git restore`, or a real (non
+`--dry-run`) sweep over it.
 
-**Prefer basemind — shell/grep/git are the fallback.** Reach for basemind's MCP tools before
-reading files, before grep/ripgrep, and before naked `git`: `outline` / `search_symbols` /
-`find_references` / `find_callers` / `workspace_grep` for code navigation; `recent_changes` /
-`blame_file` / `blame_symbol` / `diff_file` / `diff_outline` / `commits_touching` instead of
-`git log` / `git blame`; `search_documents` and the documents pipeline for extraction, RAG,
-keyword + entity (NER), and summary; `web_scrape` / `web_crawl` / `web_map` for scraping, crawling,
-and sitemaps; tree-sitter `outline` for code parsing. They return paths, lines, and signatures —
-a fraction of the tokens of reading source. basemind first; shell is the fallback.
+**How you coordinate depends on what is connected.** If a basemind server is available in
+your session, use its comms tools: check `room_list` + `inbox_read` and recent `room_history`
+on start (both return front-matter only — call `message_get` with an id to read a body), then
+`room_post {room, subject, body, reply_to?}` when you begin, finish, or hit a decision, and
+reply with `reply_to` to messages about your work. `agent_list` discovers peers, `dm_send`
+reaches one directly, and an orchestrator can drive named subagents via `as_agent`. See the
+`multi-agent-room` skill.
 
-**Communicate with other agents.** You may be one of several agents working this repo at once. On
-start, check `room_list` + `inbox_read` (and recent `room_history`) for what's been said;
-`room_history` and `inbox_read` return front-matter only (subject / from / id) — call `message_get`
-with an id to read a body. Post a concise `room_post {room, subject, body, reply_to?}` when you
-begin, finish, or hit a decision, and reply (`reply_to`) to messages about your work. Don't stay
-silent when collaborating. An orchestrator can drive many named subagents via `as_agent` (each
-with its own identity and inbox), send direct messages with `dm_send`, and discover peers via
-`agent_list`. To spawn and drive subagents you may also use basemind's shell tools —
-`shell_spawn` / `shell_send` / `shell_broadcast` / `shell_list` / `shell_capture` /
-`shell_kill` — where applicable, in addition to `as_agent` / `dm_send`. See the
-`multi-agent-room` skill for coordinating a team.
+If it is not available — which is the normal case when only `poly` is configured in
+`.mcp.json` — coordinate through whatever the harness gives you: the subagent report you
+return to your caller, and a clear statement of which files you touched. Do not go silent
+because the messaging tools are missing.
+
+**Prefer basemind's navigation tools when they are there**, and shell / grep / git when they
+are not. [[basemind-usage]] has the mapping. Neither choice is a violation.

@@ -44,6 +44,18 @@ than discovered. Use `assert_cmd` + `predicates` for the CLI surface and exit co
 Tests build their own trees under `TempDir`. A test that touches `$HOME`, `/tmp` directly, or
 any path outside its fixture is a bug regardless of whether it passes.
 
+## What every test has to be
+
+- **Independent and idempotent.** `cargo test` runs the suite in parallel and in no
+  particular order, and these tests create and delete directories — so no shared mutable
+  state, no reliance on execution order, and nothing left behind. `TempDir` is what cleans up.
+- **Named for the behaviour it specifies.** `should_refuse_a_symlinked_artifact`, not
+  `test_symlink`. A reader deciding whether a case is covered reads the names, not the bodies.
+- **Asserting an exact expected value**, not truthiness, with a failure message that names the
+  path or entry that failed. `assert!(result.is_ok())` tells whoever hits it nothing.
+- **Able to fail.** A test that passes against broken code is not testing anything. For a new
+  safety rule, watch the negative fixture go red before you make it green.
+
 ## The commit gate
 
 Before committing:

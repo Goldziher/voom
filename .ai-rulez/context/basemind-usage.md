@@ -1,59 +1,62 @@
 ---
-priority: critical
+priority: medium
 ---
 
-# basemind-first: required tooling for this repo
+# basemind, when it is connected
 
-This repo is indexed by **basemind** (served over MCP). Any agent working here **MUST** use
-basemind's tools instead of the naive equivalents. They return paths, line numbers, and
-signatures — a fraction of the tokens of reading source — and they share one index across the
-session. basemind first; shell/grep/git are the fallback only when a tool genuinely cannot
-answer. Do not re-read a file basemind has already mapped; `rescan` after edits instead of
-reconnecting.
+[basemind](https://github.com/Goldziher/basemind) is an indexed context layer served over MCP.
+When it is connected in your session it is the better way to navigate this repo: its tools
+return paths, line numbers, and signatures — a fraction of the tokens of reading source — and
+they share one index across the session.
 
-## 1. Code search — NOT grep/ripgrep/reading files
+**It is not guaranteed to be there.** This repo's `.mcp.json` is generated from
+`.ai-rulez/config.toml`, and whether a basemind server is actually running depends on the
+harness and the machine. So: **check whether the tools are available, use them if they are,
+and use shell / grep / git if they are not.** Neither is a violation. Do not spend turns
+hunting for a server that is not connected, and do not refuse to answer a question because
+the preferred tool is absent.
 
-- `search_symbols` — "where is X defined?" Use instead of grepping for a definition.
+Below is the mapping, for when the tools *are* available. Each line is "prefer the left over
+the right", not "the right is forbidden".
+
+## 1. Code search — over grep / ripgrep / reading whole files
+
+- `search_symbols` — "where is X defined?"
 - `outline` — the shape of a file (symbols, signatures, imports); add `l2: true` for calls +
-  docs. `outline` a file before you open it, then read only the span you need.
-- `find_references` — every use site of a name. Use instead of grepping call sites.
+  docs. Outline a file before you open it, then read only the span you need.
+- `find_references` — every use site of a name.
 - `find_callers` — callers of a specific definition.
-- `workspace_grep` — full-text search across the repo. Use instead of shelling out to grep /
-  ripgrep.
+- `workspace_grep` — full-text search across the repo.
 
-## 2. Git history — NOT naked `git`
+After edits, `rescan` rather than reconnecting.
+
+## 2. Git history — over naked `git log` / `git blame` / `git diff`
 
 - `recent_changes` — what changed recently.
-- `blame_file` / `blame_symbol` — who last touched a file or symbol (symbol-resolution blame).
+- `blame_file` / `blame_symbol` — who last touched a file or symbol.
 - `diff_file` / `diff_outline` — diffs at file or symbol granularity.
 - `commits_touching` — history for a path/symbol.
-
-Use these instead of `git log` / `git blame` / `git diff`.
 
 ## 3. Crawling & document intelligence — when researching crate APIs / docs
 
 - `web_scrape` / `web_crawl` / `web_map` — scrape a page, crawl a site, or fetch a sitemap when
-  researching an upstream crate's API or documentation (e.g. confirming what `ruff`, `oxc`,
-  `taplo`, `sqruff`, or `tree-sitter-language-pack` externalize before wrapping or vendoring).
+  researching an upstream crate's API or documentation.
 - `search_documents` and the documents pipeline (RAG, keyword + entity/NER, summary) — extract
   and search over docs/PDFs/specs in the repo instead of opening them by hand.
 
-## 4. Semantic + free-text search
-
-- `search_documents` — semantic / RAG search across indexed documents.
-- `search_symbols` — free-text + symbol search across code.
-
-## 5. Spawning subagents via basemind shells
+## 4. Spawning subagents via basemind shells
 
 - `shell_spawn` / `shell_send` / `shell_broadcast` / `shell_list` / `shell_capture` /
-  `shell_kill` — spawn and drive subagents (e.g. one per backend) where applicable, in addition
-  to `as_agent` / `dm_send`.
+  `shell_kill` — spawn and drive subagents, in addition to `as_agent` / `dm_send`. The
+  harness's own subagent mechanism does the same job when basemind is absent.
 
-## 6. Agent communication — coordinate with peers
+## 5. Agent communication — coordinate with peers
 
 - `agent_list` — discover other agents on the repo.
 - `room_list` / `room_history` / `inbox_read` / `message_get` — read what's been said
   (`room_history` / `inbox_read` return front-matter only; call `message_get` with an id for a
   body).
 - `room_post` / `dm_send` — post status when you begin, finish, or hit a decision; DM a
-  specific peer. Don't stay silent when collaborating.
+  specific peer.
+
+See [[agent-comms]] for the coordination side of this.
