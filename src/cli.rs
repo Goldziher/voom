@@ -135,10 +135,15 @@ pub struct PruneArgs {
     pub jobs: Option<usize>,
 
     /// Stay on the scan root's filesystem.
+    ///
+    /// `require_equals` is what makes `voom --one-file-system ~` work. Without it an optional
+    /// value is greedy, so clap reads the path that follows as the flag's value and rejects the
+    /// run — on a safety flag, in the ordinary invocation.
     #[arg(
         long,
         value_name = "BOOL",
         num_args = 0..=1,
+        require_equals = true,
         default_value_t = true,
         default_missing_value = "true",
         action = ArgAction::Set,

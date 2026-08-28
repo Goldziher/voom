@@ -421,3 +421,25 @@ fn should_mark_an_unanchored_removal_in_json() {
         .success()
         .stdout(contains("\"source\": \"config-include\"").and(contains("\"ecosystem\": null")));
 }
+
+/// `--one-file-system` is a safety control with three spellings, and the tri-state clap
+/// configuration behind it is easy to break silently. Testing the crossing itself would need a
+/// second filesystem; testing that every documented spelling parses does not, and a flag that
+/// stops parsing is a flag that stops guarding.
+#[test]
+fn should_accept_every_spelling_of_the_filesystem_boundary_flag() {
+    let tree = mixed_tree();
+    for args in [
+        vec!["--dry-run"],
+        vec!["--dry-run", "--one-file-system"],
+        vec!["--dry-run", "--one-file-system=true"],
+        vec!["--dry-run", "--one-file-system=false"],
+    ] {
+        voom()
+            .args(&args)
+            .arg(tree.path())
+            .assert()
+            .success()
+            .stdout(contains("would remove"));
+    }
+}

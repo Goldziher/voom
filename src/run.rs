@@ -611,6 +611,26 @@ mod tests {
         assert_eq!(snapshot(unbounded.path()), snapshot(throttled.path()));
     }
 
+    /// The reviewer's case: one root reached through a symlink that lands *inside* another.
+    /// It is a duplicate, not a sibling, and the sort has to see that before the prefix filter
+    /// can drop it.
+    #[test]
+    #[cfg(unix)]
+    fn should_drop_a_root_that_symlinks_into_another_root() {
+        let fixture = tree(&["outer/inner/Cargo.toml", "outer/inner/target/app"]);
+        let link = fixture.path().join("link");
+        std::os::unix::fs::symlink(fixture.path().join("outer/inner"), &link).expect("a symlink");
+
+        let mut options = options(fixture.path());
+        options.dry_run = true;
+        options.roots = vec![fixture.path().join("outer"), link];
+
+        let result = run(&options).expect("the run completes");
+
+        assert_eq!(result.entries.len(), 1, "one artifact, reached two ways");
+        assert_eq!(result.roots, vec![fixture.path().join("outer")]);
+    }
+
     /// The doc comment promises a bad root stops the run before anything is removed. With one
     /// root that is vacuous; with two it is the property that matters.
     #[test]
