@@ -3,26 +3,15 @@
 
 <img src="assets/banner.svg" alt="voom — clean up the pink snow" width="820">
 
-<em>
-Then the Voom&hellip;<br>
-It went VOOM!<br>
-And, oh boy!<br>
-What a VOOM!<br>
-<br>
-Now, don't ask me what Voom is.<br>
-I never will know.<br>
-But, boy!<br>
-Let me tell you it does clean up snow!
-</em>
+**Reclaim every build artifact on your disk in one parallel pass — and prove each one before deleting it.**
 
-<sub>Dr. Seuss, <em>The Cat in the Hat Comes Back</em></sub>
+voom finds and removes build output anywhere in a tree: `target/`, `dist/`, `__pycache__/`,
+`.gradle/`, `.zig-cache/` and the rest. A directory counts as an artifact only when a marker file
+proves its ecosystem — `target/` is Rust's when a `Cargo.toml` sits beside it, and somebody's data
+otherwise — so a hand-written `bin/` or `vendor/` is never taken.
 
-<br>
-
-voom finds and removes build artifacts across your whole disk — `target/`, `dist/`,
-`__pycache__/`, `.gradle/`, `.zig-cache/` and the rest — in one parallel pass.
-It proves every candidate against an ecosystem marker file before it deletes, so it will
-never take your hand-written `bin/` directory.
+Every major ecosystem · marker-anchored classification · six deletion rails · a dry run that is the
+real pipeline · hierarchical TOML · watch mode · git hooks
 
 [![crates.io](https://img.shields.io/crates/v/voom?style=flat-square&color=2dd4bf)](https://crates.io/crates/voom)
 [![npm](https://img.shields.io/npm/v/@goldziher/voom?style=flat-square&color=2dd4bf&label=npm)](https://www.npmjs.com/package/@goldziher/voom)
@@ -37,40 +26,53 @@ never take your hand-written `bin/` directory.
 
 ---
 
-## Why voom
+<!-- markdownlint-disable MD013 -->
+<p align="center"><img src="assets/demo.gif" alt="voom previewing a tree with --dry-run, running the same sweep for real, then summarising a whole home directory" width="820"></p>
+<p align="center"><em>A <code>--dry-run</code>, then the same sweep for real — it removes exactly what it showed, because the dry run is the same pipeline with the last step withheld. Then a summary of a whole home directory.</em></p>
+<!-- markdownlint-enable MD013 -->
 
-Your disk is full of build output you will never look at again. It is spread across every
-project you have touched, in a different directory name for every language, and the tools
-that clean it up each know exactly one ecosystem — `cargo clean` for Rust, `./gradlew clean`
-for Gradle, nothing at all for the rest.
+---
 
-So most people reach for `find . -name target -exec rm -rf {} +`, and sooner or later that
-deletes a hand-written `bin/`.
+## What you get
 
-voom sweeps all of it in one pass, and it does not guess. A directory is only an artifact
-when a **marker file proves the ecosystem** sits next to it: a `target/` with a `Cargo.toml`
-beside it is Rust's build output, a `target/` with nothing beside it is somebody's data and
-stays exactly where it is.
+| Capability | What it does |
+| --- | --- |
+| **Every major ecosystem** | Rust, Node, Python, Go, Zig, Swift, Xcode, Maven, Gradle, .NET, CMake, Dart, Elixir, Ruby, PHP, Scala, Haskell, OCaml, Julia, R, Nim, Elm, Terraform, Bazel — [the table below](#supported-ecosystems), or `voom catalog` for the live one |
+| **Proof before deletion** | Never a directory name alone: a marker file has to prove the ecosystem at the artifact's declared anchor, or voom walks past |
+| **Six deletion rails** | No symlink following, no filesystem crossing, canonicalization, an append-only protected-path denylist, containment below a scan root, and per-artifact failure isolation |
+| **One pass** | Parallel traversal that prunes whole subtrees — matched artifacts, `.git/`, dependency directories, tool caches — rather than descending and filtering |
+| **A report you can audit** | Sorted, per-artifact, with a reason for everything it did *not* take; `--format json` for machines; stage timings in the footer |
+| **Keep policies** | `--min-age`, `--min-size`, `--max-size`, plus hierarchical `voom.toml` with per-path and per-ecosystem overrides |
+| **Watch mode** | Keeps a tree pruned as you work, without touching an in-progress build |
+| **Git housekeeping** | `git worktree prune` and `git gc --auto` in every repository the sweep walks past, free of a second traversal |
+| **Git hooks** | For `pre-commit` and poly, reporting by default |
 
-> The name is from *The Cat in the Hat Comes Back* — Voom is what Little Cat Z pulls out of
-> his hat to clear every last speck of pink snow at once.
+## New in 0.2.0
 
-## Features
+- **A removal that only partly succeeded is reported as one, with the bytes it actually freed.**
+  `remove_dir_all` unlinks a tree's contents before the tree itself, so a failure part-way through
+  leaves real space reclaimed. voom used to score that zero — a sweep that freed 130 GB printed a
+  footer saying 25. The headline now counts every byte the run freed and names what is left.
+- **Failures say what happened in words.** `Directory not empty (os error 66)` became *"a directory
+  was not empty when voom unlinked it, most likely because something wrote into it during the
+  removal; re-run to finish"*. Classified by `io::ErrorKind`, never by error number.
+- **`--force`** retries a failed removal, repairing permissions *inside* the artifact first —
+  read-only bits, and on macOS the user-immutable flag. It never relaxes a rail, never follows a
+  symlink, never widens a hard-linked file, and never touches the artifact's parent. Four attempts
+  in a little over a second, then it reports and moves on.
+- **`--clean-dependencies`** opts into `node_modules/`, composer and Go `vendor/`, mix `deps/` and
+  Python virtualenvs. They are ordinary off-by-default catalog entries, still proved against their
+  own markers, and the footer names them when one is removed.
+- **Git housekeeping runs by default** — `git worktree prune` and `git gc --auto`, both local, both
+  what git runs itself after a commit. `--no-git`, or `[git] enabled = false`, turns it off.
+- **The footer says where the time went**: `scan 2.61s · policy 645µs · size 2.28s · delete 1.42s`.
+  JSON carries the same in `timings_us`.
+- **Sizes are correct on hard-linked trees.** Cargo hard-links into `target/`, pnpm links its store,
+  a Bazel output base is largely links. Counting each inode once (`du`'s rule) took the largest real
+  artifact on the author's machine from a reported 113.91 GB to 84.45 GB; `du` says 84.51 GB.
 
-- **Every major ecosystem** — Rust, Node, Python, Go, Zig, Swift, Xcode, Maven, Gradle,
-  .NET, CMake, Dart, Elixir, Ruby, PHP, Scala, Haskell, OCaml, Julia, R, Nim, Elm,
-  Terraform, Bazel
-- **Marker-anchored** — never deletes on a directory name alone, so your `bin/`, `vendor/`
-  and `obj/` source directories are safe
-- **Fast** — parallel traversal that prunes whole subtrees and saturates every core
-- **Safe by construction** — no symlink following, no crossing filesystem boundaries, a
-  protected-path denylist, and containment checks on every removal
-- **Configurable** — hierarchical TOML with include/exclude paths and per-path, per-ecosystem
-  keep policies for age and size
-- **Reports properly** — deterministic colored output, `--format json` for machines, and a
-  reason for everything it *didn't* take
-- **Watch mode** — keep a tree pruned continuously, without touching in-progress builds
-- **Git hooks** — for both `pre-commit` and poly, reporting by default
+A dry run of a real `~/workspace` is **1.48× faster than v0.1.0** — see [Performance](#performance).
+Full detail in [`CHANGELOG.md`](./CHANGELOG.md); the JSON schema is now version `2`.
 
 ## Installation
 
@@ -81,8 +83,8 @@ stays exactly where it is.
 | npm (Node.js) | `npm install -g @goldziher/voom` |
 | pip (Python) | `pip install voom-cli` |
 
-The binary is called `voom` however you install it. The package names differ because `voom`
-was already taken on npm and PyPI — see [ADR 0010](adrs/0010-distribution-and-naming.md).
+The binary is called `voom` however you install it. The package names differ because `voom` was
+already taken on npm and PyPI — see [ADR 0010](adrs/0010-distribution-and-naming.md).
 
 Prefer prebuilt binaries? [`cargo binstall voom`](https://github.com/cargo-bins/cargo-binstall)
 downloads a release archive instead of compiling from source.
@@ -110,20 +112,29 @@ Requires Rust 1.88+ (edition 2024).
 ## Quick start
 
 ```bash
-# See what's reclaimable across everything, without touching anything
-voom --dry-run ~
+voom --dry-run ~      # see what's reclaimable across everything, without touching anything
+voom ~                # actually clean it up
+voom ./my-project     # clean one project
+```
 
-# Actually clean it up
-voom ~
+What a run prints:
 
-# Clean one project
-voom ./my-project
+```text
+/projects
+  removed   4.20 GB  rust  api/target
+  refused       0 B  rust  link/target    — is a symlink
+  removed  18.50 MB  node  web/dist
+
+2 artifacts, 4.22 GB reclaimed in 1.23s
+  scan 900.00ms · policy 12.00ms · size 210.00ms · delete 98.00ms
+  rust 4.20 GB (1), node 18.50 MB (1)
+  1 artifact refused by a safety rail
 ```
 
 ## Usage
 
-**voom deletes by default.** `--dry-run` previews. There is no confirmation prompt — the
-safety comes from the rules below, not from a question you would learn to click through.
+**voom deletes by default.** `--dry-run` previews. There is no confirmation prompt — the safety
+comes from the rules below, not from a question you would learn to click through.
 
 ```bash
 # Preview, with a reason for every skip
@@ -140,6 +151,9 @@ voom --dry-run --format json ~ | jq '.totals'
 
 # Cap parallelism (useful on spinning disks or network filesystems)
 voom -j 4 ~
+
+# Retry failed removals, repairing permissions inside the artifact
+voom --force ~
 
 # Include tool caches and installed toolchains, which are skipped by default
 voom --dry-run --caches ~
@@ -159,12 +173,10 @@ voom catalog
 
 Run `voom --help` for the full, grouped list of options.
 
-Exit codes: `0` clean, `1` some artifacts could not be removed, `2` usage or config error,
-`3` findings with `--dry-run --exit-code` (for hooks).
+Exit codes: `0` clean, `1` some artifacts could not be removed (a partial removal counts), `2`
+usage or config error, `3` findings with `--dry-run --exit-code` (for hooks).
 
 ### Using it safely the first time
-
-Three steps, in this order. They take about a minute.
 
 **1. Look before you sweep.** Start narrow and read what comes back:
 
@@ -172,26 +184,21 @@ Three steps, in this order. They take about a minute.
 voom --dry-run ~/projects
 ```
 
-Every line names what proved the artifact. If the ecosystem column says `unanchored`, nothing
-proved it — your own `include` asked for it (see [Configuration](#configuration)).
+Every line names what proved the artifact. If the ecosystem column says `unanchored`, nothing proved
+it — your own `include` asked for it (see [Configuration](#configuration)).
 
-**2. Read the skips.** This is the step people miss, and it is the one that tells you whether
-voom understands your tree:
+**2. Read the skips.** This is the step people miss, and the one that tells you whether voom
+understands your tree:
 
 ```bash
 voom --dry-run --verbose ~/projects
 ```
 
-A skip says *why*: no marker proved it, a keep policy held it, an exclusion matched. A
-directory you expected to be swept and that is missing from the list is a directory voom could
-not prove — usually the right answer, occasionally a missing marker worth reporting.
+A skip says *why*: no marker proved it, a keep policy held it, an exclusion matched. A directory you
+expected to be swept and cannot find in the list is one voom could not prove — usually the right
+answer, occasionally a missing marker worth reporting.
 
-**3. Run it.** Same command without `--dry-run`. The dry run is the same pipeline with the last
-step withheld, so it removes exactly what it showed you.
-
-Once you trust it on a project, widen to `~`. A worked example from the author's machine:
-`voom --dry-run /private/tmp` predicted 19 artifacts and 162 GiB across stale build directories;
-the real run removed those 19 and nothing else, and every source tree beside them was untouched.
+**3. Run it.** The same command without `--dry-run`. Once you trust it on a project, widen to `~`.
 
 ### Guidance worth knowing
 
@@ -199,55 +206,53 @@ the real run removed those 19 and nothing else, and every source tree beside the
 today's build. Without it, a scheduled run can delete something you are about to use.
 
 **Lower `-j` on a spinning disk or a network filesystem.** voom defaults to every core, which is
-right on an SSD and wrong on anything with a seek penalty or a round trip. `-j` bounds the walk
-*and* the removal.
+right on an SSD and wrong on anything with a seek penalty or a round trip. `-j` bounds the walk, the
+sizing, *and* the removal.
 
-**"Bytes reclaimed" is not the same number on every platform.** On unix voom counts allocated
-blocks, which is the space you actually get back. On Windows it counts apparent file size, which
-ignores cluster rounding, compression and sparse files. Neither is wrong; they answer slightly
-different questions, and on a filesystem that shares blocks between clones — APFS, for instance —
-freeing one copy may return less than the sum of its files.
+**"Bytes reclaimed" is not the same number on every platform.** On unix voom counts allocated blocks
+and counts each hard-linked inode once — `du`'s rule. On Windows it counts apparent file size, which
+ignores cluster rounding, compression and sparse files, and has no portable link count to dedup by.
+On a filesystem that shares blocks between clones — APFS, for instance — freeing one copy may return
+less than the sum of its files.
 
-**When you are unsure, prefer the false negative.** That is the rule voom is built on: leaving an
-artifact costs you some gigabytes, and deleting something you wrote costs you work you cannot get
-back. If something is being kept that you want gone, name it in your config deliberately rather
-than reaching for a broader flag.
+**When you are unsure, prefer the false negative.** Leaving an artifact costs you gigabytes;
+deleting something you wrote costs you work you cannot get back. If something is being kept that you
+want gone, name it in your config deliberately rather than reaching for a broader flag.
 
 ## Safety
 
 This is the part that matters, because voom deletes without asking.
 
-**1. Nothing is removed without a marker file proving its ecosystem.** `target/` is only
-Rust's build output when a `Cargo.toml` sits beside it. `obj/` is only .NET's when a project
-file — `*.csproj`, `*.fsproj`, `*.vbproj` or `*.sln` — sits at most three directories above
-it. A scan of one developer's workspace found 41 directories
-named `bin`, 20 named `vendor`, and 12 named `obj` — each a build artifact in one ecosystem
-and hand-written source in another. voom leaves every unproven one alone, and
-`--verbose` tells you which marker was missing.
+**1. Nothing is removed without a marker file proving its ecosystem.** `target/` is only Rust's
+build output when a `Cargo.toml` sits beside it. `obj/` is only .NET's when a project file —
+`*.csproj`, `*.fsproj`, `*.vbproj` or `*.sln` — sits at most three directories above it. `bin/`,
+`vendor/` and `obj/` are each build output in one ecosystem and hand-written source in another; voom
+leaves every unproven one alone, and `--verbose` says which marker was missing.
 
-**2. Dependency directories are never touched unless you ask for them by name.**
-`node_modules/`, composer's `vendor/`, Go's `vendor/`, mix's `deps/` and Python's `.venv/` are
-network-fetched caches, not build output: removing one costs a re-download and breaks offline
-work. Every one of them is off by default, and no ordinary run — however many flags it carries —
-will take one. `--clean-dependencies` turns the group on, and `--enable node.node_modules` turns
-on exactly one. voom still proves each against its marker first, so a `vendor/` with no
-`composer.json` beside it is left alone like anything else.
+**2. Dependency directories are never touched unless you ask for them by name.** `node_modules/`,
+composer's `vendor/`, Go's `vendor/`, mix's `deps/` and Python's `.venv/` are network-fetched caches,
+not build output: removing one costs a re-download and breaks offline work. Every one is off by
+default, and no ordinary run — however many flags it carries — takes one. `--clean-dependencies`
+turns the group on and `--enable node.node_modules` turns on exactly one; voom still proves each
+against its marker, so a `vendor/` with no `composer.json` beside it is left alone like anything
+else.
 
-**3. Tool caches and installed toolchains are skipped.** `~/.cargo/registry`, `~/.npm`,
-`~/.pyenv`, `~/miniforge3`, `~/google-cloud-sdk` and friends are machine-global or are installed
-programs, not this tree's build output. An installed pnpm under `~/.cache/node/corepack` sits
-beside a real `package.json` and is, to the classifier, indistinguishable from a project someone
-built — so location draws the line that a marker cannot. On the author's machine this is the
-difference between 469 artifacts and 174. `--caches` opts back in, and naming one of those paths
-as a scan root sweeps it without the flag.
+**3. Tool caches and installed toolchains are skipped.** `~/.cargo/registry`, `~/.npm`, `~/.pyenv`,
+`~/miniforge3`, `~/google-cloud-sdk` and friends are machine-global or are installed programs, not
+this tree's build output. An installed pnpm under `~/.cache/node/corepack` sits beside a real
+`package.json` and is, to the classifier, indistinguishable from a project someone built — so
+location draws the line a marker cannot. On the author's machine this is the difference between 174
+artifacts and 475. `--caches` opts back in, and naming one of those paths as a scan root sweeps it
+without the flag.
 
-**4. The rails you cannot switch off.** Symlinks are never followed or deleted through.
-Filesystem boundaries are not crossed (`--one-file-system=false` to opt out). Every target is
-canonicalized and must resolve strictly below a scan root. A hard-coded denylist protects
-`/`, `$HOME` itself, `/usr`, `/System`, `.git` and friends.
+**4. Six rails you cannot switch off.** Symlinks and Windows reparse points are refused rather than
+followed. Every target is canonicalized. An append-only denylist protects `/`, `$HOME` itself,
+`/usr`, `/System`, `.git` and friends. The result must resolve strictly below a scan root. Filesystem
+boundaries are not crossed (`--one-file-system=false` to opt out). A failure on one artifact is
+reported and isolated rather than aborting the run.
 
-**5. `--dry-run` is the real pipeline with the last step withheld**, not a simulation, so
-what it prints is exactly what a real run would remove.
+**5. `--dry-run` is the real pipeline with the last step withheld**, not a simulation, so what it
+prints is exactly what a real run would remove.
 
 Full reasoning in [ADR 0002](adrs/0002-marker-anchored-classification.md) and
 [ADR 0006](adrs/0006-deletion-semantics.md).
@@ -281,16 +286,16 @@ Full reasoning in [ADR 0002](adrs/0002-marker-anchored-classification.md) and
 | Terraform | `*.tf` | `.terraform/` |
 | Bazel | `WORKSPACE`, `WORKSPACE.bazel`, `MODULE.bazel` | `bazel-*/` |
 
-† Off by default — the name is also a plausible source directory in that ecosystem, or
-removal is expensive rather than cheap. Turn one on for a single run with
-`--enable python.venv`, or per-ecosystem and per-path in your config. `voom catalog` prints the
-live table, with the reason each `†` entry needs an opt-in.
+† Off by default — the name is also a plausible source directory in that ecosystem, or removal is
+expensive rather than cheap. Turn one on for a single run with `--enable python.venv`, or per
+ecosystem and per path in your config. `voom catalog` prints the live table, with the reason each
+`†` entry needs an opt-in.
 
 ## Configuration
 
 voom merges configuration from built-in defaults, `~/.config/voom/config.toml`, and every
-`voom.toml` from the scan root down to each candidate — nearest wins. A repository can
-therefore protect its own quirks and still be swept correctly from `$HOME`.
+`voom.toml` from the scan root down to each candidate — nearest wins. A repository can therefore
+protect its own quirks and still be swept correctly from `$HOME`.
 
 ```toml
 # Top-level keys come first: TOML would otherwise read them as part of the table above.
@@ -317,18 +322,17 @@ match = "~/work/**"
 keep  = { min_age = "30d" }
 ```
 
-Paths listed in `include` are swept without a marker proving them. That is the one place voom
-will remove something it cannot prove, so it is reported as `unanchored` rather than as an
-ecosystem, and JSON marks it `"source": "config-include"`. `exclude` always wins over
-`include`.
+Paths listed in `include` are swept without a marker proving them. That is the one place voom will
+remove something it cannot prove, so it is reported as `unanchored` rather than as an ecosystem, and
+JSON marks it `"source": "config-include"`. `exclude` always wins over `include`.
 
-`include` only matches paths the walk actually visits, so it never reaches outside the roots
-you named: running `voom ~/projects` with `include = ["~/scratch"]` sweeps nothing extra. It
-*can* name a directory the walk would otherwise skip — a tool cache like `~/.npm`, say — and
-have it removed. For a dependency directory, prefer `--clean-dependencies` or `--enable`: those
-still prove the marker, and an `include` does not. It cannot reach *inside* one: skipping happens a whole
-directory at a time, so `include = ["~/.npm/_cacache/pkg"]` matches nothing. Name the cache as
-a scan root, or pass `--caches`.
+`include` only matches paths the walk actually visits, so it never reaches outside the roots you
+named: running `voom ~/projects` with `include = ["~/scratch"]` sweeps nothing extra. It *can* name
+a directory the walk would otherwise skip — a tool cache like `~/.npm`, say — and have it removed.
+For a dependency directory, prefer `--clean-dependencies` or `--enable`: those still prove the
+marker, and an `include` does not. It cannot reach *inside* one: skipping happens a whole directory
+at a time, so `include = ["~/.npm/_cacache/pkg"]` matches nothing. Name the cache as a scan root, or
+pass `--caches`.
 
 **On Windows, write paths in single quotes.** TOML basic strings take escapes, so
 `exclude = ["C:\Users\me\work\**"]` fails to parse — `\U` starts a unicode escape. Use a TOML
@@ -338,29 +342,29 @@ literal string instead, which takes none:
 exclude = ['C:\Users\me\work\**']
 ```
 
-`voom config show` lists the files the configuration was merged from, in ascending precedence,
-and then the merged result. Details in [ADR 0004](adrs/0004-configuration.md).
+`voom config show` lists the files the configuration was merged from, in ascending precedence, and
+then the merged result. Details in [ADR 0004](adrs/0004-configuration.md).
 
 ## Git housekeeping
 
 An ordinary sweep also runs git's own local housekeeping in every repository it walks past.
-Discovery is free — the walker already meets `.git` on its way past, so there is no second pass —
-and the two steps are the ones git itself runs after a commit:
+Discovery is free — the walker already meets `.git` on its way past — and the two steps are the ones
+git itself runs after a commit:
 
 | Step | What it does |
 | --- | --- |
 | `git worktree prune --expire` | drops the administration of worktrees whose checkout has been gone for three months |
 | `git gc --auto` | repacks **only if** git's own thresholds say it is worth it |
 
-Neither contacts a network. Neither expires a reflog beyond git's own policy, and voom never
-passes `--prune=now`, `--aggressive`, or `git reflog expire`: the reflog is how you get a commit
-back, and "prunable" does not mean "unreachable by you". The three months is git's own
-`gc.worktreePruneExpire` default rather than `git worktree prune`'s, which expires everything —
-a checkout on an unmounted disk is absent, and its administration holds the reflog for whatever
-was committed there. Every invocation also runs with hooks disabled, so a repository cannot
-choose what a housekeeping pass executes. A repository with an operation half
-finished — a rebase, a merge, a cherry-pick, a bisect — is skipped and said so, and a linked
-worktree is resolved to its object store and pruned once rather than once per checkout.
+Neither contacts a network. Neither expires a reflog beyond git's own policy, and voom never passes
+`--prune=now`, `--aggressive`, or `git reflog expire`: the reflog is how you get a commit back, and
+"prunable" does not mean "unreachable by you". The three months is git's own `gc.worktreePruneExpire`
+default rather than `git worktree prune`'s, which expires everything — a checkout on an unmounted
+disk is absent, and its administration holds the reflog for whatever was committed there. Every
+invocation runs with hooks disabled, so a repository cannot choose what a housekeeping pass
+executes. A repository with an operation half finished — a rebase, a merge, a cherry-pick, a bisect
+— is skipped and said so, and a linked worktree is resolved to its object store and pruned once
+rather than once per checkout.
 
 The report says nothing when nothing was found, because that is the usual case:
 
@@ -369,7 +373,8 @@ The report says nothing when nothing was found, because that is the usual case:
 ```
 
 Turn it off with `--no-git`, or with `[git] enabled = false` in a `voom.toml`, which lets one
-repository set a policy for its own subtree. The flag beats the file.
+repository set a policy for its own subtree. The flag beats the file. See
+[ADR 0011](adrs/0011-git-housekeeping.md).
 
 `voom git-prune` runs the same housekeeping on its own, and is the only place the network step
 lives:
@@ -390,14 +395,13 @@ voom watch ~/projects
 ```
 
 Prunes continuously as you work. Filesystem events are coalesced over a debounce window
-(`--debounce`, default 5s), and an artifact is only removed once its subtree has been idle for
-a quiet period (`--quiet-period`, default 60s), so an in-progress build is never touched. See
-[ADR 0008](adrs/0008-watch-mode.md).
+(`--debounce`, default 5s), and an artifact is only removed once its subtree has been idle for a
+quiet period (`--quiet-period`, default 60s), so an in-progress build is never touched. Watch mode
+never forces. See [ADR 0008](adrs/0008-watch-mode.md).
 
 ## Git hooks
 
-The reporting hook is the one to start with — it fails the commit on findings but deletes
-nothing.
+The reporting hook is the one to start with — it fails the commit on findings but deletes nothing.
 
 <details>
 <summary><b>pre-commit</b></summary>
@@ -405,7 +409,7 @@ nothing.
 ```yaml
 repos:
   - repo: https://github.com/Goldziher/voom
-    rev: v0.1.0
+    rev: v0.2.0
     hooks:
       - id: voom-report      # reports, deletes nothing
       # - id: voom-prune     # actually deletes — opt in deliberately
@@ -420,7 +424,7 @@ repos:
 [[hooks.sources]]
 id = "voom"
 git = "https://github.com/Goldziher/voom.git"
-revision = "v0.1.0"
+revision = "v0.2.0"
 hooks = ["voom-report"]
 ```
 
@@ -440,26 +444,50 @@ pre-commit:
 
 ## Performance
 
-voom is I/O-bound, so the wins come from not walking things: it prunes matched artifacts,
-`.git/`, and dependency directories at the directory level rather than descending into them,
-and fans the remaining work across every core.
+voom is I/O-bound, so the wins come from not walking things: it prunes matched artifacts, `.git/`,
+dependency directories and tool caches at the directory level rather than descending into them, and
+fans the remaining work — sizing and removal, and now the inside of each artifact — across every
+core.
 
-Measured with `hyperfine` on an M-series Mac against a real machine — a 130 GB `~/workspace`
-holding 16 ecosystems, and a `$HOME` above it. Dry runs, so the walk and the size accounting
-are timed without the removal:
+Measured with `hyperfine` on an M-series Mac against a real 144 GB `~/workspace`, dry runs, so the
+walk and the size accounting are timed without the removal:
 
-| Sweep | Mean | Found |
+| Version | Mean | Found |
 | --- | --- | --- |
-| `~/workspace` (130 GB) | 5.3 s ± 0.8 | 172 artifacts |
-| `$HOME` | 10.7 s ± 0.7 | 174 artifacts |
-| `$HOME --caches` | 15.3 s ± 3.0 | 475 artifacts |
+| v0.1.0 | 8.89 s | 85 artifacts |
+| **0.2.0** | **6.01 s** | 85 artifacts |
 
-`-j` genuinely throttles the whole sweep, not just the walk: the same `~/workspace` run takes
-14.3 s ± 0.4 at `-j 1`, 2.7× the default. That is the point of the flag on a spinning disk or a
-network filesystem, where saturating the cores is the wrong thing to do.
+**1.48× faster over ten runs, finding exactly the same artifacts.** Most of it is the sizing
+fan-out: a sweep's artifacts are wildly uneven — one `target/` can be most of the tree — so
+per-artifact parallelism left the largest one to a single thread while every other core idled.
+Dividing the work *inside* each artifact fixed that, and the reported sizes are byte-identical to
+the serial walk.
 
-Measure your own the same way — and if you change the walk, measure before and after on the same
-tree and put both numbers in the pull request.
+`-j` genuinely throttles the whole sweep rather than just the walk, which is the point of the flag
+on a spinning disk or a network filesystem. Measure your own the same way — and if you change the
+walk, measure before and after on the same tree and put both numbers in the pull request.
+
+## The name
+
+<div align="center">
+
+<em>
+Then the Voom&hellip;<br>
+It went VOOM!<br>
+And, oh boy!<br>
+What a VOOM!<br>
+<br>
+Now, don't ask me what Voom is.<br>
+I never will know.<br>
+But, boy!<br>
+Let me tell you it does clean up snow!
+</em>
+
+<sub>Dr. Seuss, <em>The Cat in the Hat Comes Back</em></sub>
+
+</div>
+
+Voom is what Little Cat Z pulls out of his hat to clear every last speck of pink snow at once.
 
 ## Development
 
@@ -478,8 +506,8 @@ contribution and has a checklist.
 
 ## Contributing
 
-Issues and pull requests are welcome — especially new ecosystems, which need a marker that
-genuinely proves the ecosystem and both a positive and a negative test fixture.
+Issues and pull requests are welcome — especially new ecosystems, which need a marker that genuinely
+proves the ecosystem and both a positive and a negative test fixture.
 
 If voom is useful to you, consider [sponsoring development](https://github.com/sponsors/Goldziher).
 
