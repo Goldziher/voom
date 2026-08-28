@@ -503,6 +503,11 @@ impl Guard {
         // `bytes` was measured before the removal began, so under a writer that is still working
         // the two are not measurements of the same tree. Saturating is what keeps the estimate
         // on the honest side of the truth rather than reporting a negative reclaim.
+        //
+        // One direction stays an estimate: `size::measure` counts a subtree it cannot list as
+        // zero, so if something outside voom tightens a permission between the two measurements,
+        // `remaining` undercounts and `freed` overstates. Nothing voom does can cause it —
+        // `--force` only ever widens — and it costs a number in the report, never a deletion.
         let freed = bytes.saturating_sub(remaining);
         if freed == 0 {
             return Outcome::Failed(failure);

@@ -145,3 +145,57 @@ Windows is verified by the CI leg only — there is no Windows machine in the de
 Every claim above is backed by a test in `src/delete.rs` that runs there — the junction refusal,
 the resolved-denylist match, the case-insensitive comparison, and the volume-prefix read all have
 one — and none of it has been run against real hardware by a contributor.
+
+## Amendment — `--force` — 2026-08-28
+
+The first real sweeps of a home directory produced a class of failure the semantics above had no
+answer for: a removal that stopped part-way with real bytes still on disk, because something
+inside the artifact could not be unlinked or because a build wrote into a directory between voom
+emptying it and unlinking it. `remove_dir_all` removes a tree's contents before the tree itself,
+so a *partial* removal is the ordinary failure mode rather than an exotic one.
+
+`--force` answers the two of those voom can do something about, and nothing else. It is a
+setting on what happens **after** `Guard::check` has returned — the rails are decided before the
+flag is read.
+
+**Containment is a type argument, not a convention.** Every function in `src/delete/force.rs`
+takes a `Verified`, and the only thing that mints one is `Guard::check`. A permission repair
+therefore cannot be reached with a path that has not been canonicalized, checked against the
+denylist, proven strictly below a scan root, and proven not to be a symlink. The rail tests are
+parameterised over `[Removal::new(), Removal::forced()]`, so a rail added later is covered under
+force without anyone remembering to.
+
+**What it does.** `DirectoryNotEmpty` is retried on a 50 ms / 200 ms / 800 ms backoff, because
+the cause is timing; `PermissionDenied` triggers one permission repair inside the artifact and
+one immediate retry, because a mode does not change by waiting. A read-only mount and an I/O
+error are reported, never retried.
+
+**What it will not do**, each a deliberate limit rather than an omission:
+
+- **It never touches the artifact's parent.** An artifact held by a read-only parent directory is
+  therefore reported and not reclaimed. That is containment working, not a gap to close.
+- **It never follows a symlink.** The repair walk stats with `symlink_metadata` and skips links
+  entirely rather than descending or chmod'ing through them.
+- **It never widens a hard-linked file.** A mode bit and a BSD flag belong to the inode, while
+  the removal only unlinks the one name inside the artifact — so relaxing a file with `nlink > 1`
+  would change data voom is not deleting, possibly outside the scan root entirely. Such a file is
+  skipped, which costs at most a failure reported instead of reclaimed.
+- **It only ever widens the owner's bits**, and only the ones an unlink needs: read, write and
+  execute on a directory (all three, because a directory that cannot be listed cannot be
+  emptied), write on a file. Group and other are never touched, so a tree whose removal fails
+  anyway is not left more open than voom found it.
+- **It never chowns, and it never clears the system-immutable flags** — those need root, and at a
+  raised securelevel cannot be cleared at all.
+
+**The residual race.** The repair checks a path and then names it again to `read_dir` and
+`set_permissions`; `std` has no `openat`-style way to close that window. A writer that swaps a
+checked directory for a symlink in between can be followed. This is the same race
+`remove_dir_all` itself carries and is recorded here because this code changes modes rather than
+only unlinking.
+
+`--force` is filed under **Behaviour**, not **Safety**, in `--help`. Listing it beside
+`--one-file-system` would invite reading it as a protection, and it is the opposite: it is the
+flag that pushes through. Watch mode forces it off — watch already re-runs, so the retry is
+inherent, and unattended repeated permission repair against a live build is the last place it
+belongs. `--dry-run --force` is accepted and is a strict no-op by construction, since force lives
+entirely after the step a dry run withholds.

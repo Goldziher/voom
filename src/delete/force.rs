@@ -118,7 +118,16 @@ pub(super) fn remove(verified: &Verified, removal: Removal) -> std::io::Result<(
 /// Bounded to the artifact by construction: the walk starts at `root`, never follows a symlink,
 /// and builds every path by joining a `read_dir` entry's own file name onto a directory already
 /// inside it — so it cannot climb out. It never touches `root`'s parent, which is why an
-/// artifact held by a read-only *parent* is reported rather than reclaimed.
+/// artifact held by a read-only *parent* is reported rather than reclaimed. [`relax`] adds the
+/// one bound the walk cannot: a hard-linked file names an inode that is also reachable from
+/// outside, and is left alone.
+///
+/// That bound holds against the filesystem as it is, not against one being rewritten underneath.
+/// The walk checks a path with `symlink_metadata` and then names it again to `read_dir` and
+/// `set_permissions`, and `std` offers no `openat`-style way to close the gap — so a writer that
+/// replaces a checked directory with a symlink before it is dequeued can be followed. It is the
+/// same race `remove_dir_all` itself carries, worth naming here only because this code changes
+/// modes rather than only unlinking.
 ///
 /// Failures are ignored per path. A repair that could not be applied is not a new error to
 /// report; the retry that follows is the only thing that decides.
@@ -152,16 +161,28 @@ fn repair(root: &Path) {
 /// Makes one path unlinkable, preserving every permission bit the removal does not need.
 #[cfg(unix)]
 fn relax(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     let Ok(metadata) = std::fs::symlink_metadata(path) else {
         return;
     };
+    // A mode bit and a BSD flag both belong to the inode; a directory entry is only a name for
+    // it. Removal unlinks the one name inside the artifact, but a repair would widen the file
+    // everywhere it is named — including a hard link into a tree voom was never given. A
+    // directory cannot be hard-linked, so this only ever skips a file, and skipping one means
+    // at worst a failure reported instead of reclaimed.
+    if !metadata.is_dir() && metadata.nlink() > 1 {
+        return;
+    }
     let mode = metadata.permissions().mode();
-    // Write to unlink the contents; execute as well on a directory, because a directory cannot
-    // be traversed to reach them without it. The owner's bits only — widening group or other
-    // would leave the tree more open than voom found it if the removal then failed anyway.
-    let wanted = if metadata.is_dir() { 0o300 } else { 0o200 };
+    // On a directory: read to list its entries, write to unlink them, execute to reach them —
+    // a directory missing any of the three cannot be emptied, and a search-only `0o111` is the
+    // shape that made `--force` a no-op on exactly the case it exists for. On a file: write,
+    // which unlink does not consult on any filesystem here but costs nothing to grant.
+    //
+    // The owner's bits only — widening group or other would leave the tree more open than voom
+    // found it if the removal then failed anyway.
+    let wanted = if metadata.is_dir() { 0o700 } else { 0o200 };
     if mode & wanted != wanted {
         let _ = std::fs::set_permissions(path, PermissionsExt::from_mode(mode | wanted));
     }
@@ -409,6 +430,64 @@ mod tests {
             "nor is a sibling"
         );
         std::fs::set_permissions(&project, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// A directory with no read bit cannot be listed, so it cannot be emptied — and `0o111` is
+    /// exactly the shape a build tool produces when it means "search only". The repair granted
+    /// write and execute and not read until this test existed, which made `--force` a no-op on
+    /// one of the two failures it was written to answer.
+    #[test]
+    #[cfg(unix)]
+    fn force_should_reclaim_an_artifact_a_search_only_directory_was_holding() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = tree(&["Cargo.toml", "target/sealed/held.bin"]);
+        let sealed = fixture.path().join("target/sealed");
+        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o111)).unwrap();
+        let guard = guard(fixture.path());
+        let target = fixture.path().join("target");
+
+        let plain = guard.remove(&target, 0, Removal::new());
+        if matches!(plain, Outcome::Removed) {
+            // Running as root defeats the permission bits entirely.
+            return;
+        }
+        assert!(target.exists(), "plain mode leaves it: {plain:?}");
+
+        assert_eq!(
+            guard.remove(&target, 0, Removal::forced()),
+            Outcome::Removed,
+            "forced mode grants read as well and finishes it"
+        );
+        assert!(!target.exists());
+    }
+
+    /// The containment test the mode bits need that the path walk cannot give them. A hard link
+    /// is a second name for one inode, so relaxing a file inside the artifact would widen the
+    /// data wherever else it is named — while the removal only ever unlinks the name inside.
+    /// Leaving it alone costs at most a failure reported instead of reclaimed.
+    #[test]
+    #[cfg(unix)]
+    fn force_should_not_widen_a_file_hard_linked_from_outside_the_artifact() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let outside = tempfile::TempDir::new().unwrap();
+        let precious = outside.path().join("precious.rs");
+        std::fs::write(&precious, b"fn main() {}").unwrap();
+        std::fs::set_permissions(&precious, std::fs::Permissions::from_mode(0o400)).unwrap();
+
+        let fixture = tree(&["Cargo.toml", "target/locked/app"]);
+        std::fs::hard_link(&precious, fixture.path().join("target/shared.rs")).unwrap();
+        let locked = fixture.path().join("target/locked");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let _ = guard(fixture.path()).remove(&fixture.path().join("target"), 0, Removal::forced());
+
+        assert_eq!(
+            std::fs::symlink_metadata(&precious).unwrap().permissions().mode() & 0o777,
+            0o400,
+            "the inode's mode is unchanged where it is named outside the artifact"
+        );
     }
 
     /// A dry run withholds the final step, and `--force` lives entirely after it. Accepting both

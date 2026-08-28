@@ -87,7 +87,13 @@ impl Entry {
 }
 
 /// Totals for the footer and for the JSON.
+///
+/// `#[non_exhaustive]` for the same reason [`Outcome`] carries it: this release added `partial`
+/// and `partial_bytes`, and the next distinction the report has to draw will add more. A
+/// consumer matching on it exhaustively should be told at the version boundary, not broken by a
+/// minor release.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Totals {
     /// Artifacts removed, or that would be removed in a dry run.
     pub reclaimed: usize,

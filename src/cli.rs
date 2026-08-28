@@ -118,10 +118,10 @@ pub struct PruneArgs {
     ///
     /// Clears read-only bits, and on macOS the user-immutable flag, on paths *inside* an
     /// artifact that has already passed every safety rail — then retries with a short backoff.
-    /// It never relaxes a rail, never follows a symlink, and never touches anything outside the
-    /// artifact, including its parent directory: an artifact held by a read-only parent is
-    /// reported, not forced. Retries add up to about a second per artifact. No effect under
-    /// `--dry-run`.
+    /// It never relaxes a rail, never follows a symlink, never widens a hard-linked file, and
+    /// never touches anything outside the artifact, including its parent directory: an artifact
+    /// held by a read-only parent is reported, not forced. Retries add up to about a second per
+    /// artifact. No effect under `--dry-run`.
     ///
     /// Filed under Behaviour rather than Safety deliberately — it is not one of the protections.
     #[arg(long, help_heading = "Behaviour")]
