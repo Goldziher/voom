@@ -54,6 +54,9 @@ fn entry_value(entry: &Entry) -> Value {
         "ecosystem": entry.ecosystem(),
         "artifact": entry.artifact(),
         "bytes": entry.bytes,
+        // Non-zero means `bytes` is a lower bound: that many directories inside could not be
+        // listed, and each contributed nothing.
+        "unreadable_directories": entry.unreadable,
         // What the removal actually freed, which for a partial removal is not `bytes`.
         // `sum(artifacts[].reclaimed_bytes) == totals.bytes` holds for every run.
         "reclaimed_bytes": entry.reclaimed_bytes(),
@@ -115,6 +118,9 @@ pub fn document(result: &RunResult) -> Value {
             // Already inside `reclaimed`; broken out because ADR 0001 promised these would
             // never be removed and its amendment made them reachable only by explicit opt-in.
             "dependencies": totals.dependencies,
+            // Artifacts whose `bytes` is a lower bound. A consumer checking the run's arithmetic
+            // needs to know the arithmetic was done on incomplete input.
+            "unmeasured": totals.unmeasured,
         },
         "elapsed_ms": u64::try_from(result.timings.total.as_millis()).unwrap_or(u64::MAX),
         // Microseconds, not milliseconds: a sweep of a small tree finishes in under one of the

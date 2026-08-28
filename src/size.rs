@@ -37,6 +37,47 @@ fn file_size(metadata: &std::fs::Metadata) -> u64 {
     metadata.len()
 }
 
+/// One artifact's size, and how much of it could not be read.
+///
+/// The second number is the point. A directory the walk cannot open contributes zero and says
+/// nothing, so an artifact holding one measures small — and the run then reports that small
+/// number as the space it reclaimed, and evaluates `min_size`/`max_size` against it. `--force`
+/// makes this sharp: it exists to unlock exactly those directories, so it is the flag most
+/// likely to remove a tree it measured as empty.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Measured {
+    /// Bytes that could be read.
+    pub bytes: u64,
+    /// Directories that could not be listed, each contributing zero to `bytes`.
+    pub unreadable: usize,
+}
+
+impl Measured {
+    /// Whether the byte count is a lower bound rather than the whole figure.
+    #[must_use]
+    pub fn is_partial(&self) -> bool {
+        self.unreadable > 0
+    }
+}
+
+impl std::ops::Add for Measured {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            bytes: self.bytes + other.bytes,
+            unreadable: self.unreadable + other.unreadable,
+        }
+    }
+}
+
+impl std::ops::AddAssign for Measured {
+    fn add_assign(&mut self, other: Self) {
+        *self = *self + other;
+    }
+}
+
 /// The recursive size of a path, in bytes.
 ///
 /// Symlinks are measured as links, never followed — the same rule the walker and the deleter
@@ -45,14 +86,77 @@ fn file_size(metadata: &std::fs::Metadata) -> u64 {
 /// a precondition for anything.
 #[must_use]
 pub fn measure(path: &Path) -> u64 {
+    measure_fully(path).bytes
+}
+
+/// The recursive size of a path, with a count of what could not be read.
+#[must_use]
+pub fn measure_fully(path: &Path) -> Measured {
     let Ok(metadata) = std::fs::symlink_metadata(path) else {
-        return 0;
+        return Measured::default();
     };
     if !metadata.is_dir() {
-        return file_size(&metadata);
+        return Measured {
+            bytes: file_size(&metadata),
+            unreadable: 0,
+        };
     }
 
-    file_size(&metadata) + measure_dir(path, FANOUT_DEPTH)
+    let seen = Links::default();
+    let below = measure_dir(path, FANOUT_DEPTH, &seen);
+    Measured {
+        bytes: file_size(&metadata) + below.bytes,
+        unreadable: below.unreadable,
+    }
+}
+
+/// The multiply-linked files already counted in one artifact.
+///
+/// A hard link is a second *name* for one extent, so counting both names counts the bytes twice
+/// — and removal frees them once. That is not exotic: Cargo hard-links into `target/`, pnpm
+/// links its store into `node_modules/`, and a Bazel output base is largely links. Measured on a
+/// `target/` holding 400 MB behind three links, the figure was 1.28 GB.
+///
+/// Only files with `nlink > 1` are ever inserted, so the set holds nothing at all on the
+/// overwhelming majority of trees and the lock is never contended there. It is sharded because
+/// the measurement is fanned out across `rayon` and one mutex would serialise the hot loop.
+///
+/// This counts an inode once per artifact, which is `du`'s rule. A file also linked from
+/// *outside* the artifact still counts, and removal will free nothing for it — voom cannot tell
+/// without walking the rest of the filesystem, and erring toward the larger number matches every
+/// other tool the user will compare against.
+#[derive(Debug, Default)]
+struct Links {
+    shards: [std::sync::Mutex<std::collections::HashSet<(u64, u64)>>; LINK_SHARDS],
+}
+
+/// Enough shards that the lock is never the bottleneck, few enough to stay cheap to construct.
+const LINK_SHARDS: usize = 16;
+
+impl Links {
+    /// Whether this inode's bytes have already been counted; records it if not.
+    #[cfg(unix)]
+    fn counted(&self, metadata: &std::fs::Metadata) -> bool {
+        use std::os::unix::fs::MetadataExt;
+
+        if metadata.nlink() <= 1 {
+            return false;
+        }
+        let key = (metadata.dev(), metadata.ino());
+        #[expect(clippy::cast_possible_truncation, reason = "a shard index, not a value")]
+        let shard = (key.1 as usize) % LINK_SHARDS;
+        // A poisoned shard means another thread panicked mid-measurement, which nothing here
+        // can do: treat the inode as uncounted and let the figure be too large rather than
+        // silently too small.
+        self.shards[shard].lock().is_ok_and(|mut seen| !seen.insert(key))
+    }
+
+    /// Off unix there is no portable link count through `std`, so nothing is deduplicated and a
+    /// hard-linked tree over-reports. Documented in the module header rather than guessed at.
+    #[cfg(not(unix))]
+    fn counted(&self, _metadata: &std::fs::Metadata) -> bool {
+        false
+    }
 }
 
 /// How many levels of a tree are divided across `rayon` before the walk goes serial.
@@ -74,28 +178,34 @@ const FANOUT_DEPTH: u32 = 10;
 /// 127 GB total on the tree this was measured against — so `measure_all`'s per-artifact
 /// parallelism left the largest tree to a single thread while every other core idled. Dividing
 /// inside it took a `~/workspace` dry run from 6.88 s to 4.63 s (hyperfine, 8 runs).
-fn measure_dir(dir: &Path, fanout: u32) -> u64 {
-    let (total, subdirectories) = list(dir);
+fn measure_dir(dir: &Path, fanout: u32, seen: &Links) -> Measured {
+    let (mut total, subdirectories) = list(dir, seen);
     if fanout == 0 {
-        return total + subdirectories.iter().map(|path| measure_serially(path)).sum::<u64>();
+        for path in &subdirectories {
+            total += measure_serially(path, seen);
+        }
+        return total;
     }
     total
         + match subdirectories.as_slice() {
-            [] => 0,
+            [] => Measured::default(),
             // Nothing to divide, and the frame still counts against the bound — a deep, narrow
             // chain is exactly the shape that would otherwise recurse without limit.
-            [only] => measure_dir(only, fanout - 1),
-            many => many.par_iter().map(|path| measure_dir(path, fanout - 1)).sum(),
+            [only] => measure_dir(only, fanout - 1, seen),
+            many => many
+                .par_iter()
+                .map(|path| measure_dir(path, fanout - 1, seen))
+                .reduce(Measured::default, |left, right| left + right),
         }
 }
 
 /// Everything below one directory, on one thread, with an explicit stack and no depth bound.
-fn measure_serially(root: &Path) -> u64 {
-    let mut total = 0;
+fn measure_serially(root: &Path, seen: &Links) -> Measured {
+    let mut total = Measured::default();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let (bytes, subdirectories) = list(&dir);
-        total += bytes;
+        let (measured, subdirectories) = list(&dir, seen);
+        total += measured;
         stack.extend(subdirectories);
     }
     total
@@ -103,19 +213,28 @@ fn measure_serially(root: &Path) -> u64 {
 
 /// One directory's own bytes, and the subdirectories below it.
 ///
-/// An unreadable directory contributes nothing rather than failing the run: a size is an
-/// estimate in a report, not a precondition for anything.
-fn list(dir: &Path) -> (u64, Vec<PathBuf>) {
+/// A directory that cannot be listed contributes nothing rather than failing the run — a size is
+/// an estimate in a report, not a precondition for anything — but it is *counted*, so the report
+/// can say the figure is a lower bound instead of presenting it as the whole truth.
+fn list(dir: &Path, seen: &Links) -> (Measured, Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return (0, Vec::new());
+        return (
+            Measured {
+                bytes: 0,
+                unreadable: 1,
+            },
+            Vec::new(),
+        );
     };
-    let mut total = 0;
+    let mut total = Measured::default();
     let mut subdirectories = Vec::new();
     for entry in entries.flatten() {
         let Ok(metadata) = entry.metadata_no_follow() else {
             continue;
         };
-        total += file_size(&metadata);
+        if !seen.counted(&metadata) {
+            total.bytes += file_size(&metadata);
+        }
         if metadata.is_dir() {
             subdirectories.push(entry.path());
         }
@@ -146,8 +265,8 @@ impl NoFollow for std::fs::DirEntry {
 
 /// Measures many paths concurrently.
 #[must_use]
-pub fn measure_all(paths: &[PathBuf]) -> Vec<u64> {
-    paths.par_iter().map(|path| measure(path)).collect()
+pub fn measure_all(paths: &[PathBuf]) -> Vec<Measured> {
+    paths.par_iter().map(|path| measure_fully(path)).collect()
 }
 
 #[cfg(test)]
@@ -233,12 +352,56 @@ mod tests {
         );
     }
 
+    /// A hard link is a second name for one extent, so counting both names promises space
+    /// removal will free once. Cargo hard-links into `target/`, pnpm links its store into
+    /// `node_modules/`, and a Bazel output base is largely links — this is the common case, not
+    /// an exotic one. Measured against `du`, which applies the same rule.
+    #[test]
+    #[cfg(unix)]
+    fn should_count_a_hard_linked_file_once() {
+        let fixture = tree(&["target/one.bin"]);
+        let one = fixture.path().join("target/one.bin");
+        std::fs::write(&one, vec![0xA5; 512 * 1024]).expect("something worth linking");
+        let alone = measure(&fixture.path().join("target"));
+
+        std::fs::hard_link(&one, fixture.path().join("target/two.bin")).expect("a hard link");
+        std::fs::hard_link(&one, fixture.path().join("target/three.bin")).expect("another");
+
+        let linked = measure(&fixture.path().join("target"));
+
+        assert_eq!(
+            linked, alone,
+            "three names for one extent must measure as one extent, not three"
+        );
+    }
+
+    /// The deduplication is per artifact, not global: two artifacts that each hold a link to the
+    /// same extent both report it, because removing either one frees nothing the other keeps.
+    /// This is `du`'s rule too, and matching it is what makes the two comparable.
+    #[test]
+    #[cfg(unix)]
+    fn should_count_a_shared_extent_in_each_artifact_that_holds_it() {
+        let fixture = tree(&["one/target/app", "two/target/app"]);
+        let shared = fixture.path().join("one/target/app");
+        // Not zeroes: APFS stores a run of them without allocating blocks, and `file_size`
+        // counts allocated blocks — so a zero-filled fixture measures near nothing.
+        std::fs::write(&shared, vec![0xA5; 512 * 1024]).expect("something worth linking");
+        std::fs::remove_file(fixture.path().join("two/target/app")).expect("making room");
+        std::fs::hard_link(&shared, fixture.path().join("two/target/app")).expect("a hard link");
+
+        let first = measure(&fixture.path().join("one/target"));
+        let second = measure(&fixture.path().join("two/target"));
+
+        assert_eq!(first, second, "each artifact measures what it holds");
+        assert!(first >= 512 * 1024, "and that is the extent, not zero: {first}");
+    }
+
     #[test]
     fn should_measure_many_paths_in_one_pass() {
         let fixture = tree(&["a/x.o", "b/y.o"]);
         let paths = vec![fixture.path().join("a"), fixture.path().join("b")];
         let sizes = measure_all(&paths);
         assert_eq!(sizes.len(), 2);
-        assert!(sizes.iter().all(|size| *size > 0));
+        assert!(sizes.iter().all(|measured| measured.bytes > 0));
     }
 }

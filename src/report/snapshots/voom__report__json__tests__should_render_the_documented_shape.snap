@@ -15,7 +15,8 @@ expression: document_for_tests()
       },
       "path": "/projects/api/target",
       "reclaimed_bytes": 4200000000,
-      "source": "marker"
+      "source": "marker",
+      "unreadable_directories": 0
     },
     {
       "artifact": "target/",
@@ -30,7 +31,8 @@ expression: document_for_tests()
       },
       "path": "/projects/link/target",
       "reclaimed_bytes": 0,
-      "source": "marker"
+      "source": "marker",
+      "unreadable_directories": 0
     },
     {
       "artifact": "obj/",
@@ -47,7 +49,8 @@ expression: document_for_tests()
       },
       "path": "/projects/locked/obj",
       "reclaimed_bytes": 0,
-      "source": "marker"
+      "source": "marker",
+      "unreadable_directories": 0
     }
   ],
   "dry_run": false,
@@ -80,7 +83,8 @@ expression: document_for_tests()
     "partial_bytes": 0,
     "reclaimed": 1,
     "refused": 1,
-    "skipped": 1
+    "skipped": 1,
+    "unmeasured": 0
   },
   "walk_errors": []
 }

@@ -51,7 +51,13 @@ pub struct Entry {
     pub finding: Finding,
     /// Recursive size in bytes, measured once (ADR 0005).
     pub bytes: u64,
-    /// What happened.
+    /// Directories inside this artifact that could not be listed while measuring it.
+    ///
+    /// Each contributed zero to [`Entry::bytes`], so a non-zero count means the size is a lower
+    /// bound. `--force` is where this bites hardest: it exists to unlock exactly those
+    /// directories, so it is the flag most likely to remove a tree it measured as empty.
+    pub unreadable: usize,
+    /// What happened to it.
     pub outcome: Outcome,
 }
 
@@ -120,6 +126,12 @@ pub struct Totals {
     pub partial: usize,
     /// Bytes those partial removals freed. **Already included in `bytes`.**
     pub partial_bytes: u64,
+    /// Artifacts whose size is a lower bound, because a directory inside could not be listed.
+    ///
+    /// The bytes those directories held are missing from `bytes` and from every per-artifact
+    /// figure. A run that reports one of these has not measured what it removed, so the report
+    /// has to say so rather than present the number as the whole truth.
+    pub unmeasured: usize,
     /// Dependency directories removed. **Already included in `reclaimed`.**
     ///
     /// Counted separately because ADR 0001 promised these would never be touched, and its
@@ -205,6 +217,9 @@ impl RunResult {
             // came from is gone. `reclaimed` counts artifacts that *are* gone, so a partial
             // contributes to the first and not the second — it is still on disk.
             totals.bytes += entry.reclaimed_bytes();
+            if entry.unreadable > 0 {
+                totals.unmeasured += 1;
+            }
             if entry.outcome.is_reclaimed() && entry.is_dependency() {
                 totals.dependencies += 1;
             }
@@ -296,6 +311,7 @@ pub(crate) mod fixtures {
         let path = PathBuf::from(path);
         let marker_dir = path.parent().unwrap_or(Path::new("/")).to_path_buf();
         Entry {
+            unreadable: 0,
             finding: Finding {
                 path: path.clone(),
                 provenance: crate::classify::Provenance::Anchored { artifact, marker_dir },
@@ -310,6 +326,7 @@ pub(crate) mod fixtures {
     pub(crate) fn included(path: &str, pattern: &str, bytes: u64, outcome: Outcome) -> Entry {
         let path = PathBuf::from(path);
         Entry {
+            unreadable: 0,
             finding: Finding {
                 path: path.clone(),
                 provenance: crate::classify::Provenance::Included {

@@ -24,7 +24,7 @@ use crate::delete::{Guard, Removal};
 use crate::error::{Error, Result};
 use crate::report::{Entry, RunResult, Timings};
 use crate::scan::{PatternSet, ScanOptions, Skipped, scan};
-use crate::size::measure_all;
+use crate::size::{Measured, measure_all};
 
 /// Everything one invocation needs.
 #[expect(
@@ -254,11 +254,11 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
         .map(|entry| entry.path.as_path())
         .collect();
     let mut uncovered = Vec::new();
-    for (finding, bytes, by) in selected.covered {
+    for (finding, measured, by) in selected.covered {
         if reclaimed.contains(by.as_path()) {
             note(collected, options.verbose, finding.path, SkipReason::Covered { by });
         } else {
-            uncovered.push((finding, bytes));
+            uncovered.push((finding, measured));
         }
     }
     let retried = remove_all(uncovered, &guard, removal);
@@ -389,12 +389,15 @@ fn select(
     // The `min_size` and `max_size` rules are answered from the sizes just measured, so this
     // loop is charged to the policy stage rather than to sizing.
     let started = Instant::now();
-    let mut to_remove: Vec<(Finding, u64)> = Vec::with_capacity(survivors.len());
-    for ((finding, config), bytes) in survivors.into_iter().zip(sizes) {
+    let mut to_remove: Vec<(Finding, Measured)> = Vec::with_capacity(survivors.len());
+    for ((finding, config), measured) in survivors.into_iter().zip(sizes) {
         let keep = config.keep_for(&finding.path, finding.ecosystem());
-        match keep.holds_by_size(bytes) {
+        // Against the bytes that could be read. An artifact holding an unreadable directory
+        // measures small, so a `min_size` can keep something far larger than the threshold —
+        // which is why the count travels with the number instead of being discarded here.
+        match keep.holds_by_size(measured.bytes) {
             Some(reason) => note(collected, options.verbose, finding.path, reason),
-            None => to_remove.push((finding, bytes)),
+            None => to_remove.push((finding, measured)),
         }
     }
 
@@ -411,9 +414,9 @@ fn select(
     to_remove.sort_by(|(left, _), (right, _)| left.path.cmp(&right.path));
     let mut covering: Option<PathBuf> = None;
     let mut covered = Vec::new();
-    to_remove.retain(|(finding, bytes)| {
+    to_remove.retain(|(finding, measured)| {
         if let Some(outer) = covering.as_ref().filter(|outer| finding.path.starts_with(outer)) {
-            covered.push((finding.clone(), *bytes, outer.clone()));
+            covered.push((finding.clone(), *measured, outer.clone()));
             return false;
         }
         covering = Some(finding.path.clone());
@@ -426,22 +429,23 @@ fn select(
 
 /// What survived the policy stage: what to remove, and what something else is expected to take.
 struct Selected {
-    to_remove: Vec<(Finding, u64)>,
+    to_remove: Vec<(Finding, Measured)>,
     /// Each with the artifact expected to cover it. Held back rather than decided here, because
     /// "already inside X" is only true once X has actually been removed.
-    covered: Vec<(Finding, u64, PathBuf)>,
+    covered: Vec<(Finding, Measured, PathBuf)>,
 }
 
 /// Removes each artifact, in parallel, recording an outcome per artifact.
-fn remove_all(to_remove: Vec<(Finding, u64)>, guard: &Guard, removal: Removal) -> Vec<Entry> {
+fn remove_all(to_remove: Vec<(Finding, Measured)>, guard: &Guard, removal: Removal) -> Vec<Entry> {
     to_remove
         .into_par_iter()
-        .map(|(finding, bytes)| {
-            let outcome = guard.remove(&finding.path, bytes, removal);
+        .map(|(finding, measured)| {
+            let outcome = guard.remove(&finding.path, measured.bytes, removal);
             Entry {
                 path: finding.path.clone(),
                 finding,
-                bytes,
+                bytes: measured.bytes,
+                unreadable: measured.unreadable,
                 outcome,
             }
         })
