@@ -1,4 +1,4 @@
-//! The README's ecosystem table against the catalog it describes.
+//! The claims this project makes about itself, checked against the project.
 //!
 //! `.ai-rulez/context/code-style.md` requires that documentation making a claim about behaviour
 //! matches the code, and names this table specifically. Without a test that is an aspiration:
@@ -162,4 +162,50 @@ fn every_top_level_key_the_readme_documents_is_accepted() {
         };
         assert!(run(&options).is_ok(), "`{key}` is documented but not accepted");
     }
+}
+
+/// Every `.rs` file under `src/`, with its line count.
+fn source_files(dir: &std::path::Path, found: &mut Vec<(std::path::PathBuf, usize)>) {
+    let entries = fs::read_dir(dir).expect("src/ is readable");
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            source_files(&path, found);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            let lines = fs::read_to_string(&path).expect("a source file").lines().count();
+            found.push((path, lines));
+        }
+    }
+}
+
+/// The 1000-line module cap, which `module-size-cap` calls critical.
+///
+/// The rule claimed poly enforced it at commit time. No such hook exists, in `poly.toml` or in
+/// CI, so until now the cap was honour-system — and the file nearest it has about twenty lines
+/// of headroom, which is one careless addition.
+///
+/// The cap is not about tidiness. voom's correctness argument (ADR 0002) rests on a classifier
+/// a reviewer can hold in their head; a 2000-line `classify.rs` is one where a wrong anchor
+/// hides, and a wrong anchor deletes someone's source directory.
+#[test]
+fn no_source_file_exceeds_the_module_size_cap() {
+    const CAP: usize = 1000;
+
+    let mut files = Vec::new();
+    source_files(std::path::Path::new("src"), &mut files);
+    assert!(files.len() > 10, "the walk found almost nothing — is the path right?");
+
+    let over: Vec<String> = files
+        .iter()
+        .filter(|(_, lines)| *lines > CAP)
+        .map(|(path, lines)| format!("{} is {lines} lines", path.display()))
+        .collect();
+
+    assert!(
+        over.is_empty(),
+        "over the {CAP}-line cap:\n  {}\n\nSplit along a seam that already exists — the catalog \
+         splits by ecosystem group, the reporter by output format, config by load/merge/resolve. \
+         If no seam presents itself, that is the signal the module is doing two things.",
+        over.join("\n  ")
+    );
 }
