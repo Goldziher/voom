@@ -3,6 +3,15 @@
 //! Each artifact is measured exactly once and the number feeds both the keep policies and the
 //! report — never sized twice because the reporter wanted a number (ADR 0005). Artifacts are
 //! independent, so measurement fans out over `rayon`.
+//!
+//! **The measured quantity is not the same on every platform.** On unix it is allocated blocks;
+//! everywhere else, Windows included, it is apparent length, because no portable equivalent of
+//! `blocks()` is available there. The two agree for ordinary files and diverge for sparse,
+//! NTFS-compressed, or block-padded ones, where a Windows figure can overstate what the removal
+//! actually frees (a compressed `target/`) or understate it (per-file slack). It is therefore a
+//! good estimate rather than a promise on Windows, and `min_size`/`max_size` are evaluated
+//! against the same figure the report prints, so a policy behaves consistently within a
+//! platform even though the threshold means a slightly different thing across two.
 
 use std::path::{Path, PathBuf};
 
@@ -19,6 +28,10 @@ fn file_size(metadata: &std::fs::Metadata) -> u64 {
     metadata.blocks() * 512
 }
 
+/// Bytes occupied by one file, as reported by its length.
+///
+/// Off unix there is no portable allocated-size call, so this is the apparent size. See the
+/// module documentation for what that changes.
 #[cfg(not(unix))]
 fn file_size(metadata: &std::fs::Metadata) -> u64 {
     metadata.len()
