@@ -67,16 +67,16 @@ struct Collected {
 /// [`Error::ReadDir`] if a scan root cannot be resolved — a root that does not exist is a usage
 /// error and must stop the run before anything is removed — [`Error::Config`] for a broken
 /// configuration file, or [`Error::CatalogPattern`] for an exclusion glob that will not compile.
-pub fn run(options: RunOptions) -> Result<RunResult> {
+pub fn run(options: &RunOptions) -> Result<RunResult> {
     let started = Instant::now();
     let mut collected = Collected::default();
 
     for root in &options.roots {
-        sweep(root, &options, &mut collected)?;
+        sweep(root, options, &mut collected)?;
     }
 
     let mut result = RunResult {
-        roots: options.roots,
+        roots: options.roots.clone(),
         entries: collected.entries,
         skips: collected.skips,
         skipped_count: collected.skipped_count,
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn should_remove_a_proven_artifact_and_leave_the_source() {
         let fixture = tree(&["Cargo.toml", "src/main.rs", "target/debug/app"]);
-        let result = run(options(fixture.path())).expect("the run completes");
+        let result = run(&options(fixture.path())).expect("the run completes");
 
         assert_eq!(result.entries.len(), 1);
         assert_eq!(result.entries[0].outcome, Outcome::Removed);
@@ -282,7 +282,7 @@ mod tests {
     fn should_leave_an_unproven_artifact_alone() {
         let fixture = tree(&["target/important.txt"]);
         let before = snapshot(fixture.path());
-        let result = run(options(fixture.path())).expect("the run completes");
+        let result = run(&options(fixture.path())).expect("the run completes");
 
         assert!(result.entries.is_empty());
         assert_eq!(snapshot(fixture.path()), before);
@@ -294,7 +294,7 @@ mod tests {
         let fixture = tree(&["Cargo.toml", "target/debug/app", "package.json", "dist/bundle.js"]);
         let before = snapshot(fixture.path());
 
-        let dry = run(RunOptions {
+        let dry = run(&RunOptions {
             dry_run: true,
             ..options(fixture.path())
         })
@@ -303,7 +303,7 @@ mod tests {
         assert_eq!(dry.entries.len(), 2);
         assert!(dry.entries.iter().all(|entry| entry.outcome == Outcome::WouldRemove));
 
-        let real = run(options(fixture.path())).expect("the real run completes");
+        let real = run(&options(fixture.path())).expect("the real run completes");
         let dry_paths: Vec<_> = dry.entries.iter().map(|entry| entry.path.clone()).collect();
         let real_paths: Vec<_> = real.entries.iter().map(|entry| entry.path.clone()).collect();
         assert_eq!(
@@ -319,7 +319,7 @@ mod tests {
             min_age: Some(Duration::from_secs(86_400)),
             ..KeepPolicy::default()
         };
-        let result = run(with_keep(fixture.path(), keep)).expect("the run completes");
+        let result = run(&with_keep(fixture.path(), keep)).expect("the run completes");
 
         assert!(result.entries.is_empty(), "a build from a moment ago is not swept");
         assert!(fixture.path().join("target").exists());
@@ -336,7 +336,7 @@ mod tests {
             min_size: Some(1_000_000_000),
             ..KeepPolicy::default()
         };
-        let result = run(with_keep(fixture.path(), keep)).expect("the run completes");
+        let result = run(&with_keep(fixture.path(), keep)).expect("the run completes");
 
         assert!(result.entries.is_empty());
         assert!(fixture.path().join("target").exists());
@@ -349,7 +349,7 @@ mod tests {
     #[test]
     fn should_measure_what_it_removes() {
         let fixture = tree(&["Cargo.toml", "target/debug/app"]);
-        let result = run(options(fixture.path())).expect("the run completes");
+        let result = run(&options(fixture.path())).expect("the run completes");
         assert!(
             result.entries[0].bytes > 0,
             "a removed artifact reports the space it reclaimed"
@@ -361,7 +361,7 @@ mod tests {
     fn should_fail_before_scanning_when_a_root_does_not_exist() {
         let mut options = options(std::path::Path::new("/"));
         options.roots = vec![PathBuf::from("/no/such/tree")];
-        assert!(run(options).is_err());
+        assert!(run(&options).is_err());
     }
 
     #[test]
@@ -374,7 +374,7 @@ mod tests {
             "py/pyproject.toml",
             "py/.mypy_cache/x",
         ]);
-        let result = run(options(fixture.path())).expect("the run completes");
+        let result = run(&options(fixture.path())).expect("the run completes");
         let mut ecosystems: Vec<_> = result.entries.iter().map(Entry::ecosystem).collect();
         ecosystems.sort_unstable();
         assert_eq!(ecosystems, vec!["node", "python", "rust"]);
@@ -404,7 +404,7 @@ mod config_tests {
             "[ecosystems]\ndisable = [\"rust\"]\n",
         );
 
-        let result = run(options(fixture.path())).expect("the run completes");
+        let result = run(&options(fixture.path())).expect("the run completes");
 
         assert!(
             !fixture.path().join("ordinary/target").exists(),
@@ -434,7 +434,7 @@ mod config_tests {
             "[ecosystems]\nenable = [\"node.build\"]\n",
         );
 
-        run(options(fixture.path())).expect("the run completes");
+        run(&options(fixture.path())).expect("the run completes");
 
         assert!(
             fixture.path().join("ordinary/build/out.js").exists(),
@@ -452,7 +452,7 @@ mod config_tests {
         write(fixture.path(), "voom.toml", "[keep]\nmin_age = \"30d\"\n");
         let before = snapshot(fixture.path());
 
-        let result = run(options(fixture.path())).expect("the run completes");
+        let result = run(&options(fixture.path())).expect("the run completes");
 
         assert_eq!(snapshot(fixture.path()), before);
         assert!(matches!(
@@ -471,7 +471,7 @@ mod config_tests {
             "[keep]\nmin_age = \"30d\"\n\n[keep.rust]\nmin_age = \"0s\"\n",
         );
 
-        run(options(fixture.path())).expect("the run completes");
+        run(&options(fixture.path())).expect("the run completes");
 
         assert!(!fixture.path().join("target").exists(), "rust's override releases it");
         assert!(
@@ -488,7 +488,7 @@ mod config_tests {
 
         let mut options = options(fixture.path());
         options.flags.enable = vec!["rust.target".to_owned()];
-        run(options).expect("the run completes");
+        run(&options).expect("the run completes");
 
         assert!(!fixture.path().join("repo/target").exists(), "the command line wins");
     }
@@ -509,7 +509,7 @@ mod config_tests {
             &format!("[[paths]]\nmatch = \"{pattern}\"\nkeep = {{ min_age = \"30d\" }}\n"),
         );
 
-        run(options(fixture.path())).expect("the run completes");
+        run(&options(fixture.path())).expect("the run completes");
 
         assert!(
             fixture.path().join("work/target/app").exists(),
@@ -533,7 +533,7 @@ mod config_tests {
         let pattern = format!("{}/keep/**", fixture.path().display());
         write(fixture.path(), "voom.toml", &format!("exclude = [\"{pattern}\"]\n"));
 
-        run(options(fixture.path())).expect("the run completes");
+        run(&options(fixture.path())).expect("the run completes");
 
         assert!(fixture.path().join("keep/target/app").exists());
         assert!(!fixture.path().join("drop/target").exists());
@@ -544,7 +544,7 @@ mod config_tests {
         let fixture = tree(&["Cargo.toml", "target/app", "voom.toml"]);
         write(fixture.path(), "voom.toml", "[keep]\nmin_age = \"forever\"\n");
 
-        let error = run(options(fixture.path())).unwrap_err();
+        let error = run(&options(fixture.path())).unwrap_err();
         let message = error.to_string();
         assert!(message.contains("voom.toml"), "{message}");
         assert!(message.contains("forever"), "{message}");
@@ -558,7 +558,7 @@ mod config_tests {
     fn should_reject_an_unknown_ecosystem_in_config() {
         let fixture = tree(&["Cargo.toml", "target/app", "voom.toml"]);
         write(fixture.path(), "voom.toml", "[ecosystems]\ndisable = [\"rustlang\"]\n");
-        let error = run(options(fixture.path())).unwrap_err();
+        let error = run(&options(fixture.path())).unwrap_err();
         assert!(error.to_string().contains("rustlang"), "{error}");
     }
 
@@ -570,7 +570,7 @@ mod config_tests {
 
         let mut options = options(fixture.path());
         options.config = Some(fixture.path().join("other.toml"));
-        run(options).expect("the run completes");
+        run(&options).expect("the run completes");
 
         assert!(
             !fixture.path().join("target").exists(),
@@ -589,7 +589,7 @@ mod config_tests {
             "[ecosystems]\nenable = [\"rust.target\"]\n",
         );
 
-        run(options(fixture.path())).expect("the run completes");
+        run(&options(fixture.path())).expect("the run completes");
 
         assert!(!fixture.path().join("repo/target").exists(), "the nearer file wins");
     }

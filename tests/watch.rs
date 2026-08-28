@@ -149,7 +149,7 @@ fn each_build_produces_something_voom_would_reclaim_when_quiet() {
         let root = project(build);
         let before = snapshot(root.path());
 
-        let result = run(options(root.path())).expect("the run completes");
+        let result = run(&options(root.path())).expect("the run completes");
 
         let paths: Vec<PathBuf> = result.entries.iter().map(|entry| entry.path.clone()).collect();
         assert!(

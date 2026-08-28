@@ -148,7 +148,7 @@ pub fn watch(
 
     // The baseline sweep. Everything already reclaimable goes now, so the event loop only ever
     // deals with what the machine produces from here on.
-    let baseline = run(options.clone())?;
+    let baseline = run(options)?;
     on_prune(&baseline).map_err(|error| Error::Watch {
         reason: error.to_string(),
     })?;
@@ -210,7 +210,7 @@ pub fn watch(
 
         // A dry run finds what is currently reclaimable without removing anything; the quiet
         // period then decides which of those are safe to take.
-        let mut candidates = run(RunOptions {
+        let mut candidates = run(&RunOptions {
             dry_run: true,
             ..options.clone()
         })?;

@@ -77,7 +77,7 @@ fn watch(cli: &Cli, args: &voom::cli::WatchArgs) -> anyhow::Result<i32> {
 
 fn prune(cli: &Cli) -> anyhow::Result<i32> {
     let options = cli.prune.to_run_options()?;
-    let result = voom::run::run(options).context("scanning")?;
+    let result = voom::run::run(&options).context("scanning")?;
 
     let mut out = anstream::stdout().lock();
     voom::cli::render(&result, &cli.prune, &mut out).context("writing the report")?;

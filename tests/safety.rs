@@ -44,7 +44,7 @@ fn should_find_a_gitignored_artifact() {
     fs::create_dir_all(root.path().join("target/debug")).unwrap();
     fs::write(root.path().join("target/debug/app"), b"output").unwrap();
 
-    let result = run(options(root.path())).expect("the run completes");
+    let result = run(&options(root.path())).expect("the run completes");
 
     assert_eq!(result.entries.len(), 1, "a gitignored target/ must still be found");
     assert!(!root.path().join("target").exists());
@@ -60,7 +60,7 @@ fn should_never_delete_through_a_symlink() {
     fs::write(root.path().join("source/main.rs"), b"fn main() {}").unwrap();
     std::os::unix::fs::symlink(root.path().join("source"), root.path().join("target")).unwrap();
 
-    run(options(root.path())).expect("the run completes");
+    run(&options(root.path())).expect("the run completes");
 
     assert!(
         root.path().join("source/main.rs").exists(),
@@ -81,7 +81,7 @@ fn should_not_follow_a_symlink_out_of_the_scan_root() {
     fs::write(root.path().join("Cargo.toml"), b"[package]").unwrap();
     std::os::unix::fs::symlink(outside.path(), root.path().join("target")).unwrap();
 
-    run(options(root.path())).expect("the run completes");
+    run(&options(root.path())).expect("the run completes");
 
     assert!(
         outside.path().join("precious.txt").exists(),
@@ -98,7 +98,7 @@ fn should_never_descend_into_a_vcs_directory() {
     fs::write(root.path().join(".git/target/object"), b"data").unwrap();
     let before = snapshot(root.path());
 
-    let result = run(options(root.path())).expect("the run completes");
+    let result = run(&options(root.path())).expect("the run completes");
 
     assert!(result.entries.is_empty());
     assert_eq!(snapshot(root.path()), before);
@@ -119,7 +119,7 @@ fn should_never_remove_a_dependency_directory() {
     let mut options = options(root.path());
     // Even asking for everything cannot reach them: they are absent from the catalog.
     options.flags.enable = vec!["node.build".to_owned()];
-    run(options).expect("the run completes");
+    run(&options).expect("the run completes");
 
     assert!(root.path().join("node_modules/left-pad/index.js").exists());
 }
@@ -133,7 +133,7 @@ fn should_respect_the_opt_in_for_an_expensive_artifact() {
     fs::create_dir_all(root.path().join(".venv/lib")).unwrap();
     fs::write(root.path().join(".venv/lib/site.py"), b"# packages").unwrap();
 
-    run(options(root.path())).expect("the run completes");
+    run(&options(root.path())).expect("the run completes");
     assert!(
         root.path().join(".venv/lib/site.py").exists(),
         "a virtualenv is not swept by default"
@@ -141,7 +141,7 @@ fn should_respect_the_opt_in_for_an_expensive_artifact() {
 
     let mut options = options(root.path());
     options.flags.enable = vec!["python.venv".to_owned()];
-    run(options).expect("the run completes");
+    run(&options).expect("the run completes");
     assert!(!root.path().join(".venv").exists(), "and is swept when asked for");
 }
 
@@ -157,7 +157,7 @@ fn should_never_remove_the_scan_root() {
     // Point voom *at* the artifact. It is now the root, and a root is never its own artifact.
     let mut options = options(&target);
     options.roots = vec![target.clone()];
-    run(options).expect("the run completes");
+    run(&options).expect("the run completes");
 
     assert!(
         target.exists(),
@@ -176,7 +176,7 @@ fn should_resolve_an_ambiguous_name_by_which_marker_is_present() {
         fs::write(root.path().join(project).join("target/contents"), b"x").unwrap();
     }
 
-    let result = run(options(root.path())).expect("the run completes");
+    let result = run(&options(root.path())).expect("the run completes");
 
     let mut ecosystems: Vec<_> = result.entries.iter().map(voom::report::Entry::ecosystem).collect();
     ecosystems.sort_unstable();
@@ -204,7 +204,7 @@ fn should_isolate_a_failure_to_the_artifact_it_happened_on() {
     let locked = root.path().join("locked");
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
 
-    let result = run(options(root.path())).expect("the run completes rather than aborting");
+    let result = run(&options(root.path())).expect("the run completes rather than aborting");
 
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
 
