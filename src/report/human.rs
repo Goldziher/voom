@@ -513,8 +513,33 @@ mod tests {
     use super::*;
     use crate::classify::SkipReason;
     use crate::delete::Refusal;
-    use crate::report::fixtures::{entry, result};
+    use crate::report::fixtures;
+    use crate::report::fixtures::{spell, unspell};
     use crate::scan::Skipped;
+
+    // This renderer is the one that shortens paths against a base, so unlike the JSON tests
+    // these fixtures have to be absolute *on the platform the test runs on*. The wrappers below
+    // spell the literals accordingly and `render_to_string` maps the output back, so the call
+    // sites and the snapshots stay in one Unix-shaped spelling. See `fixtures::spell`.
+
+    fn entry(path: &str, spec: &str, bytes: u64, outcome: Outcome) -> Entry {
+        fixtures::entry(&spell(path), spec, bytes, outcome)
+    }
+
+    fn included(path: &str, pattern: &str, bytes: u64, outcome: Outcome) -> Entry {
+        fixtures::included(&spell(path), &spell(pattern), bytes, outcome)
+    }
+
+    fn result(entries: Vec<Entry>, dry_run: bool) -> RunResult {
+        RunResult {
+            roots: vec![PathBuf::from(spell("/projects"))],
+            ..fixtures::result(entries, dry_run)
+        }
+    }
+
+    fn path(literal: &str) -> PathBuf {
+        PathBuf::from(spell(literal))
+    }
 
     /// Renders to a string with ANSI removed, which is what `anstream` does downstream when the
     /// destination is not a terminal. Snapshots stay readable and colour stays exercised.
@@ -522,7 +547,7 @@ mod tests {
         let mut buffer = Vec::new();
         render(result, options, &mut buffer).expect("writing to a Vec cannot fail");
         let text = String::from_utf8(buffer).expect("the renderer emits UTF-8");
-        anstream::adapter::strip_str(&text).to_string()
+        unspell(&anstream::adapter::strip_str(&text).to_string())
     }
 
     fn verbose() -> HumanOptions {
@@ -537,12 +562,12 @@ mod tests {
         let mut result = result(Vec::new(), true);
         result.failures = vec![
             crate::scan::WalkFailure {
-                path: Some(PathBuf::from("/projects/locked")),
+                path: Some(path("/projects/locked")),
                 message: "Permission denied (os error 13)".to_owned(),
                 transient: false,
             },
             crate::scan::WalkFailure {
-                path: Some(PathBuf::from("/projects/containers")),
+                path: Some(path("/projects/containers")),
                 message: "Interrupted system call (os error 4)".to_owned(),
                 transient: true,
             },
@@ -576,7 +601,7 @@ mod tests {
     #[test]
     fn should_label_an_unanchored_removal_as_unanchored() {
         let result = result(
-            vec![crate::report::fixtures::included(
+            vec![included(
                 "/scratch/build-junk",
                 "/scratch/build-junk",
                 1024,
@@ -640,14 +665,14 @@ mod tests {
         result.skipped_count = 2;
         result.skips = vec![
             Skipped {
-                path: PathBuf::from("/projects/data/target"),
+                path: path("/projects/data/target"),
                 reason: SkipReason::NoMarker {
                     ecosystem: "rust",
                     markers: &["Cargo.toml"],
                 },
             },
             Skipped {
-                path: PathBuf::from("/projects/tool/bin"),
+                path: path("/projects/tool/bin"),
                 reason: SkipReason::NotEnabled {
                     spec: "go.bin".to_owned(),
                     note: Some("`bin/` beside a go.mod is as often hand-written scripts as output."),
@@ -721,12 +746,7 @@ mod tests {
     #[test]
     fn should_print_a_path_outside_the_roots_in_full() {
         let result = result(
-            vec![crate::report::fixtures::included(
-                "/scratch/build-junk",
-                "/scratch/*",
-                1024,
-                Outcome::Removed,
-            )],
+            vec![included("/scratch/build-junk", "/scratch/*", 1024, Outcome::Removed)],
             false,
         );
 
@@ -739,15 +759,15 @@ mod tests {
     /// every line and no path is rendered relative to a root it does not belong to.
     #[test]
     fn should_use_the_common_parent_as_the_base_for_several_roots() {
-        let roots = vec![PathBuf::from("/projects/api"), PathBuf::from("/projects/web")];
-        assert_eq!(base_path(&roots), Some(Path::new("/projects")));
+        let roots = vec![path("/projects/api"), path("/projects/web")];
+        assert_eq!(base_path(&roots), Some(path("/projects").as_path()));
     }
 
     /// Stripping `/` would make absolute paths look relative and save nothing; a relative root
     /// is short already.
     #[test]
     fn should_not_shorten_against_a_useless_base() {
-        assert_eq!(base_path(&[PathBuf::from("/a"), PathBuf::from("/b")]), None);
+        assert_eq!(base_path(&[path("/a"), path("/b")]), None);
         assert_eq!(base_path(&[PathBuf::from(".")]), None);
         assert_eq!(base_path(&[]), None);
     }
@@ -878,7 +898,7 @@ mod tests {
             );
         }
         assert_eq!(
-            anstream::adapter::strip_str(&coloured).to_string(),
+            unspell(&anstream::adapter::strip_str(&coloured).to_string()),
             render_to_string(&mixed(), HumanOptions::default()),
             "stripping the colour is exactly what the snapshots pin"
         );

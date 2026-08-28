@@ -163,6 +163,31 @@ pub(crate) mod fixtures {
     use super::*;
     use crate::classify::ArtifactId;
 
+    /// A fixture path literal, spelled the way the running platform spells an absolute path.
+    ///
+    /// The literals in these tests are written Unix-style because that is what the snapshots
+    /// show. On Windows `Path::is_absolute` demands a drive prefix, so `/projects` is a
+    /// *relative* path there — which is right, and which meant every fixture rooted at one
+    /// exercised a different branch on each platform. Anything not starting with `/` is
+    /// returned untouched, so a `~`-rooted config pattern keeps its own spelling.
+    pub(crate) fn spell(path: &str) -> String {
+        if cfg!(windows) && path.starts_with('/') {
+            format!("C:{}", path.replace('/', "\\"))
+        } else {
+            path.to_owned()
+        }
+    }
+
+    /// The inverse of [`spell`], applied to rendered output so one snapshot serves both
+    /// platforms. A report carries no backslash of its own, so the replacement is unambiguous.
+    pub(crate) fn unspell(text: &str) -> String {
+        if cfg!(windows) {
+            text.replace("C:\\", "/").replace('\\', "/")
+        } else {
+            text.to_owned()
+        }
+    }
+
     /// One entry naming a catalog declaration by its `<ecosystem>.<artifact>` spec.
     ///
     /// # Panics
