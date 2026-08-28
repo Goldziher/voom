@@ -57,9 +57,9 @@ Release mechanics:
 - The workflow is **re-runnable**: it probes each registry for the version before publishing
   and skips what already exists, so a failure in one channel does not block the others on
   retry.
-- npm and PyPI packages are thin wrappers that download the release binary — npm via a
-  `postinstall` script, PyPI via a first-run downloader — so a single Rust build serves all
-  five channels.
+- npm and PyPI packages are thin wrappers that download the release binary on **first run**,
+  so a single Rust build serves all five channels. See the amendment below for why npm does it
+  this way rather than from a `postinstall` script.
 
 **Version is a single value across five surfaces**: `Cargo.toml`, `npm-package/package.json`,
 `pip-package/pyproject.toml`, `pip-package/voom/__init__.py`, and `poly-hooks.toml`
@@ -112,6 +112,34 @@ Negative / risks:
 - **crates.io only, letting users build from source:** rejected — it restricts a
   cross-ecosystem tool to Rust developers, which is a small subset of the people whose disks
   it would help.
-- **Per-platform npm packages via `optionalDependencies`** instead of a `postinstall`
-  downloader: rejected for v1 — it is the better mechanism, but it multiplies the publishing
-  matrix by five and uncomment's single-package approach is proven. Worth revisiting.
+- **Per-platform npm packages via `optionalDependencies`** instead of a downloader: rejected
+  for v1 — it is the better mechanism, but it multiplies the publishing matrix by five and
+  uncomment's single-package approach is proven. Worth revisiting; the amendment below narrows
+  the gap by removing the reason it was most likely to be forced.
+
+## Amendment — 2026-08-28 (npm fetches on first run, not on install)
+
+The npm wrapper downloaded the binary from a `postinstall` script. That does not work on
+current npm and would have shipped a channel that simply does not install.
+
+npm 11.19 gates install scripts behind `allow-scripts`, off by default. A blocked `postinstall`
+does not merely skip the download: npm declines to create the `bin` link at all, because the
+target the manifest names does not exist. Reproduced against a clean prefix with a
+shape-identical package — `npm i -g` printed a warning, created no `bin/` entry, and left
+`voom: command not found`; `npx -y` exited 0 having done nothing. The setting only gets
+stricter from here, and asking every user to pass `--allow-scripts` is not a distribution
+channel.
+
+`bin/voom` is now a committed Node launcher that resolves the binary — fetching it on first use
+— and hands over to it. `download.js` holds the fetch. Consequences:
+
+- The package works with install scripts disabled, which is the default.
+- It fixes a second bug that the first one was hiding: `install.js` wrote `bin/voom.exe` on
+  Windows while the manifest linked `bin/voom`, so the shim pointed at a file that would never
+  exist. The launcher is a Node script under one name on every platform.
+- The binary caches per user (`~/.cache/voom/<version>`, `%LOCALAPPDATA%` on Windows) rather
+  than inside the package directory, which a global install often puts somewhere the running
+  user cannot write. `VOOM_BINARY` overrides it. This is what the PyPI wrapper already did, so
+  the two channels now behave the same way.
+- First run pays the download; later runs do not. Unpacking stages into a temporary directory
+  and renames, so two concurrent invocations cannot corrupt each other.

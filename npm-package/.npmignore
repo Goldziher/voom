@@ -1,7 +1,8 @@
-# The published package is defined by "files" in package.json (install.js + README.md).
-# The binary is downloaded by postinstall into bin/ and must never be committed or packed —
-# it is ~5 MB per platform and would be wrong for four out of five of them.
-bin/
+# The published package is defined by "files" in package.json, which wins over this file.
+# This is the belt to that braces: never pack a downloaded binary or a local install tree.
+#
+# bin/ is NOT listed. It holds the committed launcher (bin/voom), which is the package's
+# entry point — the fetched binary is cached under the user's home instead. See download.js.
 node_modules/
 *.tgz
 *.tar.gz

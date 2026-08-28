@@ -11,8 +11,8 @@ poly.local.toml
 *.swp
 .DS_Store
 
-# npm wrapper: the binary is downloaded by postinstall, never committed
-/npm-package/bin/
+# npm wrapper. `bin/voom` is the committed launcher and must be tracked; the binary it fetches
+# is cached under the user's home, not in the package (npm-package/download.js).
 /npm-package/node_modules
 /npm-package/*.tgz
 

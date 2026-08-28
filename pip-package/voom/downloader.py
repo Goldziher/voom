@@ -96,8 +96,22 @@ def _extract(archive: Path, ext: str, destination: Path) -> None:
     raise RuntimeError("Binary not found in downloaded archive")
 
 
+def _cache_root() -> Path:
+    """Where the downloaded binary lives, per user and per version.
+
+    Per user rather than beside the installed package: a wheel often lands somewhere the
+    running user cannot write, which is exactly when the first run needs to write. The npm
+    wrapper caches in the same place for the same reason (npm-package/download.js).
+    """
+    if platform.system().lower() == "windows":
+        local_app_data = os.getenv("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / BINARY
+    return Path.home() / ".cache" / BINARY
+
+
 def _cache_path(version: str) -> Path:
-    cache_dir = Path.home() / ".cache" / BINARY / version
+    cache_dir = _cache_root() / version
     cache_dir.mkdir(parents=True, exist_ok=True)
     suffix = ".exe" if platform.system().lower() == "windows" else ""
     return cache_dir / f"{BINARY}{suffix}"

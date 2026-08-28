@@ -1,0 +1,31 @@
+#!/usr/bin/env node
+// The `voom` command. Resolves the binary — fetching it on first run — and hands over to it.
+//
+// A committed launcher rather than the binary itself, because npm links `bin` at install time
+// and the binary does not exist yet at that point. See download.js for why the download is not
+// a postinstall script.
+
+const { spawn } = require("node:child_process");
+const { ensureBinary } = require("../download.js");
+
+ensureBinary()
+  .then((binaryPath) => {
+    const child = spawn(binaryPath, process.argv.slice(2), { stdio: "inherit" });
+    // Exit the way the binary did. A signal death has no exit status, and reporting 0 for one
+    // would tell a hook or a CI job that a sweep interrupted halfway through had succeeded.
+    child.on("exit", (code, signal) => {
+      if (signal) {
+        process.kill(process.pid, signal);
+        return;
+      }
+      process.exit(code ?? 1);
+    });
+    child.on("error", (error) => {
+      process.stderr.write(`voom: could not run ${binaryPath}: ${error.message}\n`);
+      process.exit(1);
+    });
+  })
+  .catch((error) => {
+    process.stderr.write(`voom: ${error.message}\n`);
+    process.exit(1);
+  });
