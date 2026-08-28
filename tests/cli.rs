@@ -158,7 +158,7 @@ fn should_emit_parseable_json_with_a_schema_version() {
         .clone();
 
     let document: serde_json::Value = serde_json::from_slice(&output).expect("stdout parses as JSON");
-    assert_eq!(document["schema_version"], 1);
+    assert_eq!(document["schema_version"], voom::report::SCHEMA_VERSION);
     assert_eq!(document["dry_run"], true);
     assert_eq!(document["totals"]["reclaimed"], 1);
     let reasons: Vec<_> = document["skipped"]

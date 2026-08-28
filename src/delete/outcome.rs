@@ -68,8 +68,134 @@ impl std::fmt::Display for Refusal {
     }
 }
 
-/// What happened to one artifact.
+/// Why a removal that passed every rail did not finish.
+///
+/// Classified from [`std::io::ErrorKind`], never from the raw number. `ENOTEMPTY` is errno 66
+/// on macOS, 39 on Linux and `ERROR_DIR_NOT_EMPTY` (145) on Windows — and errno 39 on macOS is
+/// something else entirely, so matching on the integer would be a per-platform bug wearing the
+/// costume of a portable one. The number is still carried, because it is what a reader will
+/// find if they go looking in the OS's own documentation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FailureKind {
+    /// A directory was not empty at the moment it was unlinked.
+    NotEmpty,
+    /// Something inside the artifact could not be unlinked.
+    Denied,
+    /// The filesystem is mounted read-only.
+    ReadOnly,
+    /// Anything else. The OS's own message is the only description.
+    Other,
+}
+
+impl FailureKind {
+    fn of(kind: std::io::ErrorKind) -> Self {
+        match kind {
+            std::io::ErrorKind::DirectoryNotEmpty => Self::NotEmpty,
+            std::io::ErrorKind::PermissionDenied => Self::Denied,
+            std::io::ErrorKind::ReadOnlyFilesystem => Self::ReadOnly,
+            _ => Self::Other,
+        }
+    }
+
+    /// The stable code emitted in JSON.
+    ///
+    /// [`Self::Other`] keeps `removal_failed`, the value schema 1 emitted for every failure, so
+    /// a consumer that only ever handled the generic case still sees what it expects.
+    #[must_use]
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::NotEmpty => "not_empty",
+            Self::Denied => "permission_denied",
+            Self::ReadOnly => "read_only_filesystem",
+            Self::Other => "removal_failed",
+        }
+    }
+
+    /// What would plausibly get the rest of it, when there is anything to suggest.
+    #[must_use]
+    pub fn hint(self) -> Option<&'static str> {
+        match self {
+            Self::NotEmpty => Some("re-run to finish"),
+            Self::Denied | Self::ReadOnly | Self::Other => None,
+        }
+    }
+}
+
+impl std::fmt::Display for FailureKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // Hedged to exactly the strength the standard library's own documentation uses:
+            // `remove_dir_all` "may return DirectoryNotEmpty if the directory is concurrently
+            // written into, which typically indicates some contents were removed but not all".
+            // It states what the error means and offers the cause as a likelihood; it does not
+            // claim to know that a build was running.
+            Self::NotEmpty => write!(
+                f,
+                "a directory was not empty when voom unlinked it, most likely because something \
+                 wrote into it during the removal"
+            ),
+            Self::Denied => write!(f, "permission denied unlinking something inside it"),
+            Self::ReadOnly => write!(f, "the filesystem is mounted read-only"),
+            Self::Other => write!(f, "the removal did not succeed"),
+        }
+    }
+}
+
+/// A removal failure, with the OS's own answer kept beside voom's reading of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemovalFailure {
+    kind: FailureKind,
+    os_error: Option<i32>,
+    os_message: String,
+}
+
+impl RemovalFailure {
+    pub(crate) fn from_io(error: &std::io::Error) -> Self {
+        Self {
+            kind: FailureKind::of(error.kind()),
+            os_error: error.raw_os_error(),
+            os_message: error.to_string(),
+        }
+    }
+
+    /// What kind of failure this was, for a caller that wants to branch rather than read.
+    #[must_use]
+    pub fn kind(&self) -> FailureKind {
+        self.kind
+    }
+
+    /// The platform's own error number, when there was one.
+    #[must_use]
+    pub fn os_error(&self) -> Option<i32> {
+        self.os_error
+    }
+
+    /// The OS's message, kept whole so nothing it said is lost.
+    #[must_use]
+    pub fn os_message(&self) -> &str {
+        &self.os_message
+    }
+}
+
+impl std::fmt::Display for RemovalFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.kind {
+            // Nothing voom can say about an unrecognised error beats what the OS said.
+            FailureKind::Other => write!(f, "{}", self.os_message),
+            kind => write!(f, "{kind}"),
+        }
+    }
+}
+
+/// What happened to one artifact.
+///
+/// `#[non_exhaustive]` because a new outcome is a change this design expects to make — this
+/// release adds one — and after 0.1.0 adding a variant to a bare public enum breaks every
+/// downstream `match` without a wildcard. [`Refusal`] and [`crate::error::Error`] already carry
+/// it; this was the odd one out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Outcome {
     /// It was removed.
     Removed,
@@ -77,18 +203,43 @@ pub enum Outcome {
     WouldRemove,
     /// A rail refused it.
     Refused(Refusal),
-    /// It was allowed but the removal failed.
-    Failed(String),
+    /// Some of it was removed and some of it was not.
+    ///
+    /// `remove_dir_all` unlinks a tree's contents before unlinking the tree itself, so a failure
+    /// part-way through leaves real space reclaimed and the artifact still on disk. Reporting
+    /// that as a plain failure is how a sweep that freed 130 GB came to print a footer saying it
+    /// had reclaimed 25.
+    ///
+    /// `remaining` is measured after the failure and is exact. `freed` is the difference between
+    /// that and a size measured before the removal began, so under a writer that is still
+    /// working it is an estimate — the direction of the estimate is the only thing that is
+    /// guaranteed, and `saturating_sub` is what guarantees it.
+    ///
+    /// The artifact is **not** reclaimed: it is still there, and it should be retried.
+    PartiallyRemoved {
+        /// Bytes this removal actually freed.
+        freed: u64,
+        /// Bytes still on disk, measured after the failure.
+        remaining: u64,
+        /// Why it stopped.
+        failure: RemovalFailure,
+    },
+    /// It was allowed, and nothing was removed.
+    Failed(RemovalFailure),
 }
 
 impl Outcome {
     /// Whether this outcome should make the process exit non-zero (ADR 0007's code `1`).
     #[must_use]
     pub fn is_failure(&self) -> bool {
-        matches!(self, Self::Failed(_))
+        matches!(self, Self::Failed(_) | Self::PartiallyRemoved { .. })
     }
 
     /// Whether the artifact is gone, or would be.
+    ///
+    /// False for [`Outcome::PartiallyRemoved`], which is what watch mode relies on: the tracker
+    /// only forgets a path it believes is gone, so a partly-removed artifact stays under the
+    /// quiet-period rule and is retried on the next pass rather than being dropped.
     #[must_use]
     pub fn is_reclaimed(&self) -> bool {
         matches!(self, Self::Removed | Self::WouldRemove)
@@ -128,7 +279,12 @@ mod tests {
 
     #[test]
     fn outcomes_classify_failures_and_reclaims() {
-        assert!(Outcome::Failed("boom".to_owned()).is_failure());
+        assert!(
+            Outcome::Failed(RemovalFailure::from_io(&std::io::Error::from(
+                std::io::ErrorKind::Other
+            )))
+            .is_failure()
+        );
         assert!(!Outcome::Refused(Refusal::Symlink).is_failure());
         assert!(Outcome::Removed.is_reclaimed());
         assert!(Outcome::WouldRemove.is_reclaimed());
@@ -142,5 +298,75 @@ mod tests {
         assert_eq!(Refusal::EscapesRoot.code(), "escapes_root");
         assert_eq!(Refusal::FilesystemBoundary.code(), "filesystem_boundary");
         assert_eq!(Refusal::Vanished.code(), "vanished");
+    }
+
+    /// Each kind gets its own machine code and its own words, mirroring the discipline
+    /// [`Refusal`] follows: a reader who is told "is a symlink" when the problem is a permission
+    /// bit goes looking for something that is not there.
+    #[test]
+    fn every_failure_kind_has_its_own_code_and_its_own_words() {
+        let kinds = [
+            FailureKind::NotEmpty,
+            FailureKind::Denied,
+            FailureKind::ReadOnly,
+            FailureKind::Other,
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for kind in kinds {
+            assert!(seen.insert(kind.code()), "`{}` is used twice", kind.code());
+            assert!(!kind.to_string().is_empty(), "{kind:?} has no words");
+        }
+    }
+
+    /// The classification is by [`std::io::ErrorKind`] and never by the number, because the
+    /// number is not portable: `ENOTEMPTY` is 66 on macOS and 39 on Linux, and 39 on macOS means
+    /// something else entirely. The number is still carried for anyone reading the OS's docs.
+    #[test]
+    fn a_failure_is_classified_by_kind_and_still_carries_the_os_number() {
+        for (kind, expected, code) in [
+            (
+                std::io::ErrorKind::DirectoryNotEmpty,
+                FailureKind::NotEmpty,
+                "not_empty",
+            ),
+            (
+                std::io::ErrorKind::PermissionDenied,
+                FailureKind::Denied,
+                "permission_denied",
+            ),
+            (
+                std::io::ErrorKind::ReadOnlyFilesystem,
+                FailureKind::ReadOnly,
+                "read_only_filesystem",
+            ),
+        ] {
+            let failure = RemovalFailure::from_io(&std::io::Error::from(kind));
+            assert_eq!(failure.kind(), expected, "{kind:?}");
+            assert_eq!(failure.kind().code(), code);
+        }
+
+        // A real OS error, so `raw_os_error` is populated rather than synthesised.
+        let real = RemovalFailure::from_io(&std::io::Error::from_raw_os_error(if cfg!(target_os = "linux") {
+            39
+        } else {
+            66
+        }));
+        assert_eq!(real.os_error(), Some(if cfg!(target_os = "linux") { 39 } else { 66 }));
+        assert!(!real.os_message().is_empty(), "the OS's own words are kept whole");
+    }
+
+    /// Watch mode forgets a path only when it believes the artifact is gone, so a partial
+    /// removal must not read as reclaimed — otherwise the tracker drops it and the leftovers are
+    /// never retried.
+    #[test]
+    fn a_partial_removal_is_a_failure_but_is_not_reclaimed() {
+        let partial = Outcome::PartiallyRemoved {
+            freed: 4096,
+            remaining: 512,
+            failure: RemovalFailure::from_io(&std::io::Error::from(std::io::ErrorKind::DirectoryNotEmpty)),
+        };
+
+        assert!(partial.is_failure(), "it is something that did not finish");
+        assert!(!partial.is_reclaimed(), "the artifact is still on disk");
     }
 }

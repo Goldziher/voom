@@ -23,7 +23,12 @@ use crate::scan::{Skipped, WalkFailure};
 ///
 /// A versioned schema is a compatibility commitment. This exists so the shape can be broken
 /// deliberately rather than accidentally.
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// **2** — `partially_removed` is a status no version-1 consumer could have handled, and
+/// `totals.bytes` now answers a different question for the same tree: every byte the run freed,
+/// rather than only the bytes of artifacts that are entirely gone. Since the break was being
+/// spent, `reason` also became specific on a failure instead of always `removal_failed`.
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Process exit codes (ADR 0007). Distinct codes let a hook branch without parsing text.
 pub mod exit {
@@ -64,6 +69,21 @@ impl Entry {
     pub fn artifact(&self) -> Option<&'static str> {
         self.finding.artifact().map(|id| id.artifact().path)
     }
+
+    /// What this entry actually freed — the number the report's size column shows.
+    ///
+    /// `bytes` is what the artifact measured *before* the removal was attempted, which for a
+    /// partial removal is not what came back. Both the footer's total and its per-ecosystem
+    /// breakdown read this one accessor, because they used to decide independently and a
+    /// partial removal is exactly the case that would have made them disagree.
+    #[must_use]
+    pub fn reclaimed_bytes(&self) -> u64 {
+        match &self.outcome {
+            Outcome::Removed | Outcome::WouldRemove => self.bytes,
+            Outcome::PartiallyRemoved { freed, .. } => *freed,
+            _ => 0,
+        }
+    }
 }
 
 /// Totals for the footer and for the JSON.
@@ -79,6 +99,10 @@ pub struct Totals {
     pub refused: usize,
     /// Artifacts that were allowed but whose removal failed.
     pub failed: usize,
+    /// Artifacts partly removed: real space freed, and the artifact still on disk.
+    pub partial: usize,
+    /// Bytes those partial removals freed. **Already included in `bytes`.**
+    pub partial_bytes: u64,
 }
 
 /// Everything one run produced.
@@ -119,13 +143,18 @@ impl RunResult {
             ..Totals::default()
         };
         for entry in &self.entries {
+            // `bytes` counts every byte the run actually freed, whether or not the artifact it
+            // came from is gone. `reclaimed` counts artifacts that *are* gone, so a partial
+            // contributes to the first and not the second — it is still on disk.
+            totals.bytes += entry.reclaimed_bytes();
             match &entry.outcome {
-                Outcome::Removed | Outcome::WouldRemove => {
-                    totals.reclaimed += 1;
-                    totals.bytes += entry.bytes;
-                }
+                Outcome::Removed | Outcome::WouldRemove => totals.reclaimed += 1,
                 Outcome::Refused(_) => totals.refused += 1,
-                Outcome::Failed(_) => totals.failed += 1,
+                Outcome::PartiallyRemoved { freed, .. } => {
+                    totals.partial += 1;
+                    totals.partial_bytes += freed;
+                }
+                _ => totals.failed += 1,
             }
         }
         totals
@@ -138,7 +167,9 @@ impl RunResult {
     #[must_use]
     pub fn exit_code(&self, exit_code: bool) -> i32 {
         let totals = self.totals();
-        if totals.failed > 0 {
+        // A partial removal is still an artifact that could not be removed, and a re-run is
+        // warranted, so it exits the same way — which is also what it did before it had a name.
+        if totals.failed > 0 || totals.partial > 0 {
             return exit::REMOVAL_FAILED;
         }
         if exit_code && self.dry_run && totals.reclaimed > 0 {
@@ -186,6 +217,12 @@ pub(crate) mod fixtures {
         } else {
             text.to_owned()
         }
+    }
+
+    /// A removal failure of a given kind, built from a real `io::Error` so the fixtures carry
+    /// the same classification the deleter would produce.
+    pub(crate) fn failure(kind: std::io::ErrorKind) -> crate::delete::RemovalFailure {
+        crate::delete::RemovalFailure::from_io(&std::io::Error::from(kind))
     }
 
     /// One entry naming a catalog declaration by its `<ecosystem>.<artifact>` spec.
@@ -267,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn should_total_only_reclaimed_bytes() {
+    fn should_total_the_bytes_a_run_actually_freed() {
         let result = result(
             vec![
                 entry("/projects/a/target", "rust.target", 1_000, Outcome::Removed),
@@ -282,16 +319,53 @@ mod tests {
                     "/projects/d/target",
                     "rust.target",
                     8_000,
-                    Outcome::Failed("boom".to_owned()),
+                    Outcome::Failed(fixtures::failure(std::io::ErrorKind::Other)),
+                ),
+                entry(
+                    "/projects/e/target",
+                    "rust.target",
+                    16_000,
+                    Outcome::PartiallyRemoved {
+                        freed: 10_000,
+                        remaining: 6_000,
+                        failure: fixtures::failure(std::io::ErrorKind::DirectoryNotEmpty),
+                    },
                 ),
             ],
             false,
         );
         let totals = result.totals();
-        assert_eq!(totals.reclaimed, 2);
-        assert_eq!(totals.bytes, 3_000, "refused and failed artifacts reclaim nothing");
+        assert_eq!(totals.reclaimed, 2, "only artifacts that are actually gone are counted");
+        assert_eq!(
+            totals.bytes, 13_000,
+            "every byte the run freed, including the 10_000 from an artifact still on disk — \
+             reporting that one as zero is what made a 130 GB sweep claim it reclaimed 25"
+        );
         assert_eq!(totals.refused, 1);
-        assert_eq!(totals.failed, 1);
+        assert_eq!(totals.failed, 1, "a removal that freed nothing is a plain failure");
+        assert_eq!(totals.partial, 1);
+        assert_eq!(totals.partial_bytes, 10_000, "a documented subset of `bytes`");
+    }
+
+    /// A partial removal leaves the artifact on disk, so a re-run is warranted and the exit code
+    /// has to say so — which is also what it did before the state had a name.
+    #[test]
+    fn should_exit_one_when_a_removal_was_only_partial() {
+        let result = result(
+            vec![entry(
+                "/projects/a/target",
+                "rust.target",
+                1_000,
+                Outcome::PartiallyRemoved {
+                    freed: 900,
+                    remaining: 100,
+                    failure: fixtures::failure(std::io::ErrorKind::DirectoryNotEmpty),
+                },
+            )],
+            false,
+        );
+
+        assert_eq!(result.exit_code(false), exit::REMOVAL_FAILED);
     }
 
     #[test]
@@ -310,7 +384,7 @@ mod tests {
                 "/projects/a/target",
                 "rust.target",
                 1,
-                Outcome::Failed("no".to_owned()),
+                Outcome::Failed(fixtures::failure(std::io::ErrorKind::Other)),
             )],
             false,
         );

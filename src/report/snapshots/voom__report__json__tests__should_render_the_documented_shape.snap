@@ -14,6 +14,7 @@ expression: document_for_tests()
         "status": "removed"
       },
       "path": "/projects/api/target",
+      "reclaimed_bytes": 4200000000,
       "source": "marker"
     },
     {
@@ -28,6 +29,7 @@ expression: document_for_tests()
         "status": "refused"
       },
       "path": "/projects/link/target",
+      "reclaimed_bytes": 0,
       "source": "marker"
     },
     {
@@ -37,11 +39,14 @@ expression: document_for_tests()
       "include_pattern": null,
       "marker_dir": "/projects/locked",
       "outcome": {
-        "detail": "Permission denied",
-        "reason": "removal_failed",
+        "detail": "permission denied unlinking something inside it",
+        "os_error": null,
+        "os_message": "permission denied",
+        "reason": "permission_denied",
         "status": "failed"
       },
       "path": "/projects/locked/obj",
+      "reclaimed_bytes": 0,
       "source": "marker"
     }
   ],
@@ -50,7 +55,7 @@ expression: document_for_tests()
   "roots": [
     "/projects"
   ],
-  "schema_version": 1,
+  "schema_version": 2,
   "skipped": [
     {
       "detail": "no rust marker (Cargo.toml) proves it",
@@ -61,6 +66,8 @@ expression: document_for_tests()
   "totals": {
     "bytes": 4200000000,
     "failed": 1,
+    "partial": 0,
+    "partial_bytes": 0,
     "reclaimed": 1,
     "refused": 1,
     "skipped": 1

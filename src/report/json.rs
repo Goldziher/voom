@@ -25,10 +25,25 @@ fn outcome_value(outcome: &Outcome) -> Value {
             "reason": refusal.code(),
             "detail": refusal.to_string(),
         }),
-        Outcome::Failed(message) => json!({
+        Outcome::PartiallyRemoved {
+            freed,
+            remaining,
+            failure,
+        } => json!({
+            "status": "partially_removed",
+            "reason": failure.kind().code(),
+            "detail": failure.to_string(),
+            "freed_bytes": freed,
+            "remaining_bytes": remaining,
+            "os_error": failure.os_error(),
+            "os_message": failure.os_message(),
+        }),
+        Outcome::Failed(failure) => json!({
             "status": "failed",
-            "reason": "removal_failed",
-            "detail": message,
+            "reason": failure.kind().code(),
+            "detail": failure.to_string(),
+            "os_error": failure.os_error(),
+            "os_message": failure.os_message(),
         }),
     }
 }
@@ -39,6 +54,9 @@ fn entry_value(entry: &Entry) -> Value {
         "ecosystem": entry.ecosystem(),
         "artifact": entry.artifact(),
         "bytes": entry.bytes,
+        // What the removal actually freed, which for a partial removal is not `bytes`.
+        // `sum(artifacts[].reclaimed_bytes) == totals.bytes` holds for every run.
+        "reclaimed_bytes": entry.reclaimed_bytes(),
         // `source` is the field a consumer branches on. `ecosystem`, `artifact` and
         // `marker_dir` are null for an unanchored removal, and a hook that treats a null
         // ecosystem as "unknown" rather than "nothing proved this" would be reading it wrong.
@@ -90,6 +108,10 @@ pub fn document(result: &RunResult) -> Value {
             "skipped": totals.skipped,
             "refused": totals.refused,
             "failed": totals.failed,
+            "partial": totals.partial,
+            // Already inside `bytes`; broken out so a consumer can tell how much of the run's
+            // reclaim came from artifacts that are still on disk.
+            "partial_bytes": totals.partial_bytes,
         },
         "elapsed_ms": u64::try_from(result.elapsed.as_millis()).unwrap_or(u64::MAX),
     })
@@ -127,7 +149,7 @@ mod tests {
                     "/projects/locked/obj",
                     "dotnet.obj",
                     900,
-                    Outcome::Failed("Permission denied".to_owned()),
+                    Outcome::Failed(crate::report::fixtures::failure(std::io::ErrorKind::PermissionDenied)),
                 ),
             ],
             false,
@@ -205,8 +227,27 @@ mod tests {
     fn should_expose_enum_like_reason_codes() {
         let document = document_for_tests();
         assert_eq!(document["artifacts"][1]["outcome"]["reason"], "symlink");
-        assert_eq!(document["artifacts"][2]["outcome"]["reason"], "removal_failed");
+        // Specific since schema 2. A consumer can tell a permission problem from a concurrent
+        // writer without matching on the OS's prose.
+        assert_eq!(document["artifacts"][2]["outcome"]["reason"], "permission_denied");
         assert_eq!(document["skipped"][0]["reason"], "no_marker");
+    }
+
+    /// A machine consumer can check its own arithmetic against ours: whatever the artifacts say
+    /// they freed has to be what the totals say the run freed. The two are computed by separate
+    /// code, so without this they can drift — and a partial removal is exactly the case where
+    /// they would.
+    #[test]
+    fn the_artifact_reclaimed_bytes_sum_to_the_totals() {
+        let document = document_for_tests();
+        let summed: u64 = document["artifacts"]
+            .as_array()
+            .expect("artifacts is an array")
+            .iter()
+            .map(|artifact| artifact["reclaimed_bytes"].as_u64().expect("a byte count"))
+            .sum();
+
+        assert_eq!(summed, document["totals"]["bytes"].as_u64().expect("a byte count"));
     }
 
     #[test]

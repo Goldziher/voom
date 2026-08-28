@@ -1,8 +1,9 @@
 ---
-source: src/report/human.rs
+source: src/report/human/mod.rs
 expression: "render_to_string(&mixed(), options)"
 ---
-2 artifacts, 4.22 GB reclaimed in 1.23s
-  rust 4.20 GB (1), node 18.50 MB (1)
+2 artifacts, 134.22 GB reclaimed in 1.23s
+  rust 134.20 GB (1), node 18.50 MB (1)
   1 artifact refused by a safety rail
+  1 artifact partly removed: 130 GB freed and counted above, 500 MB left
   1 artifact could not be removed

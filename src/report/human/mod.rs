@@ -30,6 +30,7 @@ use table::{GUTTER, Line, write_block};
 
 use super::{Entry, RunResult};
 use crate::classify::Provenance;
+use crate::delete::FailureKind;
 use crate::delete::Outcome;
 
 /// Introduces the explanation that follows a path.
@@ -96,6 +97,15 @@ pub(super) mod palette {
     pub fn unanchored() -> Style {
         Style::new().magenta()
     }
+
+    /// A removal that freed real space and left the artifact behind.
+    ///
+    /// Its own function rather than a reuse of `would_remove`, even though the colour matches:
+    /// the two can never appear in the same report — a dry run produces no partials — and
+    /// sharing one would tie two unrelated decisions together.
+    pub fn partial() -> Style {
+        Style::new().yellow()
+    }
 }
 
 /// The word printed for an outcome. Text, not colour, is what carries the meaning.
@@ -104,7 +114,8 @@ fn outcome_label(outcome: &Outcome) -> &'static str {
         Outcome::Removed => "removed",
         Outcome::WouldRemove => "would remove",
         Outcome::Refused(_) => "refused",
-        Outcome::Failed(_) => "failed",
+        Outcome::PartiallyRemoved { .. } => "partial",
+        _ => "failed",
     }
 }
 
@@ -113,7 +124,8 @@ fn outcome_style(outcome: &Outcome) -> Style {
         Outcome::Removed => palette::removed(),
         Outcome::WouldRemove => palette::would_remove(),
         Outcome::Refused(_) => palette::refused(),
-        Outcome::Failed(_) => palette::failed(),
+        Outcome::PartiallyRemoved { .. } => palette::partial(),
+        _ => palette::failed(),
     }
 }
 
@@ -148,10 +160,24 @@ fn shorten(path: &Path, base: Option<&Path>) -> String {
     }
 }
 
+/// Appends what would plausibly get the rest of it, when there is anything to suggest.
+fn with_hint(detail: &str, kind: FailureKind) -> String {
+    match kind.hint() {
+        Some(hint) => format!("{detail}; {hint}"),
+        None => detail.to_owned(),
+    }
+}
+
 fn artifact_line(entry: &Entry, base: Option<&Path>) -> Line {
     let detail = match &entry.outcome {
         Outcome::Refused(refusal) => Some(refusal.to_string()),
-        Outcome::Failed(message) => Some(message.clone()),
+        // What is *left* leads, because it is what the reader has to act on. The size column
+        // already shows what went, so repeating it here would spend the line on the good news.
+        Outcome::PartiallyRemoved { remaining, failure, .. } => Some(with_hint(
+            &format!("{} left; {failure}", format_size(*remaining, DECIMAL)),
+            failure.kind(),
+        )),
+        Outcome::Failed(failure) => Some(with_hint(&failure.to_string(), failure.kind())),
         Outcome::Removed | Outcome::WouldRemove => match &entry.finding.provenance {
             // Shortened against the same base as the path. An `include` pattern is usually
             // the path it matched, so printing it in full puts the longest string on the line
@@ -169,7 +195,7 @@ fn artifact_line(entry: &Entry, base: Option<&Path>) -> Line {
     Line {
         label: outcome_label(&entry.outcome),
         label_style: outcome_style(&entry.outcome),
-        size: Some(format_size(entry.bytes, DECIMAL)),
+        size: Some(format_size(entry.reclaimed_bytes(), DECIMAL)),
         tag: Some(ecosystem.unwrap_or(UNANCHORED)),
         tag_style: if ecosystem.is_some() {
             palette::quiet()
@@ -274,10 +300,19 @@ pub fn render(result: &RunResult, options: HumanOptions, out: &mut impl io::Writ
 /// ties so two runs over an unchanged tree still render identically.
 fn reclaimed_by_ecosystem(result: &RunResult) -> Vec<(&'static str, usize, u64)> {
     let mut totals: BTreeMap<&'static str, (usize, u64)> = BTreeMap::new();
-    for entry in result.entries.iter().filter(|entry| entry.outcome.is_reclaimed()) {
+    for entry in &result.entries {
+        let bytes = entry.reclaimed_bytes();
+        if bytes == 0 && !entry.outcome.is_reclaimed() {
+            continue;
+        }
         let slot = totals.entry(entry.ecosystem().unwrap_or(UNANCHORED)).or_default();
-        slot.0 += 1;
-        slot.1 += entry.bytes;
+        // Counted only when the artifact is actually gone, and totalled whether or not — which
+        // is exactly how the headline splits `reclaimed` from `bytes`. Reading the same accessor
+        // is what stops the two from drifting apart again.
+        if entry.outcome.is_reclaimed() {
+            slot.0 += 1;
+        }
+        slot.1 += bytes;
     }
     let mut rows: Vec<_> = totals
         .into_iter()
@@ -307,6 +342,18 @@ fn ecosystem_summary(result: &RunResult) -> Option<String> {
 }
 
 /// The plural of `noun` for `count`. Every noun the footer uses takes a plain `s`.
+/// Bytes left behind by every partial removal in the run.
+fn remaining_bytes(result: &RunResult) -> u64 {
+    result
+        .entries
+        .iter()
+        .filter_map(|entry| match &entry.outcome {
+            Outcome::PartiallyRemoved { remaining, .. } => Some(*remaining),
+            _ => None,
+        })
+        .sum()
+}
+
 fn plural(count: usize, noun: &str) -> String {
     if count == 1 {
         noun.to_owned()
@@ -359,6 +406,19 @@ fn write_footer(
             plural(totals.refused, "artifact")
         );
         writeln!(out, "{GUTTER}{}", text.style(palette::refused()))?;
+    }
+
+    if totals.partial > 0 {
+        // "counted above" is the whole point of the line: without it a reader who sees an
+        // artifact still on disk has no way to know whether its bytes made it into the total.
+        let text = format!(
+            "{} {} partly removed: {} freed and counted above, {} left",
+            totals.partial,
+            plural(totals.partial, "artifact"),
+            format_size(totals.partial_bytes, DECIMAL),
+            format_size(remaining_bytes(result), DECIMAL),
+        );
+        writeln!(out, "{GUTTER}{}", text.style(palette::partial()))?;
     }
     if totals.failed > 0 {
         let text = format!(
@@ -502,7 +562,17 @@ mod tests {
                     "/projects/locked/target",
                     "rust.target",
                     900,
-                    Outcome::Failed("Permission denied".to_owned()),
+                    Outcome::Failed(crate::report::fixtures::failure(std::io::ErrorKind::PermissionDenied)),
+                ),
+                entry(
+                    "/projects/busy/target",
+                    "rust.target",
+                    130_500_000_000,
+                    Outcome::PartiallyRemoved {
+                        freed: 130_000_000_000,
+                        remaining: 500_000_000,
+                        failure: crate::report::fixtures::failure(std::io::ErrorKind::DirectoryNotEmpty),
+                    },
                 ),
             ],
             false,
@@ -692,11 +762,30 @@ mod tests {
 
     /// The footer says what a long list adds up to, so a reader does not have to add up 174
     /// lines to learn where the space went.
+    ///
+    /// Rust's total carries the partial removal's freed bytes while its *count* stays at one,
+    /// because only one rust artifact is actually gone — the same split the headline makes.
     #[test]
     fn should_break_the_reclaimed_total_down_by_ecosystem() {
         let text = render_to_string(&mixed(), HumanOptions::default());
 
-        assert!(text.contains("rust 4.20 GB (1), node 18.50 MB (1)"), "{text}");
+        assert!(text.contains("rust 134.20 GB (1), node 18.50 MB (1)"), "{text}");
+    }
+
+    /// The breakdown and the headline are two accumulators over the same entries, and before
+    /// they shared [`Entry::reclaimed_bytes`] they each decided independently what counted — so
+    /// a partial removal was exactly the case that would have made them disagree.
+    #[test]
+    fn the_ecosystem_breakdown_sums_to_the_footer_total() {
+        for result in [mixed(), skipped(), interrupted()] {
+            let breakdown: u64 = reclaimed_by_ecosystem(&result).iter().map(|row| row.2).sum();
+
+            assert_eq!(
+                breakdown,
+                result.totals().bytes,
+                "the per-ecosystem rows must add up to the headline"
+            );
+        }
     }
 
     /// One ecosystem makes the breakdown a restatement of the headline above it.

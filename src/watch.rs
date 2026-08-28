@@ -243,7 +243,7 @@ pub fn watch(
         // the scoping differ.
         let guard = Guard::new(&roots, options.one_file_system)?;
         for entry in &mut candidates.entries {
-            entry.outcome = guard.remove(&entry.path, options.dry_run);
+            entry.outcome = guard.remove(&entry.path, entry.bytes, options.dry_run);
             if entry.outcome.is_reclaimed() {
                 tracker.forget(&entry.path);
             }

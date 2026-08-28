@@ -269,7 +269,7 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
     let entries: Vec<Entry> = to_remove
         .into_par_iter()
         .map(|(finding, bytes)| {
-            let outcome = guard.remove(&finding.path, options.dry_run);
+            let outcome = guard.remove(&finding.path, bytes, options.dry_run);
             Entry {
                 path: finding.path.clone(),
                 finding,

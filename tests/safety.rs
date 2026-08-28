@@ -233,11 +233,65 @@ fn should_isolate_a_failure_to_the_artifact_it_happened_on() {
         "the healthy artifact is still removed"
     );
     assert_eq!(result.entries.len(), 2, "both are reported");
-    // Running as root defeats the permission bits, so only assert the exit code when the
-    // failure actually occurred.
-    if result.totals().failed > 0 {
-        assert_eq!(result.exit_code(false), 1, "a failed removal is exit code 1");
+    // Running as root defeats the permission bits, so only assert once it actually bit.
+    let totals = result.totals();
+    if totals.failed > 0 || totals.partial > 0 {
+        assert_eq!(
+            result.exit_code(false),
+            1,
+            "a removal that did not finish is exit code 1"
+        );
     }
+}
+
+/// The regression test for the defect this release exists to fix: a sweep that freed 130 GB
+/// reported having reclaimed 25, because a removal that fails part-way through contributed
+/// nothing at all to the total.
+///
+/// `remove_dir_all` unlinks a tree's contents before the tree itself, so making the artifact's
+/// *parent* read-only empties `target/` completely and then fails to unlink it. That is not a
+/// contrived shape — it is what a concurrent build produces, and what this machine produced.
+#[test]
+#[cfg(unix)]
+fn should_report_how_much_a_partial_removal_actually_freed() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = TempDir::new().unwrap();
+    let project = root.path().join("project");
+    fs::create_dir_all(project.join("target/deep")).unwrap();
+    fs::write(project.join("Cargo.toml"), b"[package]").unwrap();
+    fs::write(project.join("target/app"), vec![7u8; 8192]).unwrap();
+    fs::write(project.join("target/deep/lib"), vec![7u8; 8192]).unwrap();
+    fs::set_permissions(&project, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let result = run(&options(root.path())).expect("the run completes");
+
+    fs::set_permissions(&project, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let totals = result.totals();
+    if totals.partial == 0 {
+        // Running as root defeats the permission bits and the removal simply succeeds.
+        return;
+    }
+
+    assert_eq!(totals.partial, 1, "the artifact is reported as partly removed");
+    assert!(
+        totals.bytes > 0,
+        "the headline counts what was actually freed, which is the whole point: {totals:?}"
+    );
+    assert_eq!(
+        totals.bytes, totals.partial_bytes,
+        "every byte this run freed came from the partial removal"
+    );
+    assert_eq!(totals.reclaimed, 0, "nothing is gone — the artifact is still there");
+    assert!(
+        project.join("target").exists(),
+        "the artifact directory survives, emptied"
+    );
+    assert!(
+        !project.join("target/app").exists(),
+        "its contents did not: that is what `freed` measures"
+    );
 }
 
 /// `include` bypasses marker proof, not the rails. ADR 0004 calls it a loaded foot-gun by
