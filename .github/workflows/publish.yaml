@@ -201,8 +201,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: x86_64-pc-windows-gnu
-      # Cross-compiled with mingw rather than built on a Windows runner. Windows-specific
-      # regressions are therefore only caught by the binstall smoke test.
+      # Cross-compiled with mingw rather than built on a Windows runner, so nothing in this
+      # workflow ever executes the Windows binary — the `smoke_test` job below covers macOS
+      # and Linux only. Windows behaviour is verified by the `windows-latest` leg of CI, which
+      # runs the real test suite on a real Windows host.
       - name: Install mingw toolchain
         run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 zip
       - name: Build
@@ -324,9 +326,54 @@ jobs:
           done
           gh release edit "$tag" --draft=false --repo "$GITHUB_REPOSITORY"
 
+  smoke_test:
+    name: Smoke-test the published archive
+    needs: [meta, finalize_release]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - triple: aarch64-apple-darwin
+            runner: macos-latest
+          - triple: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    # ADR 0010 claimed a binstall smoke test caught Windows regressions; no such job existed,
+    # so until now nothing in the release ever executed a built binary. This runs the real
+    # archive from the real release and checks the version it reports is the one being shipped.
+    steps:
+      - name: Download, unpack and run
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ needs.meta.outputs.tag }}"
+          version="${{ needs.meta.outputs.version }}"
+          asset="voom-${{ matrix.triple }}.tar.gz"
+          gh release download "$tag" -p "$asset" --repo "$GITHUB_REPOSITORY" --clobber
+          tar xzf "$asset"
+          chmod +x voom
+          reported="$(./voom --version)"
+          echo "$reported"
+          [[ "$reported" == "voom $version" ]] || {
+            echo "::error::archive reports '$reported', expected 'voom $version'"
+            exit 1
+          }
+          # A dry run over a throwaway tree: proves the binary actually walks and classifies,
+          # not merely that it links and prints a version string.
+          mkdir -p probe/project/target && touch probe/project/Cargo.toml probe/project/target/x
+          ./voom --dry-run probe | tee report.txt
+          grep -q "project/target" report.txt || {
+            echo "::error::the archive did not find the fixture artifact"
+            exit 1
+          }
+
+  # Gated on finalize_release like the other three channels. A crates.io publish is permanent
+  # and a version can never be recut, so publishing before the archives verify would leave
+  # `cargo binstall voom` pointing at a draft release that may never be completed.
   publish_crates:
     name: Publish to crates.io
-    needs: meta
+    needs: [meta, finalize_release]
     if: needs.meta.outputs.crates_exists != 'true'
     runs-on: ubuntu-latest
     steps:
@@ -372,6 +419,10 @@ jobs:
         run: |
           set -euo pipefail
           unset NODE_AUTH_TOKEN
+          # `npm publish` includes a LICENSE only when one sits in the package directory. The
+          # root file is the single source of truth, so it is copied in rather than duplicated
+          # in the repository where the two copies would drift.
+          cp LICENSE npm-package/LICENSE
           cd npm-package
           version="${{ needs.meta.outputs.version }}"
           if [[ "$version" == *"-rc."* ]]; then npm_tag="beta"; else npm_tag="latest"; fi
@@ -393,6 +444,10 @@ jobs:
       - name: Build distributions
         run: |
           python -m pip install --upgrade build
+          # Same reason as the npm leg: setuptools' default `license-files` glob only finds a
+          # LICENSE that is inside the project directory, so the wheel carried the MIT string
+          # from pyproject.toml and none of the text it refers to.
+          cp LICENSE pip-package/LICENSE
           cd pip-package && python -m build
       # Uses OIDC trusted publishing when configured. PYPI_API_TOKEN is a fallback
       # so the first release is not blocked on the trusted publisher existing.

@@ -90,7 +90,9 @@ Negative / risks:
 - Binding trusted publishing to a filename means the workflow file is effectively immutable
   in name — a rename silently breaks publishing on all three registries at once.
 - Windows is cross-compiled with mingw and never built on a Windows runner, so
-  Windows-specific regressions can only be caught by `verify-binstall` smoke tests.
+  Windows-specific regressions are therefore caught by CI's `windows-latest` test leg rather
+  than by anything in the release itself; the release's `smoke_test` job unpacks and runs the
+  published macOS and Linux archives, which is where cross-compilation is not in play.
 
 ## Alternatives considered
 
