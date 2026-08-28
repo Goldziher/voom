@@ -102,7 +102,7 @@ Negative / risks:
   any better than a timer, while giving up the event scoping that makes watch mode cheap.
 - **Deleting immediately on the completion of a detectable build** (watching for the compiler
   process to exit): rejected — requires process inspection, is per-toolchain, and does not
-  generalize across 23 ecosystems.
+  generalize across 24 ecosystems.
 
 ## Amendment — 2026-08-28
 

@@ -16,7 +16,7 @@ which is the safety rule the rest of the tool is built around.
 | [0005](0005-traversal-and-parallelism.md) | Traversal and Parallelism: Ignore-Blind Walking Over rayon | Accepted |
 | [0006](0006-deletion-semantics.md) | Deletion Semantics: Default-Delete, Dry-Run, and the Safety Rails | Accepted |
 | [0007](0007-reporting.md) | Reporting: Colored, Deterministic, Machine-Readable | Accepted |
-| [0008](0008-watch-mode.md) | Watch Mode: Debounced `notify` Pruning | Proposed |
+| [0008](0008-watch-mode.md) | Watch Mode: Debounced `notify` Pruning | Accepted |
 | [0009](0009-git-hook-integration.md) | Git Hook Integration: pre-commit and poly Catalogs | Accepted |
 | [0010](0010-distribution-and-naming.md) | Distribution and Naming: Five Channels, One Binary | Accepted |
 
@@ -32,10 +32,13 @@ which is the safety rule the rest of the tool is built around.
   alternatives that were genuinely considered, especially the one a reader is most likely to
   reach for.
 - Status vocabulary: `Proposed`, `Accepted`, `Superseded (by NNNN)`, `Deprecated`. A decision
-  that has not been validated in practice stays `Proposed` and says what would move it —
-  see 0008.
+  that has not been validated in practice stays `Proposed` and says what would move it. 0008
+  was written that way and became `Accepted` once its quiet-period fixtures landed.
 - **Amend in place, do not renumber.** When an accepted decision evolves, add an
-  `Updated: YYYY-MM-DD (what changed)` line and edit the body. Write a new ADR only when the
-  decision is genuinely replaced, and mark the old one `Superseded (by NNNN)`.
+  `Updated: YYYY-MM-DD — what changed` line under the metadata bullets and record the change in
+  a trailing `## Amendment — YYYY-MM-DD` section. Correct the body in place when it has become
+  *wrong*; use an amendment when the decision has *moved*, so the original reasoning and what
+  overtook it are both still readable. Write a new ADR only when the decision is genuinely
+  replaced, and mark the old one `Superseded (by NNNN)`.
 - Cross-reference in prose as `ADR 0004` — space, no hyphen. Wrap prose at about 95 columns.
 - Keep the index table above in sync when adding or re-statusing an ADR.

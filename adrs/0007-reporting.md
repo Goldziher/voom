@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-28
+- Updated: 2026-08-28 — `--summary` shipped; noted the two labels other ADRs added.
 
 ## Context
 
@@ -75,7 +76,7 @@ Negative / risks:
   artifacts found. Bounded in practice (thousands, not millions) but it forecloses true
   streaming output.
 - A `$HOME` sweep can list thousands of lines. The default hides skip detail to compensate,
-  but a `--summary`-only mode will likely be wanted.
+  and `--summary` prints the footer alone.
 - A versioned JSON schema is a compatibility commitment; `schema_version` exists so it can be
   broken deliberately rather than accidentally.
 - Progress rendering on stderr can interleave badly with a caller's own stderr logging;
@@ -96,3 +97,22 @@ Negative / risks:
 - **`colored` instead of `owo-colors` + `anstream`:** rejected — `anstream` handles Windows
   console translation and stream detection properly, and this matches the surrounding
   projects' choice.
+
+## Amendment — 2026-08-28
+
+`--summary` has shipped, closing the "will likely be wanted" risk above. It prints the totals
+footer and nothing else, and it also suppresses the scan progress indicator — a spinner is only
+useful to someone watching a list scroll past, and there is no list.
+
+Two report states were specified by other ADRs after this one was accepted, and are recorded
+there rather than duplicated here:
+
+- **`unanchored`**, for a removal authorized by a config `include` rather than by a marker.
+  ADR 0004's amendment defines the `Provenance` enum behind it and both renderings.
+- **`interrupted`**, for a walk failure the walker judged transient rather than a real
+  inability to read a directory. ADR 0005's amendment explains the distinction and why the
+  transient case is hidden unless `--verbose` asks for it.
+
+Both exist for the same reason the skip reasons do: a destructive tool's report is its safety
+surface, so a state the reader would interpret differently gets its own label rather than being
+folded into a neighbouring one.

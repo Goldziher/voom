@@ -5,11 +5,11 @@
 **Clean up the pink snow.**
 
 voom finds and removes build artifacts across your whole disk — `target/`, `dist/`,
-`__pycache__/`, `.gradle/`, `.zig-cache/` and 20+ ecosystems more — in one parallel pass.
+`__pycache__/`, `.gradle/`, `.zig-cache/` and the rest of 24 ecosystems — in one parallel pass.
 It proves every candidate against an ecosystem marker file before it deletes, so it will
 never take your hand-written `bin/` directory.
 
-20+ ecosystems&nbsp;·&nbsp;marker-anchored&nbsp;·&nbsp;parallel&nbsp;·&nbsp;`$HOME`-safe&nbsp;·&nbsp;dry-run&nbsp;·&nbsp;watch mode
+24 ecosystems&nbsp;·&nbsp;marker-anchored&nbsp;·&nbsp;parallel&nbsp;·&nbsp;`$HOME`-safe&nbsp;·&nbsp;dry-run&nbsp;·&nbsp;watch mode
 
 [![crates.io](https://img.shields.io/crates/v/voom?style=flat-square&color=2dd4bf)](https://crates.io/crates/voom)
 [![npm](https://img.shields.io/npm/v/@goldziher/voom?style=flat-square&color=2dd4bf&label=npm)](https://www.npmjs.com/package/@goldziher/voom)
@@ -44,8 +44,8 @@ stays exactly where it is.
 
 ## Features
 
-- **20+ ecosystems** — Rust, Node, Python, Go, Zig, Swift, Maven, Gradle, .NET, CMake, Dart,
-  Elixir, Ruby, PHP, Scala, Haskell, OCaml, Julia, R, Nim, Elm, Terraform, Bazel
+- **24 ecosystems** — Rust, Node, Python, Go, Zig, Swift, Xcode, Maven, Gradle, .NET, CMake,
+  Dart, Elixir, Ruby, PHP, Scala, Haskell, OCaml, Julia, R, Nim, Elm, Terraform, Bazel
 - **Marker-anchored** — never deletes on a directory name alone, so your `bin/`, `vendor/`
   and `obj/` source directories are safe
 - **Fast** — parallel traversal that prunes whole subtrees and saturates every core
@@ -144,8 +144,9 @@ Exit codes: `0` clean, `1` some artifacts could not be removed, `2` usage or con
 This is the part that matters, because voom deletes without asking.
 
 **1. Nothing is removed without a marker file proving its ecosystem.** `target/` is only
-Rust's build output when a `Cargo.toml` sits beside it. `obj/` is only .NET's when a
-`*.csproj` is in its project root. A scan of one developer's workspace found 41 directories
+Rust's build output when a `Cargo.toml` sits beside it. `obj/` is only .NET's when a project
+file — `*.csproj`, `*.fsproj`, `*.vbproj` or `*.sln` — sits at most three directories above
+it. A scan of one developer's workspace found 41 directories
 named `bin`, 20 named `vendor`, and 12 named `obj` — each a build artifact in one ecosystem
 and hand-written source in another. voom leaves every unproven one alone, and
 `--verbose` tells you which marker was missing.
@@ -180,19 +181,19 @@ Full reasoning in [ADR 0002](adrs/0002-marker-anchored-classification.md) and
 | --- | --- | --- |
 | Rust | `Cargo.toml` | `target/` |
 | Node / TypeScript | `package.json` | `dist/`, `.next/`, `.nuxt/`, `.svelte-kit/`, `.astro/`, `.turbo/`, `.parcel-cache/`, `.vite/`, `.nyc_output/`, `*.tsbuildinfo`, `build/`† |
-| Python | `pyproject.toml`, `setup.py` | `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `.tox/`, `*.egg-info/`, `htmlcov/`, `build/`, `dist/`, `.venv/`† |
+| Python | `pyproject.toml`, `setup.py`, `setup.cfg` | `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `.tox/`, `*.egg-info/`, `htmlcov/`, `.coverage`, `build/`, `dist/`, `.venv/`† |
 | Go | `go.mod` | `bin/`† |
 | Zig | `build.zig` | `.zig-cache/`, `zig-cache/`, `zig-out/` |
 | Swift | `Package.swift` | `.build/` |
-| Xcode | `*.xcodeproj` | `DerivedData/` |
+| Xcode | `*.xcodeproj`, `*.xcworkspace` | `DerivedData/` |
 | Maven | `pom.xml` | `target/` |
-| Gradle / Kotlin | `build.gradle`, `build.gradle.kts` | `build/`, `.gradle/` |
-| .NET | `*.csproj`, `*.sln` | `bin/`, `obj/` |
+| Gradle / Kotlin | `build.gradle`, `build.gradle.kts`, `settings.gradle*` | `build/`, `.gradle/` |
+| .NET | `*.csproj`, `*.fsproj`, `*.vbproj`, `*.sln` | `bin/`, `obj/` |
 | CMake / C++ | `CMakeLists.txt` | `build/`, `cmake-build-*/`, `CMakeFiles/` |
 | Dart / Flutter | `pubspec.yaml` | `.dart_tool/`, `build/` |
 | Elixir | `mix.exs` | `_build/`, `.elixir_ls/` |
 | Ruby | `Gemfile`, `*.gemspec` | `.bundle/`, `vendor/bundle/`, `coverage/`, `pkg/`†, `tmp/`† |
-| PHP | `composer.json` | `.phpunit.cache/` |
+| PHP | `composer.json` | `.phpunit.cache/`, `.phpunit.result.cache` |
 | Scala / sbt | `build.sbt` | `target/`, `project/target/`, `.bloop/`, `.metals/` |
 | Haskell | `*.cabal`, `stack.yaml` | `dist-newstyle/`, `.stack-work/` |
 | OCaml / dune | `dune-project` | `_build/` |
@@ -201,11 +202,12 @@ Full reasoning in [ADR 0002](adrs/0002-marker-anchored-classification.md) and
 | Nim | `*.nimble` | `nimcache/` |
 | Elm | `elm.json` | `elm-stuff/` |
 | Terraform | `*.tf` | `.terraform/` |
-| Bazel | `WORKSPACE`, `MODULE.bazel` | `bazel-*` |
+| Bazel | `WORKSPACE`, `WORKSPACE.bazel`, `MODULE.bazel` | `bazel-*` |
 
 † Off by default — the name is also a plausible source directory in that ecosystem, or
-removal is expensive rather than cheap. Enable per-ecosystem or per-path in your config.
-`voom catalog` prints the live table.
+removal is expensive rather than cheap. Turn one on for a single run with
+`--enable python.venv`, or per-ecosystem and per-path in your config. `voom catalog` prints the
+live table, with the reason each `†` entry needs an opt-in.
 
 ## Configuration
 
@@ -240,6 +242,13 @@ will remove something it cannot prove, so it is reported as `unanchored` rather 
 ecosystem, and JSON marks it `"source": "config-include"`. `exclude` always wins over
 `include`.
 
+`include` only matches paths the walk actually visits, so it never reaches outside the roots
+you named: running `voom ~/projects` with `include = ["~/scratch"]` sweeps nothing extra. It
+*can* name a directory the walk would otherwise skip — a `node_modules/`, or a tool cache like
+`~/.npm` — and have it removed. It cannot reach *inside* one: skipping happens a whole
+directory at a time, so `include = ["~/.npm/_cacache/pkg"]` matches nothing. Name the cache as
+a scan root, or pass `--caches`.
+
 **On Windows, write paths in single quotes.** TOML basic strings take escapes, so
 `exclude = ["C:\Users\me\work\**"]` fails to parse — `\U` starts a unicode escape. Use a TOML
 literal string instead, which takes none:
@@ -248,8 +257,8 @@ literal string instead, which takes none:
 exclude = ['C:\Users\me\work\**']
 ```
 
-`voom config show` prints the fully merged result with the file each value came from.
-Details in [ADR 0004](adrs/0004-configuration.md).
+`voom config show` lists the files the configuration was merged from, in ascending precedence,
+and then the merged result. Details in [ADR 0004](adrs/0004-configuration.md).
 
 ## Watch mode
 
@@ -257,8 +266,9 @@ Details in [ADR 0004](adrs/0004-configuration.md).
 voom watch ~/projects
 ```
 
-Prunes continuously as you work. An artifact is only removed once its subtree has been idle
-for a quiet period (default 60s), so an in-progress build is never touched. See
+Prunes continuously as you work. Filesystem events are coalesced over a debounce window
+(`--debounce`, default 5s), and an artifact is only removed once its subtree has been idle for
+a quiet period (`--quiet-period`, default 60s), so an in-progress build is never touched. See
 [ADR 0008](adrs/0008-watch-mode.md).
 
 ## Git hooks

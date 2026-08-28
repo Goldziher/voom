@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-28
+- Updated: 2026-08-28 — `include` shipped; recorded how the walker matches it.
 
 ## Context
 
@@ -78,9 +79,10 @@ Decisions embedded in that schema:
 - **Unknown keys are rejected.** `serde(deny_unknown_fields)` throughout, so a typo in a
   safety-relevant key like `exclude` fails loudly instead of quietly disabling the guard the
   user thought they had.
-- **`voom config show` prints the fully merged, resolved configuration** with the file each
-  value came from, because a hierarchical merge nobody can inspect is a hierarchical merge
-  nobody can trust.
+- **`voom config show` prints the fully merged, resolved configuration**, above the files it
+  was merged from in ascending precedence, because a hierarchical merge nobody can inspect is a
+  hierarchical merge nobody can trust. Attribution is per file, not per value: the output says
+  which layers contributed, not which one won each key.
 
 ## Consequences
 
@@ -101,8 +103,10 @@ Negative / risks:
 - Five precedence layers is real complexity, and a user debugging "why did it delete that"
   must reach for `config show`. The alternative — a flat config — cannot express the
   `$HOME`-wide-run-with-per-repo-policy case that motivates the tool.
-- Discovering `voom.toml` on the way down costs a `stat` per directory. ADR 0005 folds this
-  into the marker lookup the walker already performs.
+- Discovering `voom.toml` on the way down costs a `stat` per directory. It is memoized per
+  directory in the resolver and derived from the parent's already-merged result, so each
+  directory is answered once per run — but it is a separate pass from the classifier's marker
+  probe, not folded into it.
 - `include` is a loaded foot-gun by design. It must be prominent in the README's safety
   section and visibly labelled in reports.
 - Human-string durations and sizes invite ambiguity (`1MB` vs `1MiB`); the parser must be
@@ -142,11 +146,24 @@ opposite of what the flat schema above suggests to a first-time reader.
 
 Ordering inside the walker's callback is fixed and matters: **`exclude` is checked first**
 (consistent with "exclude is absolute" above), **then `include`, then the dependency-directory
-prune.** Checking `include` before the prune is what lets an explicit `include` reach into
-`node_modules/` or another dependency directory — the escape hatch ADR 0001 describes for users
-who want them gone. `.git` (and every VCS directory) stays unreachable regardless of this
-ordering: the deletion guard (ADR 0006) refuses a VCS directory by name whatever produced the
-finding, so `include` cannot be used to route around it.
+and tool-cache prunes.** Checking `include` before the prunes is what lets an explicit
+`include` name `node_modules/`, or a cache root like `~/.npm`, and have it removed — the escape
+hatch ADR 0001 describes for users who want them gone.
+
+**`include` can name a pruned directory; it cannot reach inside one.** Pruning is a
+directory-level decision, so once the walk declines to descend into `~/.npm` nothing below it is
+ever offered to any matcher, and `include = ["~/.npm/_cacache/pkg"]` matches nothing at all. The
+alternative would mean asking at every prune whether some glob might match an unknown
+descendant, which a glob cannot answer without walking the subtree — and directory-level pruning
+is where essentially all the wall-clock saving comes from (ADR 0005). It also fails toward not
+deleting, which is the direction `safety-first` asks for. A user who wants a path inside a cache
+swept names the cache as a scan root, or passes `--caches`. Both halves are pinned by
+`src/scan.rs::should_let_an_include_name_a_tool_cache_outright` and
+`should_not_let_an_include_reach_inside_a_pruned_directory`.
+
+`.git` (and every VCS directory) stays unreachable regardless of this ordering: the deletion
+guard (ADR 0006) refuses a VCS directory by name whatever produced the finding, so `include`
+cannot be used to route around it.
 
 `Finding` carries a `Provenance` enum (`Anchored { artifact, marker_dir }` or
 `Included { pattern }`) rather than an `Option<ArtifactId>`, specifically so both reporters must

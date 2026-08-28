@@ -8,8 +8,9 @@ priority: high
 
 - **Edition 2024.** Line width 120 (`rustfmt.toml`), enforced by poly.
 - `cargo clippy --all-targets -- -D warnings` is the bar. Pedantic lints are on; when one is
-  genuinely wrong for a case, `#[allow]` it **at the narrowest scope with a comment saying
-  why** — never crate-wide.
+  genuinely wrong for a case, `#[expect(lint, reason = "…")]` it **at the narrowest scope** —
+  never crate-wide. `#[expect]` over `#[allow]` so the exemption fails once it stops being
+  needed.
 - **No `unwrap()` or `expect()` outside tests.** In a tool that deletes directories, a panic
   mid-run leaves the user with a partial result and no report. Return errors.
 - **`thiserror` in the library, `anyhow` at the binary boundary.** Callers of `voom::` get
@@ -44,8 +45,11 @@ use them deliberately.
 - Public items in the library carry doc comments. The catalog entry type and the anchor enum
   especially — they are the API a contributor reads before adding an ecosystem.
 - Documentation that makes a claim about behaviour (an ecosystem table, a flag's default)
-  must match the code. The README's ecosystem table and `voom catalog` output are generated
-  from or checked against the same source.
+  must match the code. `voom catalog` prints `CATALOG` directly and cannot drift.
+  `tests/docs.rs` checks part of the README against it — the ecosystem list, the markers the
+  table advertises, and every `voom.toml` example, which it loads through the real config
+  pipeline. Everything else in the README is prose nothing verifies, so a claim you add there
+  is a claim you are maintaining by hand.
 
 ## Commits
 

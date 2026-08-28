@@ -15,10 +15,12 @@ something the user wrote. Read `adrs/0002-marker-anchored-classification.md` and
   file proves its ecosystem at the declared anchor position. `target/` is Rust's only when a
   `Cargo.toml` sits beside it. A catalog entry with no marker glob is a bug, not a shortcut,
   and a construction-time test rejects it.
-- **Every new catalog entry ships two fixtures**: one tree where the marker is present and
-  the artifact is removed, and one where the artifact directory exists *without* its marker
-  and is left untouched. The second is the one that matters — it is the regression test for
-  data loss.
+- **Every catalog entry is covered by two fixtures**: one tree where the marker is present
+  and the artifact is removed, and one where the artifact directory exists *without* its
+  marker and is left untouched. The second is the one that matters — it is the regression
+  test for data loss. `tests/catalog_fixtures.rs` generates both from `CATALOG`, so an entry
+  cannot land without them; what it does not generate is a tree deep enough to exercise an
+  `Ancestor(n)` climb, and an entry that climbs owes a test of its own ([[tdd-and-hooks]]).
 - **The protected-path denylist is append-only.** Entries may be added. Removing or narrowing
   one requires an ADR amendment explaining why it was safe, never a drive-by edit.
 - **Never weaken containment.** Every deletion target is canonicalized and must resolve

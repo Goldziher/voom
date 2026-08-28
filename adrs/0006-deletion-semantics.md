@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-28
+- Updated: 2026-08-28 — the rails hardened for Windows reparse points.
 
 ## Context
 

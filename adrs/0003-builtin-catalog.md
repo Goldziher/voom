@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-28
+- Updated: 2026-08-28 — the .NET `ancestor(3)` bound is now exercised end to end.
 
 ## Context
 
@@ -73,9 +74,12 @@ cheap (`.venv/`, which costs a reinstall). Users enable them per-ecosystem or pe
 composer's `vendor/`, mix's `deps/`, and Go's `vendor/` are not in the table at all and no
 flag turns them on. Reaching them requires the user to name a path explicitly.
 
-The catalog is guarded by construction-time tests that assert: every entry has ≥1 marker
-(enforcing ADR 0002), every `id` is unique, no artifact path escapes its anchor via `..` or
-an absolute component, and no artifact matches a dependency directory name.
+The catalog is guarded by construction-time tests over the whole table: every entry has ≥1
+marker (enforcing ADR 0002) and ≥1 artifact, every `id` is unique, no artifact path escapes its
+anchor via `..` or an absolute component, no artifact matches a dependency directory name, every
+off-by-default artifact carries a `note`, artifact slugs are unique within an ecosystem, the
+table fits the classifier's `u32` marker bitmask, and no ancestor anchor climbs more than eight
+levels.
 
 ## Consequences
 
@@ -88,8 +92,9 @@ Positive:
   versioned artifact rather than machine state that can drift.
 - `default_on = false` gives a principled home for the genuinely ambiguous entries instead of
   forcing a binary include/exclude decision that would either lose recall or risk source.
-- `voom catalog` can print the whole table, so the tool documents its own behaviour and the
-  README table cannot drift from the code.
+- `voom catalog` prints the whole table straight from `CATALOG`, so the tool documents its own
+  behaviour and cannot drift from it. The README's table is separate prose, partly checked
+  against the catalog by `tests/docs.rs`.
 
 Negative / risks:
 

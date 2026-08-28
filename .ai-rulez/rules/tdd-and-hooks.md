@@ -10,13 +10,24 @@ Write the failing test first. For voom that almost always means building a **fix
 directory tree** with `tempfile::TempDir` and asserting on what survives, because the unit
 under test is "what does this tool do to a filesystem" and nothing smaller is convincing.
 
-Every catalog entry (ADR 0003) requires **two** fixtures, and the second is mandatory:
+Every catalog entry (ADR 0003) is covered by **two** fixtures, and the second is the one that
+matters:
 
 1. **Positive** — the marker file is present, the artifact is present, voom removes it.
 2. **Negative** — the artifact directory is present *without* its marker, voom leaves it
-   alone. This is the data-loss regression test. An entry without one does not land.
+   alone. This is the data-loss regression test.
 
-Beyond per-entry fixtures, keep these covered:
+**Both are generated, not hand-written.** `tests/catalog_fixtures.rs` iterates `CATALOG` and
+builds each tree from `tests/support/mod.rs::fixture`, so a new entry is covered the moment it
+lands and no entry can be missing one. `tests/fixtures/` on disk is empty; do not add a tree
+there for an ordinary entry.
+
+What that suite does *not* cover is ecosystem-specific shape. The generated tree puts the
+artifact and the marker at the root, so an `Ancestor(n)` anchor is only exercised at distance
+zero. An entry whose anchor climbs needs its own test asserting the climb and the bound — see
+`tests/safety.rs::should_sweep_a_nested_dotnet_artifact_and_stop_at_the_ancestor_bound`.
+
+Beyond the per-entry fixtures, keep these covered:
 
 - A gitignored `target/` is still discovered (the ADR 0005 walker configuration).
 - A symlinked artifact pointing outside the root is refused, and the target survives.
@@ -45,8 +56,11 @@ poly hooks run pre-commit --all-files
 ```
 
 `poly hooks run pre-commit --all-files` is the authoritative gate — it runs the same checks CI
-will, including the module-size cap and the ai-rulez validation. Do not commit with
-`--no-verify`.
+will: lint, format, file safety, the cargo whole-project tools, and `ai-rulez-validate`. Do not
+commit with `--no-verify`.
+
+It does **not** check the 1000-line module cap; nothing does. Check that one by hand
+([[module-size-cap]]).
 
 ## Commits
 

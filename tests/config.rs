@@ -289,7 +289,7 @@ fn should_reject_a_broken_config_and_name_the_file() {
 /// and do not. ADR 0004 makes this explicit, and nothing pinned it.
 #[test]
 fn should_reject_an_unknown_key_rather_than_ignoring_it() {
-    for broken in ["exlude = [\"x\"]\n", "[keep]\nmin_agee = \"7d\"\n"] {
+    for broken in ["excludes = [\"x\"]\n", "[keep]\nmin_ages = \"7d\"\n"] {
         let fixture = tree(&["Cargo.toml", "target/app", "voom.toml"]);
         write(fixture.path(), "voom.toml", broken);
 

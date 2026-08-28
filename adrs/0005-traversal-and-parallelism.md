@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-28
+- Updated: 2026-08-28 — `-j` bounds the whole sweep; transient walk interruptions split out.
 
 ## Context
 
@@ -57,9 +58,11 @@ Subtree pruning comes from voom's own logic instead:
 Work is split across two phases, both `rayon`-parallel:
 
 1. **Discover and classify.** The parallel walker emits directory entries; the classifier
-   resolves markers (ADR 0002) and `voom.toml` files (ADR 0004) from the directory listing
-   the walker has already produced, memoized per directory, so anchoring costs no extra
-   `read_dir`. Ancestor lookups walk a cached chain rather than re-statting.
+   resolves markers (ADR 0002) with one `read_dir` per anchor directory, memoized for the run,
+   so a candidate's siblings and every level of an ancestor climb share one listing. Ancestor
+   lookups walk that cached chain rather than re-statting. `voom.toml` discovery (ADR 0004) is
+   a second pass, memoized the same way and derived from each parent's already-merged result;
+   it is one `stat` per directory per run, not a reader of the classifier's listing.
 2. **Size and delete.** Confirmed artifacts are fanned out over a `rayon` pool — recursive
    size accounting and removal are independent per artifact and embarrassingly parallel.
 
@@ -74,8 +77,9 @@ Positive:
 - Pruning `.git/`, `node_modules/`, and matched artifacts at the directory level removes the
   overwhelming majority of entries a naive walk would visit — the single largest win
   available, and larger than any constant-factor tuning.
-- Folding marker and `voom.toml` resolution into the walker's existing directory listing
-  means ADR 0002's safety and ADR 0004's hierarchy cost close to nothing.
+- Memoizing marker probes and `voom.toml` discovery per directory means ADR 0002's safety and
+  ADR 0004's hierarchy cost one listing and one `stat` per directory rather than one per
+  candidate.
 - Treating a matched artifact as an indivisible unit keeps the report one line per artifact,
   which is what makes ADR 0007's output readable.
 

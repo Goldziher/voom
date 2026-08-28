@@ -4,8 +4,19 @@ priority: critical
 
 # Module size cap — 1000 lines
 
-No file in `src/` exceeds **1000 lines**. This is enforced by poly's `rust-max-lines` hook at
-commit time, so a violation blocks the commit rather than arriving in review.
+No file in `src/` exceeds **1000 lines**.
+
+**Nothing enforces this.** There is no `rust-max-lines` hook, no CI step, and no test that
+checks it — `poly.toml` runs `lint`, `fmt`, `commit`, `file_safety` and `cargo`, none of which
+counts lines. The cap holds because contributors keep it, so check it yourself before you
+commit:
+
+```bash
+wc -l src/*.rs src/*/*.rs | sort -rn | head
+```
+
+`classify.rs` (975) is the closest to the cap, then `run.rs` (942) and `delete.rs` (875). Any
+of the three will cross it before the rest of the tree gets near.
 
 ## Why it is critical here
 
@@ -16,18 +27,9 @@ deletes someone's source directory.
 
 ## The layout it protects
 
-```text
-src/
-  cli.rs        argument parsing and command dispatch
-  config/       hierarchical TOML load, merge, and resolution (ADR 0004)
-  catalog/      the static ecosystem table (ADR 0003) — one module per group
-  scan.rs       the ignore-blind parallel walker (ADR 0005)
-  classify.rs   marker anchoring: candidate + markers -> verdict (ADR 0002)
-  policy.rs     keep policies: age, size, include/exclude (ADR 0004)
-  delete.rs     the safety rails and the actual removal (ADR 0006)
-  report/       human and JSON renderers (ADR 0007)
-  watch.rs      debounced notify loop (ADR 0008)
-```
+One module per pipeline stage, plus the shared pieces each stage reaches for. The full map,
+with what every file is for, is in [[architecture]] — keep that one current rather than a
+second copy here.
 
 ## When a file approaches the cap
 

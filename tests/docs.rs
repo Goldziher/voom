@@ -62,6 +62,67 @@ fn the_readme_table_has_one_row_per_ecosystem() {
     );
 }
 
+/// The other direction: every marker and artifact the catalog ships must appear in the row
+/// that claims to describe it.
+///
+/// The tests around this one all check that what the README says is true. None of them
+/// checked that what the README leaves out is nothing — so six rows were quietly missing
+/// markers and artifacts they matched on, and a reader deciding whether `bin/` in their .NET
+/// project was at risk could not have found out from the table.
+#[test]
+fn the_readme_table_omits_nothing_the_catalog_ships() {
+    let readme = include_str!("../README.md");
+    let rows: Vec<&str> = readme
+        .lines()
+        .skip_while(|line| !line.starts_with("| Ecosystem | Marker | Artifacts |"))
+        .skip(2)
+        .take_while(|line| line.starts_with("| "))
+        .collect();
+    assert_eq!(rows.len(), CATALOG.len(), "one row per ecosystem");
+
+    let mut omissions = Vec::new();
+    for ecosystem in CATALOG {
+        let row = rows
+            .iter()
+            .find(|row| row.split('|').nth(1).is_some_and(|cell| cell.trim() == ecosystem.name))
+            .unwrap_or_else(|| panic!("no README row for `{}`", ecosystem.name));
+
+        // The README's marker cell, as the tokens a reader sees.
+        let advertised: Vec<&str> = row
+            .split('|')
+            .nth(2)
+            .unwrap_or_default()
+            .split(',')
+            .map(|token| token.trim().trim_matches('`'))
+            .filter(|token| !token.is_empty())
+            .collect();
+
+        for marker in ecosystem.markers {
+            // A README token may end in `*` to stand for a family — `settings.gradle*` covers
+            // both the Groovy and the Kotlin spelling. It stands for nothing else: matching on
+            // a bare `*` anywhere in the cell would let `*.csproj` vouch for `*.fsproj`.
+            let named = advertised
+                .iter()
+                .any(|token| *token == *marker || token.strip_suffix('*').is_some_and(|stem| marker.starts_with(stem)));
+            if !named {
+                omissions.push(format!("{}: marker `{marker}`", ecosystem.name));
+            }
+        }
+
+        for artifact in ecosystem.artifacts {
+            if !row.contains(artifact.path) {
+                omissions.push(format!("{}: artifact `{}`", ecosystem.name, artifact.path));
+            }
+        }
+    }
+
+    assert!(
+        omissions.is_empty(),
+        "the catalog matches on these, and the README's table does not say so:\n  {}",
+        omissions.join("\n  ")
+    );
+}
+
 /// Every marker the README advertises must really prove its ecosystem, so a reader deciding
 /// whether to trust voom against `$HOME` is reading the truth.
 #[test]

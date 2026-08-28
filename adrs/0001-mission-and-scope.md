@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-28
+- Updated: 2026-08-28 — `--caches` shipped; recorded the wider skip list and why.
 
 ## Context
 
