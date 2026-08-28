@@ -1,0 +1,10 @@
+---
+source: src/report/human.rs
+expression: "render_to_string(&mixed(), HumanOptions::default())"
+---
+  removed         4.20 GB  rust       /projects/api/target
+  refused             0 B  rust       /projects/link/target  (is a symlink)
+  failed            900 B  rust       /projects/locked/target  (removing `/projects/locked/target`: Permission denied)
+  removed        18.50 MB  node       /projects/web/dist
+
+2 artifacts, 4.22 GB reclaimed, 1 refused, 1 failed in 1.23s

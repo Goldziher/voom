@@ -1,0 +1,9 @@
+---
+source: src/report/human.rs
+expression: "render_to_string(&result, HumanOptions { verbose: true, summary_only: false })"
+---
+  removed           100 B  rust       /projects/api/target
+  skipped                             /projects/data/target  (no rust marker (Cargo.toml) proves it)
+  skipped                             /projects/tool/bin  (not enabled — `bin/` beside a go.mod is as often hand-written scripts as output. Enable with `go.bin`)
+
+1 artifact, 100 B reclaimed, 2 skipped in 1.23s

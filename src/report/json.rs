@@ -1,0 +1,167 @@
+//! The machine-readable renderer.
+//!
+//! One object with a stable, versioned shape. The document is built explicitly here rather than
+//! derived from the internal types, so the wire format is visible in one place and cannot
+//! change as a side effect of refactoring a struct somewhere else.
+//!
+//! Reason codes are enum-like strings rather than prose, so a hook can branch on them
+//! (ADR 0007). They come from [`crate::classify::SkipReason::code`] and
+//! [`crate::delete::Refusal::code`], which are the same values the human renderer explains.
+
+use std::io;
+
+use serde_json::{Value, json};
+
+use super::{Entry, RunResult, SCHEMA_VERSION};
+use crate::delete::Outcome;
+
+fn outcome_value(outcome: &Outcome) -> Value {
+    match outcome {
+        Outcome::Removed => json!({ "status": "removed" }),
+        Outcome::WouldRemove => json!({ "status": "would_remove" }),
+        Outcome::Refused(refusal) => json!({
+            "status": "refused",
+            "reason": refusal.code(),
+            "detail": refusal.to_string(),
+        }),
+        Outcome::Failed(message) => json!({
+            "status": "failed",
+            "reason": "removal_failed",
+            "detail": message,
+        }),
+    }
+}
+
+fn entry_value(entry: &Entry) -> Value {
+    json!({
+        "path": entry.path.display().to_string(),
+        "ecosystem": entry.ecosystem(),
+        "artifact": entry.artifact(),
+        "bytes": entry.bytes,
+        "marker_dir": entry.finding.marker_dir.display().to_string(),
+        "outcome": outcome_value(&entry.outcome),
+    })
+}
+
+/// Builds the document. Exposed so tests can assert on structure rather than on text.
+#[must_use]
+pub fn document(result: &RunResult) -> Value {
+    let totals = result.totals();
+    json!({
+        "schema_version": SCHEMA_VERSION,
+        "dry_run": result.dry_run,
+        "roots": result.roots.iter().map(|root| root.display().to_string()).collect::<Vec<_>>(),
+        "artifacts": result.entries.iter().map(entry_value).collect::<Vec<_>>(),
+        "skipped": result
+            .skip_reasons()
+            .map(|(path, reason)| json!({
+                "path": path.display().to_string(),
+                "reason": reason.code(),
+                "detail": reason.to_string(),
+            }))
+            .collect::<Vec<_>>(),
+        "walk_errors": result
+            .failures
+            .iter()
+            .map(|failure| json!({
+                "path": failure.path.as_ref().map(|path| path.display().to_string()),
+                "detail": failure.message,
+            }))
+            .collect::<Vec<_>>(),
+        "totals": {
+            "reclaimed": totals.reclaimed,
+            "bytes": totals.bytes,
+            "skipped": totals.skipped,
+            "refused": totals.refused,
+            "failed": totals.failed,
+        },
+        "elapsed_ms": u64::try_from(result.elapsed.as_millis()).unwrap_or(u64::MAX),
+    })
+}
+
+/// Renders the document as pretty-printed JSON on one line-delimited object.
+///
+/// # Errors
+///
+/// Propagates write failures and serialization failures from `out`.
+pub fn render(result: &RunResult, out: &mut impl io::Write) -> io::Result<()> {
+    serde_json::to_writer_pretty(&mut *out, &document(result))?;
+    writeln!(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::classify::SkipReason;
+    use crate::delete::Refusal;
+    use crate::report::fixtures::{entry, result};
+    use crate::scan::Skipped;
+
+    fn document_for_tests() -> Value {
+        let mut result = result(
+            vec![
+                entry("/projects/api/target", "rust.target", 4_200_000_000, Outcome::Removed),
+                entry(
+                    "/projects/link/target",
+                    "rust.target",
+                    0,
+                    Outcome::Refused(Refusal::Symlink),
+                ),
+                entry(
+                    "/projects/locked/obj",
+                    "dotnet.obj",
+                    900,
+                    Outcome::Failed("removing `/projects/locked/obj`: Permission denied".to_owned()),
+                ),
+            ],
+            false,
+        );
+        result.skipped_count = 1;
+        result.skips = vec![Skipped {
+            path: std::path::PathBuf::from("/projects/data/target"),
+            reason: SkipReason::NoMarker {
+                ecosystem: "rust",
+                markers: &["Cargo.toml"],
+            },
+        }];
+        result.sort();
+        document(&result)
+    }
+
+    #[test]
+    fn should_render_the_documented_shape() {
+        insta::assert_json_snapshot!(document_for_tests());
+    }
+
+    #[test]
+    fn should_carry_the_schema_version() {
+        assert_eq!(document_for_tests()["schema_version"], SCHEMA_VERSION);
+    }
+
+    /// Hooks branch on these, so they are prose-free and stable.
+    #[test]
+    fn should_expose_enum_like_reason_codes() {
+        let document = document_for_tests();
+        assert_eq!(document["artifacts"][1]["outcome"]["reason"], "symlink");
+        assert_eq!(document["artifacts"][2]["outcome"]["reason"], "removal_failed");
+        assert_eq!(document["skipped"][0]["reason"], "no_marker");
+    }
+
+    #[test]
+    fn should_agree_with_the_human_totals() {
+        let document = document_for_tests();
+        assert_eq!(document["totals"]["reclaimed"], 1);
+        assert_eq!(document["totals"]["bytes"], 4_200_000_000_u64);
+        assert_eq!(document["totals"]["refused"], 1);
+        assert_eq!(document["totals"]["failed"], 1);
+    }
+
+    #[test]
+    fn should_write_valid_json() {
+        let mut buffer = Vec::new();
+        let result = result(Vec::new(), true);
+        render(&result, &mut buffer).expect("writing to a Vec cannot fail");
+        let parsed: Value = serde_json::from_slice(&buffer).expect("the output parses");
+        assert_eq!(parsed["dry_run"], true);
+    }
+}

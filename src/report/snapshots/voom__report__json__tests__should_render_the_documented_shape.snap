@@ -1,0 +1,63 @@
+---
+source: src/report/json.rs
+expression: document_for_tests()
+---
+{
+  "artifacts": [
+    {
+      "artifact": "target/",
+      "bytes": 4200000000,
+      "ecosystem": "rust",
+      "marker_dir": "/projects/api",
+      "outcome": {
+        "status": "removed"
+      },
+      "path": "/projects/api/target"
+    },
+    {
+      "artifact": "target/",
+      "bytes": 0,
+      "ecosystem": "rust",
+      "marker_dir": "/projects/link",
+      "outcome": {
+        "detail": "is a symlink",
+        "reason": "symlink",
+        "status": "refused"
+      },
+      "path": "/projects/link/target"
+    },
+    {
+      "artifact": "obj/",
+      "bytes": 900,
+      "ecosystem": "dotnet",
+      "marker_dir": "/projects/locked",
+      "outcome": {
+        "detail": "removing `/projects/locked/obj`: Permission denied",
+        "reason": "removal_failed",
+        "status": "failed"
+      },
+      "path": "/projects/locked/obj"
+    }
+  ],
+  "dry_run": false,
+  "elapsed_ms": 1234,
+  "roots": [
+    "/projects"
+  ],
+  "schema_version": 1,
+  "skipped": [
+    {
+      "detail": "no rust marker (Cargo.toml) proves it",
+      "path": "/projects/data/target",
+      "reason": "no_marker"
+    }
+  ],
+  "totals": {
+    "bytes": 4200000000,
+    "failed": 1,
+    "reclaimed": 1,
+    "refused": 1,
+    "skipped": 1
+  },
+  "walk_errors": []
+}

@@ -1,0 +1,5 @@
+---
+source: src/report/human.rs
+expression: "render_to_string(&mixed(), options)"
+---
+2 artifacts, 4.22 GB reclaimed, 1 refused, 1 failed in 1.23s

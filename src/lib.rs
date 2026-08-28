@@ -15,3 +15,20 @@
 
 /// The version of the `voom` crate, as published.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub mod catalog;
+pub mod classify;
+pub mod error;
+pub mod names;
+pub mod scan;
+
+pub mod cli;
+pub mod config;
+pub mod delete;
+pub mod policy;
+pub mod report;
+pub mod run;
+pub mod size;
+#[cfg(test)]
+mod testing;
+pub mod watch;

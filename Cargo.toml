@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Na'aman Hirschfeld <nhirschfeld@gmail.com>"]
 description = "Fast, safe, parallel build-artifact pruning across 20+ language ecosystems"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 keywords = ["cleanup", "build", "artifacts", "disk-space", "prune"]
 categories = ["command-line-utilities", "development-tools", "filesystem"]
 license = "MIT"
@@ -28,30 +28,6 @@ exclude = [
 pkg-url = "{ repo }/releases/download/v{ version }/voom-{ target }{ archive-suffix }"
 bin-dir = "{ bin }{ binary-ext }"
 
-# SCAFFOLDING: src/ is still a stub, so cargo-machete correctly reports every
-# dependency below as unused. This block silences it until the modules in
-# .ai-rulez/context/architecture.md land. DELETE IT with the first real
-# implementation PR — leaving it in place would hide genuinely unused deps.
-[package.metadata.cargo-machete]
-ignored = [
-  "anstream",
-  "anyhow",
-  "clap",
-  "dirs",
-  "globset",
-  "humansize",
-  "ignore",
-  "indicatif",
-  "notify",
-  "notify-debouncer-full",
-  "owo-colors",
-  "rayon",
-  "serde",
-  "serde_json",
-  "thiserror",
-  "toml",
-]
-
 [lib]
 name = "voom"
 path = "src/lib.rs"
@@ -67,10 +43,10 @@ clap = { version = "4.6", features = ["derive", "color", "wrap_help"] }
 dirs = "6.0"
 globset = "0.4"
 humansize = "2.1"
-ignore = "0.4.31"
+ignore = "0.4.33"
 indicatif = "0.18"
-notify = "8.0"
-notify-debouncer-full = "0.5"
+notify = "8.2"
+notify-debouncer-full = "0.7"
 owo-colors = "4"
 rayon = "1.12"
 serde = { version = "1.0", features = ["derive"] }
@@ -79,11 +55,21 @@ thiserror = "2.0"
 toml = "1.1"
 
 [dev-dependencies]
-assert_cmd = "2.0"
-insta = { version = "1.44", features = ["json"] }
+assert_cmd = "2.2"
+insta = { version = "1.48", features = ["json"] }
 predicates = "3.1"
 pretty_assertions = "1.4"
 tempfile = "3.27"
+
+# The bar is `cargo clippy --all-targets -- -D warnings`, which picks this table up. Pedantic
+# is on deliberately: this is a tool that deletes directories, so the marginal lint is worth
+# more here than the marginal convenience. Narrow `#[allow]`/`#[expect]` with a reason is the
+# escape hatch — never a crate-wide one. `unwrap`/`expect` are denied outside tests because a
+# panic mid-run leaves a partially deleted tree and no report; clippy.toml exempts tests.
+[lints.clippy]
+expect_used = "warn"
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
 
 # A speed-marketed binary ships optimized. Costs release build time, which is paid
 # once per release in CI rather than by anyone running the tool.

@@ -1,0 +1,8 @@
+---
+source: src/report/human.rs
+expression: "render_to_string(&result, HumanOptions::default())"
+---
+  would remove    4.20 GB  rust       /projects/api/target
+
+1 artifact, 4.20 GB reclaimable in 1.23s
+Dry run — nothing was removed.

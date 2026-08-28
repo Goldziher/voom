@@ -1,0 +1,7 @@
+---
+source: src/report/human.rs
+expression: "render_to_string(&result, HumanOptions::default())"
+---
+  removed           100 B  rust       /projects/api/target
+
+1 artifact, 100 B reclaimed, 2 skipped (--verbose for why) in 1.23s
