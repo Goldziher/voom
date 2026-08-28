@@ -1013,6 +1013,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+ "voom",
 ]
 
 [[package]]

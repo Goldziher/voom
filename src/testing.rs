@@ -1,9 +1,14 @@
-//! Fixture helpers for unit tests.
+//! Fixture helpers shared by the unit tests and, through the `test-support` feature, the
+//! integration suites.
 //!
 //! The unit under test in this crate is "what does voom do to a filesystem", so nothing
 //! smaller than a real directory tree is convincing. Every fixture lives under a [`TempDir`] —
 //! a test that reached `$HOME`, or `/tmp` directly, would be a bug regardless of whether it
 //! passed.
+
+// A panic in fixture construction *is* the failure report. Under `test-support` this module is
+// compiled into the non-test lib, where clippy.toml's `allow-expect-in-tests` does not reach it.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use std::fs;
 use std::path::Path;

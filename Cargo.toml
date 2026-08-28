@@ -36,6 +36,14 @@ path = "src/lib.rs"
 name = "voom"
 path = "src/main.rs"
 
+[features]
+# Exposes `voom::testing` — the fixture-tree helpers — to the integration suites, which
+# cannot see a `#[cfg(test)]` module of the library they link against. Off for a normal
+# build; the self dev-dependency below turns it on for `cargo test`. It pulls `tempfile`
+# in as a real dependency because the integration suites link the lib as a *non-test*
+# target, where dev-dependencies are not in scope.
+test-support = ["dep:tempfile"]
+
 [dependencies]
 anstream = "1.0"
 anyhow = "1.0"
@@ -51,6 +59,7 @@ owo-colors = "4"
 rayon = "1.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+tempfile = { version = "3.27", optional = true }
 thiserror = "2.0"
 toml = "1.1"
 
@@ -59,7 +68,9 @@ assert_cmd = "2.2"
 insta = { version = "1.48", features = ["json"] }
 predicates = "3.1"
 pretty_assertions = "1.4"
-tempfile = "3.27"
+# The crate depending on itself is how an integration test reaches a feature-gated helper:
+# the test binary links the same lib unit, built with `test-support` on.
+voom = { path = ".", features = ["test-support"] }
 
 # The bar is `cargo clippy --all-targets -- -D warnings`, which picks this table up. Pedantic
 # is on deliberately: this is a tool that deletes directories, so the marginal lint is worth

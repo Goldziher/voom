@@ -13,29 +13,9 @@
 
 mod support;
 
-use std::path::Path;
-
-use support::{describe, fixture, snapshot};
+use support::{describe, fixture, options_enabling, snapshot};
 use voom::catalog::CATALOG;
-use voom::config::resolve::Flags;
 use voom::run::{RunOptions, run};
-
-fn options(root: &Path, enable: Vec<String>) -> RunOptions {
-    RunOptions {
-        roots: vec![root.to_path_buf()],
-        dry_run: false,
-        jobs: Some(2),
-        one_file_system: true,
-        caches: false,
-        verbose: true,
-        config: None,
-        progress: false,
-        flags: Flags {
-            enable,
-            ..Flags::default()
-        },
-    }
-}
 
 /// Positive: the marker proves the ecosystem, so the artifact goes.
 #[test]
@@ -49,7 +29,7 @@ fn every_entry_removes_its_artifact_when_a_marker_proves_it() {
                 vec![format!("{}.{}", ecosystem.id, artifact.slug())]
             };
 
-            let result = run(&options(root.path(), enable)).expect("the run completes");
+            let result = run(&options_enabling(root.path(), enable)).expect("the run completes");
 
             assert!(
                 !target.exists(),
@@ -81,7 +61,7 @@ fn every_entry_leaves_its_artifact_alone_without_a_marker() {
             // Everything enabled, so the only thing standing between the artifact and deletion
             // is the missing marker.
             let enable = vec![format!("{}.{}", ecosystem.id, artifact.slug())];
-            let result = run(&options(root.path(), enable)).expect("the run completes");
+            let result = run(&options_enabling(root.path(), enable)).expect("the run completes");
 
             assert!(
                 target.exists(),
@@ -112,7 +92,7 @@ fn every_opt_in_artifact_survives_until_it_is_enabled() {
             checked += 1;
             let (root, target) = fixture(ecosystem, artifact, true);
 
-            run(&options(root.path(), Vec::new())).expect("the run completes");
+            run(&options_enabling(root.path(), Vec::new())).expect("the run completes");
             assert!(
                 target.exists(),
                 "{}: removed without the opt-in it declares",
@@ -120,7 +100,7 @@ fn every_opt_in_artifact_survives_until_it_is_enabled() {
             );
 
             let enable = vec![format!("{}.{}", ecosystem.id, artifact.slug())];
-            run(&options(root.path(), enable)).expect("the run completes");
+            run(&options_enabling(root.path(), enable)).expect("the run completes");
             assert!(
                 !target.exists(),
                 "{}: still there after being enabled explicitly",
@@ -146,7 +126,7 @@ fn a_dry_run_over_every_entry_changes_nothing_and_predicts_the_real_run() {
 
             let dry = run(&RunOptions {
                 dry_run: true,
-                ..options(root.path(), enable.clone())
+                ..options_enabling(root.path(), enable.clone())
             })
             .expect("the dry run completes");
             assert_eq!(
@@ -156,7 +136,7 @@ fn a_dry_run_over_every_entry_changes_nothing_and_predicts_the_real_run() {
                 describe(ecosystem, artifact)
             );
 
-            let real = run(&options(root.path(), enable)).expect("the run completes");
+            let real = run(&options_enabling(root.path(), enable)).expect("the run completes");
             let predicted: Vec<_> = dry.entries.iter().map(|entry| entry.path.clone()).collect();
             let actual: Vec<_> = real.entries.iter().map(|entry| entry.path.clone()).collect();
             assert_eq!(

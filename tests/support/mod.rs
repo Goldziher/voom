@@ -5,8 +5,9 @@
 //! regardless of whether it passed.
 
 // Each test binary compiles this module in full but uses only the helpers it needs, so
-// unused-item warnings are an artefact of the shared-module pattern rather than dead code.
-#![allow(dead_code)]
+// unused-item and unused-import warnings are an artefact of the shared-module pattern rather
+// than dead code.
+#![allow(dead_code, unused_imports)]
 // A panic in fixture construction *is* the failure report. `allow-expect-in-tests` in
 // clippy.toml only covers `#[test]` bodies, not helpers like these.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
@@ -16,6 +17,47 @@ use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 use voom::catalog::{Artifact, Ecosystem};
+use voom::config::resolve::Flags;
+use voom::run::RunOptions;
+
+// One copy of the fixture-tree helpers, shared with the crate's unit tests through the
+// `test-support` feature. Two copies drift, and a `snapshot` that handled symlinks or path
+// separators differently here would have a safety test trusting output the unit suite could
+// never have produced.
+pub use voom::testing::{build, snapshot, tree};
+
+/// A run over `root` with everything a suite normally wants: a real removal, deterministic
+/// parallelism, and the skip reasons recorded so a failure can say why nothing matched.
+///
+/// A suite that needs one field different uses struct update — `RunOptions { dry_run: true,
+/// ..options(root) }` — so the difference is the only thing on screen. A new field on
+/// [`RunOptions`] is then one edit here rather than one per suite.
+#[must_use]
+pub fn options(root: &Path) -> RunOptions {
+    RunOptions {
+        roots: vec![root.to_path_buf()],
+        dry_run: false,
+        jobs: Some(2),
+        one_file_system: true,
+        caches: false,
+        verbose: true,
+        config: None,
+        progress: false,
+        flags: Flags::default(),
+    }
+}
+
+/// [`options`] with a set of `--enable` specs, for artifacts that are `default_on: false`.
+#[must_use]
+pub fn options_enabling(root: &Path, enable: Vec<String>) -> RunOptions {
+    RunOptions {
+        flags: Flags {
+            enable,
+            ..Flags::default()
+        },
+        ..options(root)
+    }
+}
 
 /// Turns a catalog pattern into a concrete name a fixture can create.
 ///
@@ -74,42 +116,6 @@ pub fn fixture(ecosystem: &Ecosystem, artifact: &Artifact, with_marker: bool) ->
     }
 
     (root, target)
-}
-
-/// Every path under `root`, relative and sorted, for asserting on what survived.
-///
-/// # Panics
-///
-/// If a path cannot be rendered.
-#[must_use]
-pub fn snapshot(root: &Path) -> Vec<String> {
-    let mut paths = Vec::new();
-    collect(root, root, &mut paths);
-    paths.sort();
-    paths
-}
-
-fn collect(root: &Path, dir: &Path, paths: &mut Vec<String>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        // Callers assert against `/`-separated literals, and `display()` renders the platform's
-        // separator — on Windows every one of those assertions would fail for a reason that has
-        // nothing to do with the behaviour under test.
-        let relative = path
-            .strip_prefix(root)
-            .unwrap_or(&path)
-            .display()
-            .to_string()
-            .replace(std::path::MAIN_SEPARATOR, "/");
-        let file_type = entry.file_type();
-        let is_symlink = file_type.as_ref().is_ok_and(std::fs::FileType::is_symlink);
-        let is_dir = file_type.as_ref().is_ok_and(std::fs::FileType::is_dir);
-        paths.push(if is_dir { format!("{relative}/") } else { relative });
-        if is_dir && !is_symlink {
-            collect(root, &path, paths);
-        }
-    }
 }
 
 /// Describes an entry for a failure message: `rust.target (target/)`.

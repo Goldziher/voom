@@ -11,26 +11,10 @@
 mod support;
 
 use std::fs;
-use std::path::Path;
 
-use support::snapshot;
+use support::{options, snapshot};
 use tempfile::TempDir;
-use voom::config::resolve::Flags;
-use voom::run::{RunOptions, run};
-
-fn options(root: &Path) -> RunOptions {
-    RunOptions {
-        roots: vec![root.to_path_buf()],
-        dry_run: false,
-        jobs: Some(2),
-        one_file_system: true,
-        caches: false,
-        verbose: true,
-        config: None,
-        progress: false,
-        flags: Flags::default(),
-    }
-}
+use voom::run::run;
 
 /// Build artifacts are precisely what `.gitignore` lists. A walker that respects ignore files
 /// finds nothing and reports a clean machine — a silent total failure nobody would report as a

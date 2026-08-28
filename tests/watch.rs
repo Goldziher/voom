@@ -17,9 +17,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use support::snapshot;
+use support::{options_enabling, snapshot};
 use tempfile::TempDir;
-use voom::config::resolve::Flags;
 use voom::run::{RunOptions, run};
 use voom::watch::QuietTracker;
 
@@ -72,20 +71,13 @@ fn project(build: &Build) -> TempDir {
     root
 }
 
+/// A dry run over a fixture project. This suite proves that each ecosystem's artifact is one
+/// voom would reclaim, which must not cost it the tree the tracker assertions run against.
 fn options(root: &Path) -> RunOptions {
     RunOptions {
-        roots: vec![root.to_path_buf()],
         dry_run: true,
-        jobs: Some(2),
-        one_file_system: true,
-        caches: false,
         verbose: false,
-        config: None,
-        progress: false,
-        flags: Flags {
-            enable: vec!["gradle.build".to_owned()],
-            ..Flags::default()
-        },
+        ..options_enabling(root, vec!["gradle.build".to_owned()])
     }
 }
 
@@ -204,17 +196,10 @@ fn should_not_remove_anything_during_the_baseline_pass() {
     fs::create_dir_all(root.path().join("target/debug")).unwrap();
     fs::write(root.path().join("target/debug/app"), b"output").unwrap();
 
-    let watched = root.path().to_path_buf();
     let options = RunOptions {
-        roots: vec![watched.clone()],
-        dry_run: false,
         jobs: Some(1),
-        one_file_system: true,
-        caches: false,
         verbose: false,
-        config: None,
-        flags: Flags::default(),
-        progress: false,
+        ..support::options(root.path())
     };
     let watch_options = voom::watch::WatchOptions {
         debounce: Duration::from_millis(200),

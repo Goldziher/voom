@@ -30,6 +30,11 @@ pub mod policy;
 pub mod report;
 pub mod run;
 pub mod size;
-#[cfg(test)]
-mod testing;
+// The integration suites cannot see a `#[cfg(test)]` module of the library they link
+// against, and two copies of a fixture helper drift — a snapshot that handled symlinks or
+// separators differently in one suite would have it trusting output the other could not
+// produce. The `test-support` feature exposes the one copy; `cargo test` turns it on through
+// the self dev-dependency.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 pub mod watch;
