@@ -84,6 +84,15 @@ pub struct GitPruneArgs {
     /// How long one repository's housekeeping may take, e.g. `30s`.
     #[arg(long, value_name = "DURATION")]
     pub timeout: Option<String>,
+
+    /// How old a worktree's administration must be before git may prune it.
+    ///
+    /// Defaults to git's own `gc.worktreePruneExpire` policy, three months, rather than
+    /// `git worktree prune`'s much more aggressive one — which removes the administration for
+    /// every absent worktree at any age, an unmounted disk included, and with it the reflog that
+    /// is the recovery path for anything committed there.
+    #[arg(long, value_name = "TIME")]
+    pub expire: Option<String>,
 }
 
 /// `voom config` actions.
@@ -326,6 +335,10 @@ impl GitPruneArgs {
             exclude: crate::scan::PatternSet::new(prune.exclude.clone())?,
             caches: prune.caches,
             remotes: self.remotes,
+            worktree_expire: self
+                .expire
+                .clone()
+                .unwrap_or_else(|| crate::git::WORKTREE_PRUNE_EXPIRE.to_owned()),
             // The explicit surface says what a withheld repack would have had to work with; a
             // sweep does not, because the census is a question nobody asked it.
             count_objects: true,

@@ -211,13 +211,23 @@ fn resolve(work_tree: &Path, roots: &[PathBuf], protected: &[PathBuf]) -> Resolu
         Err(None) => return Resolution::Refused(canonical_or_given(work_tree), Skipped::Vanished),
     };
 
-    if is_protected(&located.work_tree, protected) {
-        return Resolution::Refused(located.work_tree, Skipped::Protected);
+    // Both the checkout *and* the store. Checking only the checkout let a `--separate-git-dir`
+    // repository inside a scan root send `worktree prune` and `gc` at an object store outside
+    // it: voom was pointed at one tree and modified another, and the report named only the
+    // path that was not touched.
+    let refusal = [&located.work_tree, &located.common_dir].into_iter().find_map(|path| {
+        if is_protected(path, protected) {
+            Some(Skipped::Protected)
+        } else if contained(path, roots) {
+            None
+        } else {
+            Some(Skipped::EscapesRoot)
+        }
+    });
+    match refusal {
+        Some(reason) => Resolution::Refused(located.work_tree, reason),
+        None => Resolution::Repository(located),
     }
-    if !contained(&located.work_tree, roots) {
-        return Resolution::Refused(located.work_tree, Skipped::EscapesRoot);
-    }
-    Resolution::Repository(located)
 }
 
 /// Works out which repository a `.git` entry belongs to, and where its object store is.
@@ -239,11 +249,7 @@ fn locate(work_tree: &Path) -> Result<Located, Option<String>> {
     let canonical = work_tree.canonicalize().map_err(|_| None)?;
 
     if metadata.file_type().is_dir() {
-        return Ok(Located {
-            common_dir: canonical.join(DOT_GIT),
-            work_tree: canonical,
-            linked: false,
-        });
+        return Ok(resolve_store(canonical.join(DOT_GIT), canonical, false));
     }
     if !metadata.file_type().is_file() {
         // A symlinked `.git` is not followed, for the same reason nothing else in voom is.
@@ -251,20 +257,57 @@ fn locate(work_tree: &Path) -> Result<Located, Option<String>> {
     }
 
     let git_dir = read_gitdir(&dot_git, work_tree).map_err(Some)?;
-    match main_work_tree(&git_dir) {
-        // A linked worktree, resolved to the repository it belongs to.
-        Some((common_dir, main)) => Ok(Located {
-            work_tree: main,
-            common_dir,
-            linked: true,
-        }),
-        // A submodule or a separate git directory: its own repository, run in place.
-        None => Ok(Located {
+    Ok(resolve_store(git_dir, canonical, true))
+}
+
+/// Follows a git directory to the object store git will actually operate on.
+///
+/// The store is the authoritative identity here — it is what `gc` repacks and what
+/// `worktree prune` writes to — so deduplication, the in-progress rails and containment are all
+/// keyed on it rather than on the checkout that led here.
+///
+/// A linked worktree's private directory carries a `commondir` file naming its store. **Reading
+/// that file is the whole of the rule.** Inferring it instead, by looking for an ancestor named
+/// `worktrees` under a directory named `.git`, is true only of the default layout: a bare clone
+/// (`repo.git/worktrees/<name>`) and the common `project/.bare` arrangement both fail the name
+/// test, and every worktree of one was then treated as a repository in its own right —
+/// repacking one store once per checkout, and, worse, checking the in-progress markers against
+/// a private directory that cannot see a rebase paused in a sibling worktree.
+fn resolve_store(git_dir: PathBuf, work_tree: PathBuf, linked: bool) -> Located {
+    let Some(common_dir) = common_dir_of(&git_dir) else {
+        return Located {
             common_dir: git_dir,
-            work_tree: canonical,
-            linked: true,
-        }),
+            work_tree,
+            linked,
+        };
+    };
+    // `<main>/.git` belongs to `<main>`. A bare store belongs to no checkout, so the worktree
+    // that led here is the best name the report has for it.
+    let main = (common_dir.file_name() == Some(OsStr::new(DOT_GIT)))
+        .then(|| common_dir.parent().map(Path::to_path_buf))
+        .flatten();
+    Located {
+        work_tree: main.unwrap_or(work_tree),
+        common_dir,
+        linked: true,
     }
+}
+
+/// The object store a git directory shares, when it is a linked worktree's private directory.
+///
+/// `None` for a main git directory, which has no `commondir` file and is its own store.
+fn common_dir_of(git_dir: &Path) -> Option<PathBuf> {
+    let contents = std::fs::read_to_string(git_dir.join("commondir")).ok()?;
+    let named = contents.trim();
+    if named.is_empty() {
+        return None;
+    }
+    let joined = if Path::new(named).is_absolute() {
+        PathBuf::from(named)
+    } else {
+        git_dir.join(named)
+    };
+    joined.canonicalize().ok()
 }
 
 fn read_gitdir(dot_git: &Path, work_tree: &Path) -> Result<PathBuf, String> {
@@ -282,19 +325,6 @@ fn read_gitdir(dot_git: &Path, work_tree: &Path) -> Result<PathBuf, String> {
     absolute
         .canonicalize()
         .map_err(|error| format!("its gitdir `{gitdir}` does not resolve: {error}"))
-}
-
-/// The common directory and main working tree, when `git_dir` is a linked worktree's private
-/// directory — `<main>/.git/worktrees/<name>`.
-fn main_work_tree(git_dir: &Path) -> Option<(PathBuf, PathBuf)> {
-    let worktrees = git_dir
-        .ancestors()
-        .find(|ancestor| ancestor.file_name() == Some(OsStr::new("worktrees")))?;
-    let common = worktrees.parent()?;
-    if common.file_name() != Some(OsStr::new(DOT_GIT)) {
-        return None;
-    }
-    Some((common.to_path_buf(), common.parent()?.to_path_buf()))
 }
 
 fn canonical_or_given(path: &Path) -> PathBuf {
@@ -390,20 +420,31 @@ mod tests {
         );
     }
 
+    /// A linked worktree's store is read from its `commondir` file, which is the documented
+    /// answer and the only one that holds for every layout. The rule used to be inferred from an
+    /// ancestor named `worktrees` beneath a directory named `.git`, which is true of the default
+    /// layout and of nothing else — a bare clone and the common `project/.bare` arrangement both
+    /// fail that test.
     #[test]
-    fn should_resolve_a_linked_worktree_to_its_main_repository() {
+    fn should_read_a_linked_worktrees_store_from_its_commondir_file() {
+        let fixture = tree(&["repo.git/HEAD", "repo.git/worktrees/feature/HEAD"]);
+        let private = fixture.path().join("repo.git/worktrees/feature");
+        std::fs::write(private.join("commondir"), "../..\n").expect("a commondir file");
+
         assert_eq!(
-            main_work_tree(Path::new("/projects/api/.git/worktrees/feature")),
-            Some((PathBuf::from("/projects/api/.git"), PathBuf::from("/projects/api")))
+            common_dir_of(&private),
+            Some(fixture.path().join("repo.git").canonicalize().expect("the store")),
+            "a bare store is found even though it is not named `.git`"
         );
     }
 
-    /// A submodule's `.git` file points into `<super>/.git/modules/<name>`, which is an object
-    /// store of its own — so it is a repository in its own right and must survive the
-    /// deduplication that folds linked worktrees into their main repository.
+    /// A submodule's `.git` file points into `<super>/.git/modules/<name>`, which is a main git
+    /// directory with no `commondir` — so it is a repository in its own right and must survive
+    /// the deduplication that folds linked worktrees into one store.
     #[test]
     fn should_not_treat_a_submodule_as_a_linked_worktree() {
-        assert_eq!(main_work_tree(Path::new("/projects/api/.git/modules/vendor")), None);
+        let fixture = tree(&["super/.git/modules/vendor/HEAD"]);
+        assert_eq!(common_dir_of(&fixture.path().join("super/.git/modules/vendor")), None);
     }
 
     /// A `.git` file naming a shape voom does not recognise resolves to the checkout itself

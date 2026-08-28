@@ -91,6 +91,7 @@ fn canonical(path: &Path) -> PathBuf {
 /// `.git/worktrees/<name>` until something prunes them. A *live* one must survive, because
 /// removing its administrative files would detach a checkout the user is working in.
 #[test]
+#[cfg(unix)]
 fn should_prune_a_stale_worktree_and_leave_a_live_one() {
     if !git_available() {
         return;
@@ -100,6 +101,7 @@ fn should_prune_a_stale_worktree_and_leave_a_live_one() {
     git(&repository, &["worktree", "add", "--quiet", "../live", "-b", "live"]);
     git(&repository, &["worktree", "add", "--quiet", "../stale", "-b", "stale"]);
     std::fs::remove_dir_all(root.path().join("stale")).expect("the stale checkout goes away");
+    age_worktree(&repository, "stale");
 
     let result = prune(&subcommand_options(root.path())).expect("git is available");
 
@@ -189,6 +191,7 @@ fn should_prune_a_repository_with_linked_worktrees_exactly_once() {
 /// `--dry-run` is the same pipeline with the repack withheld, so its report has to be what a real
 /// run then does — otherwise it is a gesture rather than an audit step.
 #[test]
+#[cfg(unix)]
 fn should_change_nothing_under_dry_run_and_report_what_a_real_run_then_does() {
     if !git_available() {
         return;
@@ -197,6 +200,7 @@ fn should_change_nothing_under_dry_run_and_report_what_a_real_run_then_does() {
     let repository = repository(root.path(), "api");
     git(&repository, &["worktree", "add", "--quiet", "../stale", "-b", "stale"]);
     std::fs::remove_dir_all(root.path().join("stale")).expect("the stale checkout goes away");
+    age_worktree(&repository, "stale");
     let before = snapshot(root.path());
 
     let dry = prune(&GitPruneOptions {
@@ -314,7 +318,7 @@ fn should_run_no_networked_command_during_a_default_sweep() {
     let commands: Vec<&[String]> = result.repositories[0]
         .steps
         .iter()
-        .map(|step| step.command.as_slice())
+        .map(|step| subcommand(&step.command))
         .collect();
     assert!(
         !commands.iter().any(|command| command.iter().any(|arg| arg == "remote")),
@@ -323,8 +327,8 @@ fn should_run_no_networked_command_during_a_default_sweep() {
     assert_eq!(
         commands,
         vec![
-            &["git", "worktree", "prune", "-v"].map(ToOwned::to_owned)[..],
-            &["git", "gc", "--auto"].map(ToOwned::to_owned)[..],
+            &["worktree", "prune", "--expire", "3.months.ago", "-v"].map(ToOwned::to_owned)[..],
+            &["gc", "--auto"].map(ToOwned::to_owned)[..],
         ]
     );
 }
@@ -347,7 +351,7 @@ fn should_repack_only_on_gits_own_thresholds() {
         .iter()
         .find(|step| step.kind == StepKind::Gc)
         .expect("a repack step");
-    assert_eq!(repack.command, vec!["git", "gc", "--auto"], "never a bare `gc`");
+    assert_eq!(subcommand(&repack.command), ["gc", "--auto"], "never a bare `gc`");
     assert!(repack.succeeded(), "{:?}", repack.outcome);
     assert_eq!(
         repack.summary(),
@@ -386,6 +390,7 @@ fn should_say_nothing_when_a_sweep_walked_past_no_repositories() {
 /// A repository the walker passed is pruned by the sweep's entry point without anyone asking —
 /// the call `run.rs` makes, with the paths `scan` collects.
 #[test]
+#[cfg(unix)]
 fn should_prune_a_repository_a_sweep_walked_past() {
     if !git_available() {
         return;
@@ -394,6 +399,7 @@ fn should_prune_a_repository_a_sweep_walked_past() {
     let repository = repository(root.path(), "api");
     git(&repository, &["worktree", "add", "--quiet", "../stale", "-b", "stale"]);
     std::fs::remove_dir_all(root.path().join("stale")).expect("the stale checkout goes away");
+    age_worktree(&repository, "stale");
 
     let result = prune_during_sweep(std::slice::from_ref(&repository), &sweep_options(root.path())).expect("a result");
 
@@ -407,10 +413,12 @@ fn should_prune_a_repository_a_sweep_walked_past() {
 /// A repository with one stale worktree and one Rust artifact beside it, for the wiring tests
 /// below. Returns the tree to sweep and the administrative directory that must or must not
 /// survive it.
+#[cfg(unix)]
 fn tree_with_a_stale_worktree(root: &Path) -> PathBuf {
     let repository = repository(root, "project");
     git(&repository, &["worktree", "add", "--quiet", "../stale", "-b", "stale"]);
     std::fs::remove_dir_all(root.join("stale")).expect("removing the checkout makes it stale");
+    age_worktree(&repository, "stale");
 
     std::fs::create_dir_all(repository.join("target")).expect("an artifact directory");
     std::fs::write(repository.join("Cargo.toml"), b"[package]").expect("a marker");
@@ -419,6 +427,48 @@ fn tree_with_a_stale_worktree(root: &Path) -> PathBuf {
     repository.join(".git/worktrees/stale")
 }
 
+/// The git subcommand a step ran, without the fixed safety prefix voom puts on every one of
+/// them (`-c core.hooksPath=`, `--git-dir=<store>`). Those are asserted once, by
+/// [`should_never_let_a_repository_choose_what_voom_runs`], rather than repeated in every
+/// argv comparison where they would only make the test brittle.
+/// Backdates a worktree's `gitdir` file by a year.
+///
+/// voom prunes with git's own `gc.worktreePruneExpire` default rather than
+/// `git worktree prune`'s much more aggressive one, which removes the administration for every
+/// absent worktree at any age — an unmounted disk included. git compares that file's mtime
+/// against the expiry, so a fixture that wants pruning has to be genuinely old.
+/// Backdates a worktree's administration by years, so git's expiry lets it be pruned.
+///
+/// voom prunes with git's own `gc.worktreePruneExpire` policy rather than
+/// `git worktree prune`'s much more aggressive default, which removes the administration for
+/// every absent worktree at any age. A fixture that wants pruning therefore has to be genuinely
+/// old, and one that is merely absent is testing the opposite property.
+///
+/// git compares the expiry against the mtime of the worktree's **`index`** — not its `gitdir`
+/// file and not its private directory, both of which leave it unpruned when backdated alone.
+/// Established against git 2.50 by experiment, one file at a time. `touch` rather than
+/// `File::set_times`, because on macOS the latter reports success on a directory opened
+/// read-only and changes nothing, and this was originally written against the directory.
+#[cfg(unix)]
+fn age_worktree(repository: &Path, name: &str) {
+    let private = repository.join(".git/worktrees").join(name).join("index");
+    let output = Command::new("touch")
+        .args(["-t", "202001010000"])
+        .arg(&private)
+        .output()
+        .unwrap_or_else(|error| panic!("backdating {}: {error}", private.display()));
+    assert!(output.status.success(), "backdating {} failed", private.display());
+}
+
+fn subcommand(command: &[String]) -> &[String] {
+    let start = command
+        .iter()
+        .position(|arg| arg.starts_with("--git-dir="))
+        .map_or(1, |index| index + 1);
+    &command[start..]
+}
+
+#[cfg(unix)]
 fn voom() -> assert_cmd::Command {
     assert_cmd::Command::cargo_bin("voom").expect("the binary builds")
 }
@@ -429,6 +479,7 @@ fn voom() -> assert_cmd::Command {
 /// This is the behaviour that makes housekeeping *default*, and it is the one thing the git
 /// module cannot test on its own — discovery happens in the artifact walker.
 #[test]
+#[cfg(unix)]
 fn should_prune_a_repository_a_sweep_walked_past_without_being_asked() {
     if !git_available() {
         return;
@@ -455,6 +506,7 @@ fn should_prune_a_repository_a_sweep_walked_past_without_being_asked() {
 
 /// `--no-git` turns it off, and the report then says nothing about git at all.
 #[test]
+#[cfg(unix)]
 fn should_not_touch_a_repository_when_git_housekeeping_is_turned_off() {
     if !git_available() {
         return;
@@ -480,6 +532,7 @@ fn should_not_touch_a_repository_when_git_housekeeping_is_turned_off() {
 /// The same, from `voom.toml`, because a flag nobody can commit is a flag a repository cannot
 /// set a policy with (ADR 0004).
 #[test]
+#[cfg(unix)]
 fn should_honour_a_config_file_turning_git_housekeeping_off() {
     if !git_available() {
         return;
@@ -500,6 +553,7 @@ fn should_honour_a_config_file_turning_git_housekeeping_off() {
 /// A dry run reports what housekeeping would do and does none of it — the same rule the artifact
 /// half follows, and the one that makes `--dry-run` safe to run anywhere.
 #[test]
+#[cfg(unix)]
 fn should_predict_git_housekeeping_in_a_dry_run_without_performing_it() {
     if !git_available() {
         return;
@@ -545,6 +599,7 @@ fn should_say_nothing_about_a_repository_that_needed_nothing() {
 /// The flag beats the file, on the same principle as every other option: no `voom.toml` below a
 /// scan root may turn back on something the invocation switched off.
 #[test]
+#[cfg(unix)]
 fn should_let_the_flag_beat_a_config_file_that_turns_git_housekeeping_on() {
     if !git_available() {
         return;
@@ -559,5 +614,131 @@ fn should_let_the_flag_beat_a_config_file_that_turns_git_housekeeping_on() {
         stale.exists(),
         "--no-git wins over `[git] enabled = true`: {} was pruned anyway",
         stale.display()
+    );
+}
+
+/// A worktree whose checkout merely went missing *now* is not pruned.
+///
+/// `git worktree prune` on its own expires everything: it removes the administration for every
+/// absent worktree at any age. An unmounted external disk, a network share not yet up, an
+/// encrypted volume not yet opened — all of them make a checkout absent, and
+/// `.git/worktrees/<name>` holds that worktree's `HEAD` and reflog, which is the recovery path
+/// for anything committed there and not merged. voom prunes with git's own
+/// `gc.worktreePruneExpire` policy instead, so this survives.
+#[test]
+fn should_not_prune_a_worktree_that_only_just_went_missing() {
+    if !git_available() {
+        return;
+    }
+    let root = TempDir::new().expect("a temporary directory");
+    let repository = repository(root.path(), "api");
+    git(
+        &repository,
+        &["worktree", "add", "--quiet", "../unmounted", "-b", "elsewhere"],
+    );
+    std::fs::remove_dir_all(root.path().join("unmounted")).expect("as if the disk were unmounted");
+
+    prune(&subcommand_options(root.path())).expect("git is available");
+
+    assert!(
+        repository.join(".git/worktrees/unmounted").exists(),
+        "an absent checkout is not by itself grounds for discarding its reflog"
+    );
+}
+
+/// The repository does not get to choose what voom runs.
+///
+/// `git gc --auto` calls the repository's `pre-auto-gc` hook, in the foreground. With
+/// housekeeping on by default, a plain sweep would otherwise execute arbitrary shell from every
+/// repository under a home directory that carries one. Every invocation passes an empty
+/// `core.hooksPath`, and every invocation pins `--git-dir` to the store voom resolved and
+/// checked — without which git repeats its own discovery and can reach somewhere else.
+#[test]
+#[cfg(unix)]
+fn should_never_let_a_repository_choose_what_voom_runs() {
+    if !git_available() {
+        return;
+    }
+    let root = TempDir::new().expect("a temporary directory");
+    let repository = repository(root.path(), "api");
+    // `pre-auto-gc` runs only once git has decided a repack is warranted, and a one-commit
+    // fixture is far below the default threshold. Without this the test passes whether or not
+    // hooks are disabled, which is to say it tests nothing.
+    git(&repository, &["config", "gc.auto", "1"]);
+    let hooks = repository.join(".git/hooks");
+    std::fs::create_dir_all(&hooks).expect("a hooks directory");
+    let evidence = root.path().join("hook-ran");
+    std::fs::write(
+        hooks.join("pre-auto-gc"),
+        format!("#!/bin/sh\ntouch {}\n", evidence.display()),
+    )
+    .expect("a hook");
+    let mut mode = std::fs::metadata(hooks.join("pre-auto-gc"))
+        .expect("the hook")
+        .permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o755);
+    std::fs::set_permissions(hooks.join("pre-auto-gc"), mode).expect("an executable hook");
+
+    let result = prune(&GitPruneOptions {
+        dry_run: false,
+        ..subcommand_options(root.path())
+    })
+    .expect("git is available");
+
+    assert!(
+        !evidence.exists(),
+        "voom ran the repository's pre-auto-gc hook: {}",
+        evidence.display()
+    );
+    for step in &result.repositories[0].steps {
+        assert!(
+            step.command.contains(&"core.hooksPath=".to_owned()),
+            "every command disables hooks, got {:?}",
+            step.command
+        );
+        assert!(
+            step.command.iter().any(|arg| arg.starts_with("--git-dir=")),
+            "every command pins the store, got {:?}",
+            step.command
+        );
+    }
+}
+
+/// A `--separate-git-dir` repository inside the scan root whose object store is outside it is
+/// refused, because the store is the thing git would rewrite.
+///
+/// Checking only the checkout let voom be pointed at one tree and modify another: `worktree
+/// prune` and `gc` both ran against a store the report never named.
+#[test]
+fn should_refuse_a_repository_whose_object_store_escapes_the_scan_root() {
+    if !git_available() {
+        return;
+    }
+    let root = TempDir::new().expect("a temporary directory");
+    let scanned = root.path().join("scanned");
+    let store = root.path().join("outside/store");
+    std::fs::create_dir_all(&scanned).expect("the scan root");
+    std::fs::create_dir_all(root.path().join("outside")).expect("somewhere else");
+
+    let output = Command::new("git")
+        .args(["init", "--quiet", "--separate-git-dir"])
+        .arg(&store)
+        .arg(scanned.join("project"))
+        .output()
+        .expect("running git init");
+    if !output.status.success() {
+        return;
+    }
+
+    let result = prune(&subcommand_options(&scanned)).expect("git is available");
+
+    assert_eq!(
+        result
+            .repositories
+            .iter()
+            .map(|repository| (repository.status(), repository.steps.len()))
+            .collect::<Vec<_>>(),
+        vec![(Status::Skipped, 0)],
+        "a store outside the scan root is refused before any command is built"
     );
 }

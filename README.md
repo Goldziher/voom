@@ -349,12 +349,16 @@ and the two steps are the ones git itself runs after a commit:
 
 | Step | What it does |
 | --- | --- |
-| `git worktree prune` | drops the administrative files of worktrees whose checkout is gone |
+| `git worktree prune --expire` | drops the administration of worktrees whose checkout has been gone for three months |
 | `git gc --auto` | repacks **only if** git's own thresholds say it is worth it |
 
 Neither contacts a network. Neither expires a reflog beyond git's own policy, and voom never
 passes `--prune=now`, `--aggressive`, or `git reflog expire`: the reflog is how you get a commit
-back, and "prunable" does not mean "unreachable by you". A repository with an operation half
+back, and "prunable" does not mean "unreachable by you". The three months is git's own
+`gc.worktreePruneExpire` default rather than `git worktree prune`'s, which expires everything —
+a checkout on an unmounted disk is absent, and its administration holds the reflog for whatever
+was committed there. Every invocation also runs with hooks disabled, so a repository cannot
+choose what a housekeeping pass executes. A repository with an operation half
 finished — a rebase, a merge, a cherry-pick, a bisect — is skipped and said so, and a linked
 worktree is resolved to its object store and pruned once rather than once per checkout.
 
@@ -371,8 +375,9 @@ repository set a policy for its own subtree. The flag beats the file.
 lives:
 
 ```bash
-voom git-prune -n ~/projects            # what would be pruned
-voom git-prune --remotes ~/projects     # also drop remote-tracking branches whose upstream is gone
+voom git-prune -n ~/projects              # what would be pruned
+voom git-prune --remotes ~/projects       # also drop remote-tracking branches whose upstream is gone
+voom git-prune --expire 2.weeks.ago ~/p   # a different worktree expiry
 ```
 
 `--remotes` is deliberately not part of a sweep: it is one network round trip per remote per

@@ -43,12 +43,43 @@ pub(super) fn ensure_git_available(timeout: Duration) -> Result<(), GitError> {
     }
 }
 
-pub(super) fn run_step(path: &Path, kind: StepKind, remote: Option<String>, args: &[&str], deadline: Instant) -> Step {
-    let mut command = Command::new(GIT);
-    command.current_dir(path).args(args);
+/// Where git may not look for code to run.
+///
+/// `git gc --auto` calls the repository's `pre-auto-gc` hook, in the foreground, as the invoking
+/// user. Since housekeeping is on by default, a plain `voom ~` would otherwise execute arbitrary
+/// shell from every repository under a home directory that carries one. Hooks are not
+/// transferred by `git clone`, which bounds the exposure — but a repository unpacked from a
+/// tarball, copied from shared storage, or carrying its own `core.hooksPath` does have them, and
+/// voom has no business running them for a housekeeping pass nobody typed.
+///
+/// An empty `core.hooksPath` is git's own way of saying "no hooks"; it is passed with `-c`, so
+/// nothing in the repository is modified.
+const NO_HOOKS: &str = "core.hooksPath=";
 
-    let mut recorded = vec![GIT.to_owned()];
+pub(super) fn run_step(
+    path: &Path,
+    git_dir: &Path,
+    kind: StepKind,
+    remote: Option<String>,
+    args: &[&str],
+    deadline: Instant,
+) -> Step {
+    // `--git-dir` pins git to the store voom resolved and vetted. Without it git repeats its own
+    // discovery from the working directory and can follow a `.git` file somewhere else — which
+    // is exactly the path the containment check was applied to.
+    //
+    // Built once and used for both the spawn and the record. Building them separately let the
+    // report — and the tests that read it — describe a command that was not the one run.
+    let mut recorded = vec![
+        GIT.to_owned(),
+        "-c".to_owned(),
+        NO_HOOKS.to_owned(),
+        format!("--git-dir={}", git_dir.display()),
+    ];
     recorded.extend(args.iter().map(|arg| (*arg).to_owned()));
+
+    let mut command = Command::new(GIT);
+    command.current_dir(path).args(&recorded[1..]);
 
     let outcome = match run_command(&mut command, deadline) {
         Ok(completed) if completed.timed_out => StepOutcome::TimedOut,

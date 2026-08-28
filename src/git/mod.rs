@@ -127,6 +127,10 @@ pub struct GitPruneOptions {
     /// remote: over a home directory that is one network round trip per remote per repository, it
     /// hangs without connectivity, and it can block on credentials for a private remote.
     pub remotes: bool,
+    /// How old a worktree's administration must be before git may prune it.
+    ///
+    /// Defaults to [`WORKTREE_PRUNE_EXPIRE`]. Any value `git worktree prune --expire` accepts.
+    pub worktree_expire: String,
     /// Whether a dry run reports `git count-objects -v` for each repository.
     ///
     /// The explicit subcommand does; a sweep does not, because a per-repository object census
@@ -146,6 +150,7 @@ impl Default for GitPruneOptions {
             exclude: PatternSet::default(),
             caches: false,
             remotes: false,
+            worktree_expire: WORKTREE_PRUNE_EXPIRE.to_owned(),
             count_objects: false,
         }
     }
@@ -559,6 +564,7 @@ fn canonical_roots(roots: &[PathBuf]) -> Result<Vec<PathBuf>, GitError> {
 
 fn visit(located: &Located, options: &GitPruneOptions) -> Repository {
     let path = located.work_tree().to_path_buf();
+    let common_dir = located.common_dir().to_path_buf();
     if let Some(marker) = discover::in_progress(located.common_dir()) {
         let marker = marker
             .strip_prefix(&path)
@@ -576,21 +582,24 @@ fn visit(located: &Located, options: &GitPruneOptions) -> Repository {
     // One budget for the repository, shared by its steps. A per-command timeout would let a
     // repository with a dozen remotes take a dozen times as long as the number the flag names.
     let deadline = Instant::now() + options.timeout;
+    let worktree_prune = worktree_prune_args(options.dry_run, &options.worktree_expire);
+    let borrowed: Vec<&str> = worktree_prune.iter().map(String::as_str).collect();
     let mut steps = vec![run_step(
         &path,
+        &common_dir,
         StepKind::WorktreePrune,
         None,
-        &worktree_prune_args(options.dry_run),
+        &borrowed,
         deadline,
     )];
 
     if options.remotes && steps.iter().all(Step::succeeded) {
-        prune_remotes(&path, options.dry_run, deadline, &mut steps);
+        prune_remotes(&path, &common_dir, options.dry_run, deadline, &mut steps);
     }
     if steps.iter().all(Step::succeeded)
         && let Some((kind, args)) = repack_step(options)
     {
-        steps.push(run_step(&path, kind, None, &args, deadline));
+        steps.push(run_step(&path, &common_dir, kind, None, &args, deadline));
     }
 
     Repository {
@@ -600,14 +609,32 @@ fn visit(located: &Located, options: &GitPruneOptions) -> Repository {
     }
 }
 
+/// How old a worktree's administrative files must be before voom will let git prune them.
+///
+/// This is git's own `gc.worktreePruneExpire` default, and passing it is the difference between
+/// deferring to git and being more destructive than it. **`git worktree prune` on its own
+/// expires everything**: it removes the administration for every worktree whose directory is
+/// absent right now, at any age. `git gc` — the command voom is otherwise delegating to — never
+/// does that; it prunes with this expiry.
+///
+/// A worktree directory is absent for entirely ordinary reasons: an unmounted external disk, a
+/// network share that is not up yet, an encrypted volume not yet opened. And
+/// `.git/worktrees/<name>` holds that worktree's `HEAD` and **its reflog**, which is the
+/// recovery path for anything committed there and not merged — so removing it makes that work
+/// unreachable, and the `gc --auto` in the same visit starts the clock on collecting it.
+///
+/// A repository that configures its own `gc.worktreePruneExpire` is not consulted; reading it
+/// would cost a subprocess per repository. Three months is the conservative direction.
+pub const WORKTREE_PRUNE_EXPIRE: &str = "3.months.ago";
+
 /// `worktree prune`, verbose in both modes so the report can say what was removed.
-fn worktree_prune_args(dry_run: bool) -> Vec<&'static str> {
+fn worktree_prune_args(dry_run: bool, expire: &str) -> Vec<String> {
+    let mut args = vec!["worktree", "prune", "--expire", expire, "-v"];
     if dry_run {
         // `-n` is git's own dry run: it really runs, and reports what it would have removed.
-        vec!["worktree", "prune", "-n", "-v"]
-    } else {
-        vec!["worktree", "prune", "-v"]
+        args.insert(2, "-n");
     }
+    args.into_iter().map(ToOwned::to_owned).collect()
 }
 
 /// The repack step, or `None` when a dry run is not asking for the object census.
@@ -624,8 +651,8 @@ fn repack_step(options: &GitPruneOptions) -> Option<(StepKind, Vec<&'static str>
     }
 }
 
-fn prune_remotes(path: &Path, dry_run: bool, deadline: Instant, steps: &mut Vec<Step>) {
-    let listing = run_step(path, StepKind::RemoteList, None, &["remote"], deadline);
+fn prune_remotes(path: &Path, git_dir: &Path, dry_run: bool, deadline: Instant, steps: &mut Vec<Step>) {
+    let listing = run_step(path, git_dir, StepKind::RemoteList, None, &["remote"], deadline);
     let Some(names) = listing.summary().map(remote_names) else {
         // A listing that succeeded with no output means no remotes, and leaves no trace in the
         // report; one that failed is the repository's failure and is kept.
@@ -637,7 +664,7 @@ fn prune_remotes(path: &Path, dry_run: bool, deadline: Instant, steps: &mut Vec<
     for remote in names {
         let args = remote_prune_args(dry_run, &remote);
         let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
-        let step = run_step(path, StepKind::RemotePrune, Some(remote), &borrowed, deadline);
+        let step = run_step(path, git_dir, StepKind::RemotePrune, Some(remote), &borrowed, deadline);
         let succeeded = step.succeeded();
         steps.push(step);
         if !succeeded {
@@ -683,9 +710,27 @@ mod tests {
     fn should_build_no_networked_command_by_default() {
         let options = GitPruneOptions::default();
         assert!(!options.remotes, "the network step is opt-in");
-        let mut argv = worktree_prune_args(options.dry_run);
-        argv.extend(repack_step(&options).map(|(_, args)| args).unwrap_or_default());
-        assert_eq!(argv, vec!["worktree", "prune", "-v", "gc", "--auto"]);
+        let mut argv = worktree_prune_args(options.dry_run, &options.worktree_expire);
+        argv.extend(
+            repack_step(&options)
+                .into_iter()
+                .flat_map(|(_, args)| args.into_iter().map(ToOwned::to_owned)),
+        );
+        assert_eq!(
+            argv,
+            vec!["worktree", "prune", "--expire", "3.months.ago", "-v", "gc", "--auto"]
+        );
+    }
+
+    /// The expiry is git's own `gc.worktreePruneExpire` default and never `worktree prune`'s.
+    /// Left off, the step removes the administration — and the reflog — of every worktree whose
+    /// checkout happens to be absent, at any age, which an unmounted disk is enough to cause.
+    #[test]
+    fn should_prune_worktrees_on_gits_own_expiry_and_never_on_none() {
+        assert_eq!(GitPruneOptions::default().worktree_expire, "3.months.ago");
+        let argv = worktree_prune_args(false, WORKTREE_PRUNE_EXPIRE);
+        let expiry = argv.iter().position(|arg| arg.as_str() == "--expire");
+        assert!(expiry.is_some(), "the step always carries an expiry: {argv:?}");
     }
 
     /// A sweep's dry run reports nothing per repository: an object census across a home directory

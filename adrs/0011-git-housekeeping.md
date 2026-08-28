@@ -215,3 +215,53 @@ Negative / risks:
 - **A confirmation prompt before repacking:** rejected for the reason ADR 0006 gives for the
   sweep — a prompt users learn to click through is not a safety mechanism. The safety is in the
   step list.
+
+## Amendment — what adversarial review changed — 2026-08-28
+
+Four defects, all found before release and all reproduced. Each is recorded here because the
+original decision above reads as though it had considered them, and it had not.
+
+**`git worktree prune` was more destructive than the `git gc` this ADR claims to defer to.** On
+its own it expires *everything*: it removes the administration for every worktree whose directory
+is absent right now, at any age. `git gc` never does that — it prunes with `gc.worktreePruneExpire`,
+three months by default. A checkout is absent for entirely ordinary reasons (an unmounted external
+disk, a network share not yet up, an encrypted volume not yet opened), and
+`.git/worktrees/<name>` holds that worktree's `HEAD` and **its reflog** — the recovery path for
+anything committed there and not merged. Removing it makes that work unreachable, and the
+`gc --auto` in the same visit starts the clock on collecting it. voom now passes `--expire` with
+git's own default, and `voom git-prune --expire` can widen or narrow it. A repository that
+configures its own `gc.worktreePruneExpire` is not consulted, because reading it costs a
+subprocess per repository; three months is the conservative direction to be wrong in.
+
+Establishing this took an experiment rather than a reading: git compares the expiry against the
+mtime of `.git/worktrees/<name>/index`, not the `gitdir` file and not the private directory.
+Backdating either of those two leaves the worktree unpruned. The test helper says so.
+
+**Containment was checked on the checkout, never on the object store.** A `--separate-git-dir`
+repository inside a scan root could send `worktree prune` and `gc` at a store outside it: voom
+was pointed at one tree and rewrote another, and the report named only the path it had not
+touched. Both the working tree and the common directory are now checked against the denylist and
+against containment, and every invocation is pinned with `--git-dir=<store>` — without which git
+repeats its own discovery from the working directory and can resolve to something other than what
+voom vetted.
+
+**The linked-worktree rule only recognised the default layout.** It inferred a shared store by
+looking for an ancestor named `worktrees` beneath a directory named `.git`. A bare clone
+(`repo.git/worktrees/<name>`) and the common `project/.bare` arrangement both fail that name test,
+so every checkout of one was treated as a repository in its own right — repacking one store once
+per checkout, and, worse, checking the in-progress markers against a private directory that cannot
+see a rebase paused in a sibling worktree. The store is now read from the `commondir` file, which
+is the documented answer and still costs no subprocess.
+
+**`git gc --auto` runs the repository's `pre-auto-gc` hook**, in the foreground, as the invoking
+user. With housekeeping on by default, a plain `voom ~` would execute arbitrary shell from every
+repository under a home directory that carries one. Hooks are not transferred by `git clone`,
+which bounds it — but a repository unpacked from a tarball, copied from shared storage, or
+carrying its own `core.hooksPath` does have them, and voom has no business running them for a
+pass nobody typed. Every invocation now passes an empty `core.hooksPath`, which is git's own way
+of saying "no hooks" and modifies nothing in the repository.
+
+One consequence worth stating plainly, because it did not survive review either: the recorded
+command in the report is now built once and used for both the spawn and the record. They were
+built separately, so the report — and every test reading it — could describe a command that was
+not the one that ran.
