@@ -73,13 +73,13 @@ fn for_git(path: &Path) -> std::borrow::Cow<'_, Path> {
     let Some(Component::Prefix(prefix)) = components.next() else {
         return std::borrow::Cow::Borrowed(path);
     };
+    // The trailing separator is load-bearing: `C:` alone is *drive-relative*, so git would
+    // resolve it against the process's current directory on that drive rather than the root.
+    // The first version of this omitted it and the unit test below caught it before Windows did.
     let mut simplified = match prefix.kind() {
-        Prefix::VerbatimDisk(letter) => std::path::PathBuf::from(format!("{}:", letter as char)),
+        Prefix::VerbatimDisk(letter) => std::path::PathBuf::from(format!(r"{}:\", letter as char)),
         Prefix::VerbatimUNC(server, share) => {
-            let mut unc = std::path::PathBuf::from(r"\\");
-            unc.push(server);
-            unc.push(share);
-            unc
+            std::path::PathBuf::from(format!(r"\\{}\{}\", server.display(), share.display()))
         }
         _ => return std::borrow::Cow::Borrowed(path),
     };
