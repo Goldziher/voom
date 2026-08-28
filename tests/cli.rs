@@ -489,3 +489,25 @@ fn should_invoke_uvx_with_the_package_named_separately_from_the_command() {
         );
     }
 }
+
+/// `--force` lives entirely after the rails, and `--dry-run` withholds the step it would act
+/// on, so the two together have to be a strict no-op rather than a usage error — a hook alias
+/// that carries both must keep working.
+#[test]
+fn should_accept_force_and_leave_a_dry_run_byte_identical() {
+    let tree = mixed_tree();
+    let before = support::snapshot(tree.path());
+
+    voom()
+        .args(["--dry-run", "--force"])
+        .arg(tree.path())
+        .assert()
+        .success()
+        .stdout(contains("would remove"));
+
+    assert_eq!(
+        support::snapshot(tree.path()),
+        before,
+        "a forced dry run changes nothing at all"
+    );
+}

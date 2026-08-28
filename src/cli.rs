@@ -114,6 +114,19 @@ pub struct PruneArgs {
     #[arg(long, help_heading = "Behaviour")]
     pub exit_code: bool,
 
+    /// Retry a failed removal, repairing permissions inside the artifact first.
+    ///
+    /// Clears read-only bits, and on macOS the user-immutable flag, on paths *inside* an
+    /// artifact that has already passed every safety rail — then retries with a short backoff.
+    /// It never relaxes a rail, never follows a symlink, and never touches anything outside the
+    /// artifact, including its parent directory: an artifact held by a read-only parent is
+    /// reported, not forced. Retries add up to about a second per artifact. No effect under
+    /// `--dry-run`.
+    ///
+    /// Filed under Behaviour rather than Safety deliberately — it is not one of the protections.
+    #[arg(long, help_heading = "Behaviour")]
+    pub force: bool,
+
     /// Explain every candidate that was passed over.
     #[arg(short, long, help_heading = "Output")]
     pub verbose: bool,
@@ -272,6 +285,7 @@ impl PruneArgs {
             dry_run: self.dry_run,
             jobs: self.jobs,
             one_file_system: self.one_file_system,
+            force: self.force,
             caches: self.caches,
             // JSON always carries skip detail — a machine consumer has no `--verbose` to reach
             // for and paying for the detail is cheaper than a second run.

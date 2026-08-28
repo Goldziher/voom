@@ -20,7 +20,7 @@ use crate::caches::CacheRoots;
 use crate::classify::{ArtifactId, Classifier, Finding, Selection, SkipReason};
 use crate::config::resolve::Flags;
 use crate::config::{Resolved, Resolver, discover};
-use crate::delete::Guard;
+use crate::delete::{Guard, Removal};
 use crate::error::{Error, Result};
 use crate::report::{Entry, RunResult};
 use crate::scan::{PatternSet, ScanOptions, Skipped, scan};
@@ -41,6 +41,8 @@ pub struct RunOptions {
     pub jobs: Option<usize>,
     /// Stay on the scan root's filesystem.
     pub one_file_system: bool,
+    /// Retry a failed removal, repairing permissions inside the artifact first.
+    pub force: bool,
     /// Sweep machine-global tool caches and installed toolchains too, which are skipped by
     /// default (ADR 0001).
     pub caches: bool,
@@ -266,10 +268,14 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
 
     // Removal is independent per artifact and embarrassingly parallel; a failure on one is
     // recorded and never aborts the run.
+    let removal = Removal {
+        dry_run: options.dry_run,
+        force: options.force,
+    };
     let entries: Vec<Entry> = to_remove
         .into_par_iter()
         .map(|(finding, bytes)| {
-            let outcome = guard.remove(&finding.path, bytes, options.dry_run);
+            let outcome = guard.remove(&finding.path, bytes, removal);
             Entry {
                 path: finding.path.clone(),
                 finding,
@@ -322,6 +328,7 @@ mod tests_support {
             dry_run: false,
             jobs: Some(2),
             one_file_system: true,
+            force: false,
             caches: false,
             verbose: true,
             config: None,

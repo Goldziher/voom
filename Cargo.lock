@@ -1002,6 +1002,7 @@ dependencies = [
  "ignore",
  "indicatif",
  "insta",
+ "libc",
  "notify",
  "notify-debouncer-full",
  "owo-colors",

@@ -6,7 +6,7 @@ expression: "render_to_string(&mixed(), HumanOptions::default())"
   removed   4.20 GB  rust  api/target
   partial    130 GB  rust  busy/target    — 500 MB left; a directory was not empty when voom unlinked it, most likely because something wrote into it during the removal; re-run to finish
   refused       0 B  rust  link/target    — is a symlink
-  failed        0 B  rust  locked/target  — permission denied unlinking something inside it
+  failed        0 B  rust  locked/target  — permission denied unlinking something inside it; --force repairs permissions inside the artifact and retries
   removed  18.50 MB  node  web/dist
 
 2 artifacts, 134.22 GB reclaimed in 1.23s

@@ -28,8 +28,10 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
+mod force;
 mod outcome;
 
+pub use force::Removal;
 pub use outcome::{FailureKind, Outcome, Refusal, RemovalFailure};
 
 use crate::error::{Error, Result};
@@ -48,7 +50,7 @@ use crate::error::{Error, Result};
 /// form [`Path::canonicalize`] returns. [`Guard::new`] resolves them, and derives the real
 /// system locations from the environment, so that a machine whose system drive is not `C:` is
 /// protected too.
-const PROTECTED_PATHS: &[&str] = &[
+pub(crate) const PROTECTED_PATHS: &[&str] = &[
     "/",
     "/Applications",
     "/bin",
@@ -459,23 +461,19 @@ impl Guard {
     /// This is the only path to a deletion. `dry_run` gates the final step and nothing else, so
     /// a dry run exercises every rail a real run does and cannot disagree with one.
     #[must_use]
-    pub fn remove(&self, path: &Path, bytes: u64, dry_run: bool) -> Outcome {
+    pub fn remove(&self, path: &Path, bytes: u64, removal: Removal) -> Outcome {
         let verified = match self.check(path) {
+            // Every rail runs first and unconditionally. `removal` is not read until after this
+            // returns, so no setting on it can reach a path a rail refused.
             Ok(verified) => verified,
             Err(refusal) => return Outcome::Refused(refusal),
         };
 
-        if dry_run {
+        if removal.dry_run {
             return Outcome::WouldRemove;
         }
 
-        let result = if verified.is_dir {
-            std::fs::remove_dir_all(&verified.canonical)
-        } else {
-            std::fs::remove_file(&verified.canonical)
-        };
-
-        match result {
+        match force::remove(&verified, removal) {
             Ok(()) => Outcome::Removed,
             // A file vanishing between the walk and the removal is a race, not a failure: the
             // desired state was reached by someone else.
@@ -530,7 +528,10 @@ mod tests {
     fn should_remove_a_verified_directory() {
         let fixture = tree(&["Cargo.toml", "target/debug/build.o"]);
         let guard = guard(fixture.path());
-        assert_eq!(guard.remove(&fixture.path().join("target"), 0, false), Outcome::Removed);
+        assert_eq!(
+            guard.remove(&fixture.path().join("target"), 0, Removal::new()),
+            Outcome::Removed
+        );
         assert_eq!(snapshot(fixture.path()), vec!["Cargo.toml".to_owned()]);
     }
 
@@ -539,7 +540,7 @@ mod tests {
         let fixture = tree(&["package.json", "app.tsbuildinfo"]);
         let guard = guard(fixture.path());
         assert_eq!(
-            guard.remove(&fixture.path().join("app.tsbuildinfo"), 0, false),
+            guard.remove(&fixture.path().join("app.tsbuildinfo"), 0, Removal::new()),
             Outcome::Removed
         );
         assert_eq!(snapshot(fixture.path()), vec!["package.json".to_owned()]);
@@ -555,7 +556,7 @@ mod tests {
 
         let guard = guard(fixture.path());
         assert_eq!(
-            guard.remove(&fixture.path().join("target"), 0, false),
+            guard.remove(&fixture.path().join("target"), 0, Removal::new()),
             Outcome::Refused(Refusal::Symlink)
         );
         assert!(
@@ -570,7 +571,7 @@ mod tests {
         let elsewhere = tree(&["Cargo.toml", "target/"]);
         let guard = guard(scanned.path());
         assert_eq!(
-            guard.remove(&elsewhere.path().join("target"), 0, false),
+            guard.remove(&elsewhere.path().join("target"), 0, Removal::new()),
             Outcome::Refused(Refusal::EscapesRoot)
         );
         assert!(elsewhere.path().join("target").exists());
@@ -583,7 +584,7 @@ mod tests {
         let fixture = tree(&["Cargo.toml"]);
         let guard = guard(fixture.path());
         assert_eq!(
-            guard.remove(fixture.path(), 0, false),
+            guard.remove(fixture.path(), 0, Removal::new()),
             Outcome::Refused(Refusal::EscapesRoot)
         );
         assert!(fixture.path().exists());
@@ -650,7 +651,7 @@ mod tests {
         let fixture = tree(&["Cargo.toml", ".GIT/HEAD"]);
         let guard = guard(fixture.path());
         assert_eq!(
-            guard.remove(&fixture.path().join(".GIT"), 0, false),
+            guard.remove(&fixture.path().join(".GIT"), 0, Removal::new()),
             Outcome::Refused(Refusal::Protected)
         );
         assert!(fixture.path().join(".GIT/HEAD").exists());
@@ -675,7 +676,7 @@ mod tests {
 
         let guard = guard(fixture.path());
         assert_eq!(
-            guard.remove(&fixture.path().join("target"), 0, false),
+            guard.remove(&fixture.path().join("target"), 0, Removal::new()),
             // Refused as a symlink, not as a bare reparse point: Rust's `is_symlink` does
             // report junctions on Windows, so rail 1 catches this before the reparse backstop.
             // The variant matters less than the refusal, but pin it so a change to either is
@@ -742,7 +743,10 @@ mod tests {
     fn should_remove_an_artifact_on_the_same_filesystem_as_its_root() {
         let fixture = tree(&["Cargo.toml", "target/debug/build.o"]);
         let guard = Guard::new(&[fixture.path().to_path_buf()], true).expect("the root resolves");
-        assert_eq!(guard.remove(&fixture.path().join("target"), 0, false), Outcome::Removed);
+        assert_eq!(
+            guard.remove(&fixture.path().join("target"), 0, Removal::new()),
+            Outcome::Removed
+        );
     }
 
     /// The denylist is append-only (ADR 0006, CONTRIBUTING). `should_refuse_every_protected_path`
@@ -802,7 +806,7 @@ mod tests {
         let guard = guard(fixture.path());
         for vcs in [".git", "nested/.git"] {
             assert_eq!(
-                guard.remove(&fixture.path().join(vcs), 0, false),
+                guard.remove(&fixture.path().join(vcs), 0, Removal::new()),
                 Outcome::Refused(Refusal::Protected),
                 "`{vcs}` must be refused"
             );
@@ -823,7 +827,7 @@ mod tests {
         let fixture = tree(&["Cargo.toml"]);
         let guard = guard(fixture.path());
         assert_eq!(
-            guard.remove(&fixture.path().join("target"), 0, false),
+            guard.remove(&fixture.path().join("target"), 0, Removal::new()),
             Outcome::Refused(Refusal::Vanished)
         );
     }
@@ -838,10 +842,10 @@ mod tests {
         let before = snapshot(fixture.path());
         let target = fixture.path().join("target");
 
-        assert_eq!(guard.remove(&target, 0, true), Outcome::WouldRemove);
+        assert_eq!(guard.remove(&target, 0, Removal::dry()), Outcome::WouldRemove);
         assert_eq!(snapshot(fixture.path()), before, "a dry run must not touch the tree");
 
-        assert_eq!(guard.remove(&target, 0, false), Outcome::Removed);
+        assert_eq!(guard.remove(&target, 0, Removal::new()), Outcome::Removed);
         assert_eq!(
             snapshot(fixture.path()),
             vec!["Cargo.toml".to_owned(), "src/".to_owned(), "src/main.rs".to_owned()]
@@ -857,7 +861,7 @@ mod tests {
         std::os::unix::fs::symlink(fixture.path().join("source"), fixture.path().join("target")).expect("a symlink");
         let guard = guard(fixture.path());
         assert_eq!(
-            guard.remove(&fixture.path().join("target"), 0, true),
+            guard.remove(&fixture.path().join("target"), 0, Removal::dry()),
             Outcome::Refused(Refusal::Symlink)
         );
     }

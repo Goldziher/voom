@@ -23,7 +23,7 @@ use notify::RecursiveMode;
 use notify_debouncer_full::new_debouncer;
 
 use crate::classify::is_dependency_dir;
-use crate::delete::Guard;
+use crate::delete::{Guard, Removal};
 use crate::error::{Error, Result};
 use crate::report::RunResult;
 use crate::run::{RunOptions, run};
@@ -242,8 +242,15 @@ pub fn watch(
         // This is the one-shot deleter, so every rail applies unchanged; only the trigger and
         // the scoping differ.
         let guard = Guard::new(&roots, options.one_file_system)?;
+        // Watch never forces. It already re-runs on every quiet period, so the retry is
+        // inherent — and repeatedly repairing permissions unattended, in a loop, against a tree
+        // something is actively building is the last place that belongs.
+        let removal = Removal {
+            dry_run: options.dry_run,
+            force: false,
+        };
         for entry in &mut candidates.entries {
-            entry.outcome = guard.remove(&entry.path, entry.bytes, options.dry_run);
+            entry.outcome = guard.remove(&entry.path, entry.bytes, removal);
             if entry.outcome.is_reclaimed() {
                 tracker.forget(&entry.path);
             }

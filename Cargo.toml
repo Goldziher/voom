@@ -78,6 +78,13 @@ tempfile = { version = "3.27", optional = true }
 thiserror = "2.0"
 toml = "1.1"
 
+# `chflags(2)` has no std route: `std::os::darwin::fs::MetadataExt::st_flags` reads the BSD
+# flags and nothing in std sets them, and `--force` has to clear UF_IMMUTABLE before it can
+# unlink. Target-gated so no other platform grows a dependency for it; libc is already compiled
+# on every build via dirs-sys, notify and mio, so this adds a manifest line, not a crate.
+[target.'cfg(target_vendor = "apple")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 assert_cmd = "2.2"
 insta = { version = "1.48", features = ["json"] }

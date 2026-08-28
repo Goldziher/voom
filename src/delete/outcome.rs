@@ -117,7 +117,10 @@ impl FailureKind {
     pub fn hint(self) -> Option<&'static str> {
         match self {
             Self::NotEmpty => Some("re-run to finish"),
-            Self::Denied | Self::ReadOnly | Self::Other => None,
+            // Deliberately says "inside", because that is the limit: `--force` never touches the
+            // artifact's parent, and a read-only parent is the one shape it cannot fix.
+            Self::Denied => Some("--force repairs permissions inside the artifact and retries"),
+            Self::ReadOnly | Self::Other => None,
         }
     }
 }

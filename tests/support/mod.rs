@@ -39,11 +39,21 @@ pub fn options(root: &Path) -> RunOptions {
         dry_run: false,
         jobs: Some(2),
         one_file_system: true,
+        force: false,
         caches: false,
         verbose: true,
         config: None,
         progress: false,
         flags: Flags::default(),
+    }
+}
+
+/// [`options`] with `--force`, for the tests that are about what a retry reclaims.
+#[must_use]
+pub fn options_forcing(root: &Path) -> RunOptions {
+    RunOptions {
+        force: true,
+        ..options(root)
     }
 }
 
