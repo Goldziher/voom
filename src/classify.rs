@@ -145,17 +145,6 @@ impl Selection {
         self
     }
 
-    /// Turns an ecosystem off entirely. Returns `false` if the id is not in the catalog.
-    pub fn disable_ecosystem(&mut self, id: &str) -> bool {
-        match CATALOG.iter().position(|ecosystem| ecosystem.id == id) {
-            Some(index) => {
-                self.ecosystems &= !(1 << index);
-                true
-            }
-            None => false,
-        }
-    }
-
     /// Overrides one artifact's participation, by `<ecosystem>.<artifact>` spec or by bare
     /// ecosystem id (which sets every artifact of that ecosystem). Returns `false` if nothing
     /// in the catalog answers to the spec.
@@ -233,7 +222,12 @@ impl DirFacts {
 }
 
 /// What the classifier concluded about one directory entry.
+///
+/// `#[non_exhaustive]` because a new verdict is a change this design expects to make, and after
+/// 0.1.0 adding one to a bare enum would break every downstream `match` that has no wildcard.
+/// [`Error`](crate::error::Error) and [`SkipReason`] carry it for the same reason.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Verdict {
     /// A marker proved it. This is the only verdict that can lead to a deletion.
     Artifact(Finding),
@@ -248,7 +242,12 @@ pub enum Verdict {
 /// An enum rather than an optional [`ArtifactId`] so that the two cases cannot be confused at a
 /// call site. Every reporter has to match on it, which means no output path can be added that
 /// forgets to say a deletion was never proved by a marker.
+///
+/// `#[non_exhaustive]` because a third route to removal is plausible — ADR 0004 already
+/// separates the two that exist — and adding one after 0.1.0 would otherwise be a breaking
+/// change for every downstream matcher.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Provenance {
     /// A marker file proved the ecosystem at the declared anchor — ADR 0002's central rule, and
     /// the only route voom ever takes on its own.
