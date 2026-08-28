@@ -179,9 +179,13 @@ impl Resolution {
 /// common directory of its own, so it survives deduplication and is pruned in its own right.
 pub(super) fn resolve_all(work_trees: &[PathBuf], roots: &[PathBuf]) -> Vec<Resolution> {
     let protected = resolved_protected_paths();
+    // `filter_map`, so a `.git` that is not a repository leaves no trace at all. A vanished one
+    // is worth a line; something that was never a repository — an uninitialised `.git` holding
+    // only `hooks/`, which is what a tool leaves behind when it sets a checkout up and stops —
+    // is not, and reporting it every run is noise nobody can act on.
     let mut resolved: Vec<Resolution> = work_trees
         .iter()
-        .map(|work_tree| resolve(work_tree, roots, &protected))
+        .filter_map(|work_tree| resolve(work_tree, roots, &protected))
         .collect();
 
     // A main repository sorts before a linked worktree of the same repository, so it is the one
@@ -202,13 +206,17 @@ pub(super) fn resolve_all(work_trees: &[PathBuf], roots: &[PathBuf]) -> Vec<Reso
     resolved
 }
 
-fn resolve(work_tree: &Path, roots: &[PathBuf], protected: &[PathBuf]) -> Resolution {
+fn resolve(work_tree: &Path, roots: &[PathBuf], protected: &[PathBuf]) -> Option<Resolution> {
     let located = match locate(work_tree) {
         Ok(located) => located,
         Err(Some(detail)) => {
-            return Resolution::Refused(canonical_or_given(work_tree), Skipped::Unresolved { detail });
+            return Some(Resolution::Refused(
+                canonical_or_given(work_tree),
+                Skipped::Unresolved { detail },
+            ));
         }
-        Err(None) => return Resolution::Refused(canonical_or_given(work_tree), Skipped::Vanished),
+        // Not a repository, and never was. Nothing to report.
+        Err(None) => return None,
     };
 
     // Both the checkout *and* the store. Checking only the checkout let a `--separate-git-dir`
@@ -224,10 +232,10 @@ fn resolve(work_tree: &Path, roots: &[PathBuf], protected: &[PathBuf]) -> Resolu
             Some(Skipped::EscapesRoot)
         }
     });
-    match refusal {
+    Some(match refusal {
         Some(reason) => Resolution::Refused(located.work_tree, reason),
         None => Resolution::Repository(located),
-    }
+    })
 }
 
 /// Works out which repository a `.git` entry belongs to, and where its object store is.
@@ -249,7 +257,11 @@ fn locate(work_tree: &Path) -> Result<Located, Option<String>> {
     let canonical = work_tree.canonicalize().map_err(|_| None)?;
 
     if metadata.file_type().is_dir() {
-        return Ok(resolve_store(canonical.join(DOT_GIT), canonical, false));
+        let located = resolve_store(canonical.join(DOT_GIT), canonical, false);
+        if !is_repository(&located.common_dir) {
+            return Err(None);
+        }
+        return Ok(located);
     }
     if !metadata.file_type().is_file() {
         // A symlinked `.git` is not followed, for the same reason nothing else in voom is.
@@ -257,7 +269,11 @@ fn locate(work_tree: &Path) -> Result<Located, Option<String>> {
     }
 
     let git_dir = read_gitdir(&dot_git, work_tree).map_err(Some)?;
-    Ok(resolve_store(git_dir, canonical, true))
+    let located = resolve_store(git_dir, canonical, true);
+    if !is_repository(&located.common_dir) {
+        return Err(None);
+    }
+    Ok(located)
 }
 
 /// Follows a git directory to the object store git will actually operate on.
@@ -273,6 +289,17 @@ fn locate(work_tree: &Path) -> Result<Located, Option<String>> {
 /// test, and every worktree of one was then treated as a repository in its own right —
 /// repacking one store once per checkout, and, worse, checking the in-progress markers against
 /// a private directory that cannot see a rebase paused in a sibling worktree.
+/// Whether a git directory is a repository rather than the shell of one.
+///
+/// `HEAD` is git's own cheapest test, and the one that matters here: a `.git` directory holding
+/// only `hooks/` is what a tool leaves behind when it sets a repository up and never initialises
+/// it. Without this check voom reported it as a *failed* repository on every sweep —
+/// `fatal: not a git repository` — which is noise the user cannot act on, about something that
+/// is not a repository at all.
+fn is_repository(common_dir: &Path) -> bool {
+    common_dir.join("HEAD").exists()
+}
+
 fn resolve_store(git_dir: PathBuf, work_tree: PathBuf, linked: bool) -> Located {
     let Some(common_dir) = common_dir_of(&git_dir) else {
         return Located {

@@ -61,6 +61,10 @@ instead.
   artifact held by a read-only parent is reported rather than forced. It also never widens a
   hard-linked file: a mode bit belongs to the inode, so relaxing one would change data voom is
   not deleting, possibly outside the scan root entirely. Watch mode never forces.
+- **A `.git` directory holding nothing is no longer reported as a failed repository.** A tool
+  that sets a checkout up and never initialises it leaves one behind, and voom said
+  `fatal: not a git repository` about it on every sweep. Found by a dry run over a real home
+  directory.
 
 ### Performance
 
@@ -70,6 +74,16 @@ instead.
   so the largest tree was measured by a single thread while every other core idled. A whole dry
   run of that tree went from **6.88 s to 4.63 s**, a 1.49× speedup measured with `hyperfine`
   over 8 runs. Reported sizes are byte-identical to the serial walk.
+- **Git steps no longer pay a fixed 25 ms poll each.** A git step against a local repository
+  returns in one to three milliseconds, so a flat poll missed once and then charged 25 ms of a
+  blocked worker to every step. Backing off from 100 µs makes a dry run over 200 repositories
+  **1.47× faster**.
+- **Measuring no longer resolves each entry's path from the root.** `DirEntry::metadata` is an
+  `fstatat` against the handle the walk already holds; the old route allocated a path and
+  resolved it again, at about 0.4 µs per entry.
+
+Together with the sizing fan-out, a dry run of a real `~/workspace` is **1.48× faster than
+v0.1.0** (8.89 s → 6.01 s, hyperfine, 10 runs) while finding exactly the same 85 artifacts.
 
 ### Fixed
 

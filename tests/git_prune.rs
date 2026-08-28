@@ -742,3 +742,30 @@ fn should_refuse_a_repository_whose_object_store_escapes_the_scan_root() {
         "a store outside the scan root is refused before any command is built"
     );
 }
+
+/// A `.git` directory holding nothing is not a repository, and is not a failure either.
+///
+/// A tool that sets a repository up and never initialises it leaves exactly this behind. Without
+/// the check, voom reported `fatal: not a git repository` for it on every single sweep — noise
+/// the user cannot act on, about something that is not a repository at all. Found by running a
+/// dry run over a real home directory.
+#[test]
+fn should_not_report_an_uninitialised_git_directory_as_a_failure() {
+    if !git_available() {
+        return;
+    }
+    let root = TempDir::new().expect("a temporary directory");
+    std::fs::create_dir_all(root.path().join("hollow/.git/hooks")).expect("the shell of a repository");
+
+    let result = prune(&subcommand_options(root.path())).expect("git is available");
+
+    assert!(
+        result.repositories.is_empty(),
+        "an uninitialised .git is not a repository at all, got {:?}",
+        result
+            .repositories
+            .iter()
+            .map(|r| (&r.path, r.status()))
+            .collect::<Vec<_>>()
+    );
+}

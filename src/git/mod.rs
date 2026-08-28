@@ -177,9 +177,6 @@ pub enum Skipped {
         /// What went wrong reading or interpreting it.
         detail: String,
     },
-    /// The repository disappeared between the walk and the check.
-    #[error("it vanished during the run")]
-    Vanished,
 }
 
 impl Skipped {
@@ -191,7 +188,6 @@ impl Skipped {
             Self::Protected => "protected",
             Self::EscapesRoot => "escapes_root",
             Self::Unresolved { .. } => "unresolved",
-            Self::Vanished => "vanished",
         }
     }
 }
@@ -343,9 +339,12 @@ impl Repository {
     #[must_use]
     pub fn is_noteworthy(&self) -> bool {
         match self.status() {
-            Status::Failed => true,
-            // A repository that disappeared mid-run is not something the reader can act on.
-            Status::Skipped => self.skipped != Some(Skipped::Vanished),
+            // Every failure and every skip is worth a line. A path that was never a repository
+            // does not reach here at all — `discover::resolve` drops it — so what is left is a
+            // rebase paused in the way, a denylisted location, an escape from the scan root, or
+            // a `.git` file voom would not guess at. All of them are things the reader wants
+            // told about.
+            Status::Failed | Status::Skipped => true,
             Status::Pruned => self.steps.iter().any(|step| step.summary().is_some()),
         }
     }
