@@ -9,7 +9,7 @@
 //! same shape.
 //!
 //! So the distinction is drawn by location instead, before classification runs. A sweep of
-//! `$HOME` on the author's machine found 469 artifacts, 303 of them in the roots below, and
+//! `$HOME` on the author's machine found 469 artifacts, 301 of them in the roots below, and
 //! removing them would have broken an installed pnpm, the bun toolchain and the gcloud SDK
 //! while reclaiming space that those tools re-download on their own terms.
 //!

@@ -94,3 +94,31 @@ Negative / risks:
   voom exists to replace.
 - **Interactive TUI as the primary interface:** rejected — an interface a human must sit in
   front of cannot run from a git hook or a cron job, which is where cleanup should happen.
+
+## Amendment — 2026-08-28
+
+The "possibly a later opt-in `--caches` mode" floated above has shipped, as `--caches`
+(`src/caches.rs`). The skip list it toggles is wider than the original wording promised.
+Alongside machine-global download caches (`~/.cargo/registry`, `~/.npm`, `~/.gradle`), it also
+covers *installed toolchains* (`~/.pyenv`, `~/miniforge3`, `~/google-cloud-sdk`, `~/fvm`,
+`~/.hermes`) and per-user app-data roots (`~/Library/Application Support`, `~/AppData/Local`,
+`~/AppData/Roaming`).
+
+The wider scope follows directly from `safety-first`'s preference for a false negative over a
+false positive, applied to a case marker anchoring (ADR 0002) cannot resolve on its own. An
+installed pnpm under `~/.cache/node/corepack/*/pnpm/*/dist` sits beside a real `package.json`
+and is, to the classifier, indistinguishable from a project that was built there — "a project
+that was built here" and "a program that was installed here" are the same shape on disk, so
+nothing short of location can tell them apart. `--caches`'s skip list draws that line before
+classification runs. Drawing it wide costs a user some reclaimable disk space; drawing it narrow
+costs them a working toolchain, which is the more expensive mistake by the same reasoning ADR
+0002 already applies to markers.
+
+The numbers behind the decision were measured on the author's `$HOME`, not estimated: before the
+skip, a sweep found 469 artifacts, 301 of them inside what became the skip list — including that
+installed pnpm. After the skip, the same sweep finds 174 artifacts, 172 of them real projects
+under `~/workspace`. `--caches` restores the full set (475).
+
+Like the protected-path denylist (ADR 0006), `CACHE_DIRS` (`src/caches.rs`) is append-only:
+entries may be added, but removing or narrowing one requires an ADR amendment explaining why it
+is safe, never a drive-by edit.

@@ -108,3 +108,35 @@ Negative / risks:
 - **A single fused phase (classify and delete in the walker callback):** rejected — deletion
   during traversal mutates the tree being walked, and it makes `--dry-run` a different code
   path rather than the same pipeline with the final step withheld.
+
+## Amendment — 2026-08-28
+
+Two corrections to the description above.
+
+**`-j` now bounds the whole sweep, not only the walk.** Until this session, `-j` reached only
+the `ignore::WalkBuilder`'s `threads()`; sizing and deletion ran on rayon's process-wide default
+pool at full core width regardless of it. `-j 2` therefore bought a throttled discovery phase
+followed by an unthrottled removal storm against the same device, which defeats the flag's
+purpose on exactly the spinning disks and network filesystems it exists for. `run::run` now
+builds a scoped `rayon::ThreadPool` sized to `-j` and runs each per-root sweep inside it
+(`run::build_pool`), so the rayon fan-outs that size and remove are held to the same width the
+walker already was. The two are still separately bounded — the walk runs on the `ignore` crate's
+own threads, set by `WalkBuilder::threads()` — but both now answer to `-j`, which is what the
+flag claimed all along. The pool is deliberately scoped rather than
+built with `rayon::ThreadPoolBuilder::build_global`, which is process-wide and callable only
+once per process: a global pool would fail on a second call in the same process, which breaks
+both the test suite and any program that embeds `voom` as a library and already runs its own
+rayon pool.
+
+**`EINTR` is classified, not retried.** A `$HOME` sweep on macOS produces a handful of `EINTR`s
+on every run, under `~/Library/Containers`. These mean a read was interrupted by a signal, not
+that the directory could not be read, so `WalkFailure` now carries a `transient` flag and the
+human reporter (ADR 0007) groups them apart from genuine failures rather than teaching the
+reader to skim past a section that also holds permission and I/O errors worth acting on. They
+are not retried: the `ignore` crate's parallel-visitor callback returns a `WalkState` with no way
+to ask the walker to revisit the interrupted entry, so a real retry would mean replacing the
+walker, not handling one more error case. That cost was judged not worth paying for a transient
+condition that, on this machine, hits directories voom does not want to sweep anyway. This is an
+honest limitation, not a resolved one: the interrupted entry's remaining, unvisited siblings in
+that subtree are genuinely not seen on that run — they are not merely deferred to a retry that
+happens later.
