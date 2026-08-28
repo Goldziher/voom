@@ -3,6 +3,20 @@
 
 <img src="assets/banner.svg" alt="voom — clean up the pink snow" width="820">
 
+<em>
+Then the Voom&hellip;<br>
+It went VOOM!<br>
+And, oh boy!<br>
+What a VOOM!<br>
+<br>
+Now, don't ask me what Voom is.<br>
+I never will know.<br>
+But, boy!<br>
+Let me tell you it does clean up snow!
+</em>
+
+<sub>Dr. Seuss, <em>The Cat in the Hat Comes Back</em></sub>
+
 **Reclaim every build artifact on your disk in one parallel pass — and prove each one before deleting it.**
 
 voom finds and removes build output anywhere in a tree: `target/`, `dist/`, `__pycache__/`,
@@ -469,25 +483,9 @@ walk, measure before and after on the same tree and put both numbers in the pull
 
 ## The name
 
-<div align="center">
-
-<em>
-Then the Voom&hellip;<br>
-It went VOOM!<br>
-And, oh boy!<br>
-What a VOOM!<br>
-<br>
-Now, don't ask me what Voom is.<br>
-I never will know.<br>
-But, boy!<br>
-Let me tell you it does clean up snow!
-</em>
-
-<sub>Dr. Seuss, <em>The Cat in the Hat Comes Back</em></sub>
-
-</div>
-
-Voom is what Little Cat Z pulls out of his hat to clear every last speck of pink snow at once.
+Voom is what Little Cat Z pulls out of his hat, at the end of *The Cat in the Hat Comes Back*, to
+clear every last speck of pink snow at once — quoted at the top of this page. Nobody in the book
+knows what it is either.
 
 ## Development
 
