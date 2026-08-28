@@ -52,8 +52,9 @@ Three rules follow from this and are binding:
   marker glob is a bug, and is rejected at construction time by a unit test over the whole
   catalog.
 - **Name-only matching is reachable only through explicit user configuration** — a user who
-  writes `paths = ["~/scratch/junk"]` or an unanchored custom rule in `voom.toml` has said
-  what they mean and owns the result. voom never infers it.
+  writes `include = ["~/scratch/junk"]` in `voom.toml` has said what they mean and owns the
+  result. voom never infers it. `include` is the only such route (ADR 0004); there is no
+  separate unanchored custom-rule syntax.
 - **Every catalog entry ships a false-positive test**: a fixture tree containing the artifact
   directory *without* its marker, asserting that voom leaves it alone.
 

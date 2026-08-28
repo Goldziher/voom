@@ -120,3 +120,24 @@ Negative / risks:
 - **Treating every `†` entry as on by default and relying on the report to catch mistakes:**
   rejected — deletion is immediate (ADR 0006), so a report that arrives after the fact is not
   a control.
+
+## Amendment — 2026-08-28
+
+`ancestor(3)` for .NET is still a guess, and this amendment does not resolve the "Negative /
+risks" entry above — it records that the guess is now an exercised one rather than an untested
+one.
+
+A sweep of a real machine found all 55 .NET artifacts anchored at depth 0 — every `bin/` and
+`obj/` sat directly beside its `*.csproj`, `*.fsproj`, `*.vbproj`, or `*.sln`. The ancestor climb
+had therefore never actually run outside a classifier unit test that constructs the nesting by
+hand; nothing in ordinary use had exercised it end to end.
+
+`tests/safety.rs::should_sweep_a_nested_dotnet_artifact_and_stop_at_the_ancestor_bound` closes
+that gap. It builds a project file at a root and an `obj/` at each of five nesting depths (0
+through 4 directories below the root), runs a real sweep, and asserts that depths 0–3 are removed
+while depth 4 — one past the bound — survives untouched. This pins the bound in the shape that
+actually matters: not "does the classifier's internal ancestor-walk stop at `n`" but "does a real
+sweep over a real nested tree remove exactly what `ancestor(3)` promises and nothing more." A
+wrong bound is either lost recall (too small) or a deletion justified by a marker several
+directories away from what it actually proved (too large); this test would catch either
+direction of regression.

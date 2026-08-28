@@ -122,3 +122,38 @@ Negative / risks:
 - **Merging `[[paths]]` by replacement rather than by narrowing:** rejected — replacement
   means a user who sets one key silently loses every default, which for a `keep` policy means
   silently losing a safety guard.
+
+## Amendment — 2026-08-28
+
+`include` has shipped (`src/scan.rs`), and the mechanism is worth recording because it was the
+design decision, not just the outcome.
+
+**`include` is matched by the walker, exactly like `exclude`, not injected into the pipeline
+afterwards.** A path the walk visits and matches an `include` pattern is turned into a
+`Provenance::Included` finding on the spot and never descended into; nothing downstream of the
+walk treats an included path any differently from an anchored one. This keeps every deletion
+target a path the walk actually produced, so containment (ADR 0006) needs no special case for
+unanchored removals — the same "resolves strictly below a scan root" check applies uniformly.
+The direct consequence is that **an `include` pattern naming a path outside the scan root is
+simply never walked, and therefore never removed.** A user running `voom ~/projects` with
+`include = ["~/scratch"]` in scope will not have `~/scratch` swept — the pattern only matches
+paths the walker visits under the given roots. This is worth stating plainly because it is the
+opposite of what the flat schema above suggests to a first-time reader.
+
+Ordering inside the walker's callback is fixed and matters: **`exclude` is checked first**
+(consistent with "exclude is absolute" above), **then `include`, then the dependency-directory
+prune.** Checking `include` before the prune is what lets an explicit `include` reach into
+`node_modules/` or another dependency directory — the escape hatch ADR 0001 describes for users
+who want them gone. `.git` (and every VCS directory) stays unreachable regardless of this
+ordering: the deletion guard (ADR 0006) refuses a VCS directory by name whatever produced the
+finding, so `include` cannot be used to route around it.
+
+`Finding` carries a `Provenance` enum (`Anchored { artifact, marker_dir }` or
+`Included { pattern }`) rather than an `Option<ArtifactId>`, specifically so both reporters must
+match on it exhaustively and no output path can be added that silently forgets the label. The
+human renderer prints `unanchored` in the column an ecosystem name would otherwise occupy, and
+appends `(from config `pattern`)` to the outcome line so the pattern that authorized the removal
+is visible next to it. JSON sets `"source": "config-include"` with `ecosystem`, `artifact` and
+`marker_dir` all `null`, and adds an `include_pattern` field carrying the matched pattern — a
+consumer branches on `source`, not on nullness, because a null `ecosystem` means "nothing proved
+this," not "unknown ecosystem."

@@ -99,3 +99,48 @@ Negative / risks:
 - **A denylist alone, without marker anchoring:** rejected — the denylist protects system
   paths, not the user's own hand-written `bin/`, which is where the real risk lives
   (ADR 0002).
+
+## Amendment — 2026-08-28
+
+Three of the six rails above were absent or dead on Windows until today (`src/delete.rs`). Each
+looked like paranoia to add and was in fact a hole a reader would not see without testing on the
+platform.
+
+**Rail 4, the protected-path denylist, could not fire at all.** `Guard::check` compares the
+*canonicalized* path against the literals in `PROTECTED_PATHS`, and Windows `canonicalize()`
+returns the verbatim `\\?\C:\…` form — a form no typed `C:\` literal is ever equal to. The
+literals are now resolved into that same verbatim form at startup (`resolved_protected_paths`),
+alongside the real system locations read from the environment (`SystemRoot`, `ProgramFiles`,
+`ProgramFiles(x86)`, `ProgramW6432`, `ProgramData`, `USERPROFILE`, and `SystemDrive`'s root), so a
+machine that does not boot from `C:` is protected too. `PROTECTED_PATHS` itself stays untouched
+and append-only; the resolved list is additive to it, not a replacement.
+
+**Path comparison was byte-exact.** Windows filesystems compare names case-insensitively, so
+`.GIT`, a differently-cased protected path, or a scan root spelled in another case each walked
+straight past a name-based rail. Comparison (`names_equal`, `paths_equal`, `path_starts_with`) is
+now component-wise and case-insensitive on Windows, and stays byte-exact on unix, where `Target`
+and `target` really are two directories and folding them together would answer a question about
+one with the other.
+
+**Reparse points beyond the symlink rail.** Rust's `FileType::is_symlink` does report junctions
+on Windows — verified on the Windows CI leg, not assumed — so rail 2 already caught the main
+hazard (a junction standing in for a symlinked `target/`). A separate refusal
+(`Refusal::ReparsePoint`) now covers the reparse tags Rust does not classify as a link: a volume
+mount point, a OneDrive Files-On-Demand placeholder, a dedup stub. These are refused rather than
+followed, on the same reasoning as rail 2: a redirection voom did not expect can cost work that
+cannot be got back, while a directory left on disk only costs the space it occupies.
+
+**Rail 3, `--one-file-system`, was a documented no-op off unix.** The rail was `cfg(unix)`, and the
+walker's `same_file_system` is implemented against `dev()`, which Windows has no equivalent of on
+stable Rust — `MetadataExt::volume_serial_number` is unstable (rust-lang/rust#63010). The boundary
+is instead enforced from the path prefix: a candidate whose canonical path names a different
+drive letter or UNC share than its root is refused. The completeness argument is the reason this
+is sound rather than a partial fix: the only way to reach another volume while staying below the
+root is through a volume mount point, which is a reparse point, which rail 2's backstop now
+refuses unconditionally on Windows — so `--one-file-system=false` there is stricter than it
+literally asks for, which is the direction to err in.
+
+Windows is verified by the CI leg only — there is no Windows machine in the development loop.
+Every claim above is backed by a test in `src/delete.rs` that runs there — the junction refusal,
+the resolved-denylist match, the case-insensitive comparison, and the volume-prefix read all have
+one — and none of it has been run against real hardware by a contributor.
