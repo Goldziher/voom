@@ -448,6 +448,7 @@ pub fn render(result: &RunResult, args: &PruneArgs, out: &mut impl io::Write) ->
             let options = HumanOptions {
                 verbose: args.verbose,
                 summary_only: args.summary,
+                forced: args.force,
             };
             human::render(result, options, out)
         }

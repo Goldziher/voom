@@ -159,7 +159,7 @@ pub struct RunResult {
     ///
     /// `None` when it was turned off, when the tree held no repositories, or when the machine
     /// has no git — three states a reader never needs told apart, because all three mean the
-    /// report has nothing to say about git.
+    /// report has nothing to say about git. It renders as JSON `null`, not as an absent key.
     pub git: Option<crate::git::GitPruneResult>,
     /// Wall-clock time, for the run and for each stage of it.
     pub timings: Timings,

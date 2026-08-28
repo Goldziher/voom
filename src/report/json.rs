@@ -129,8 +129,9 @@ pub fn document(result: &RunResult) -> Value {
         //
         // The stages do not sum to `total`; the residue is configuration loading, root
         // normalization and building the worker pool.
-        // Absent rather than null when housekeeping did not run: a consumer branching on the
-        // key gets the same answer whether it was turned off or the tree held no repositories.
+        // `null` when housekeeping did not run — turned off, no repositories, or no git on the
+        // machine. The key is always present, because `json!` has no way to omit one; a
+        // consumer must test the *value*, not `"git" in doc`.
         "git": result.git.as_ref().map(crate::git::document),
         "timings_us": {
             "total": micros(result.timings.total),

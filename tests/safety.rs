@@ -621,8 +621,11 @@ fn should_not_write_off_a_covered_artifact_whose_coverer_was_never_removed() {
     let root = TempDir::new().unwrap();
     fs::write(root.path().join("Gemfile"), b"source 'https://rubygems.org'").unwrap();
     fs::write(root.path().join("composer.json"), b"{}").unwrap();
-    fs::create_dir_all(root.path().join("vendor/bundle/gems")).unwrap();
-    fs::write(root.path().join("vendor/bundle/gems/rake.rb"), b"gem").unwrap();
+    // `vendor/bundle/` is empty, so the outer removal frees nothing before it fails: the case
+    // under test is a coverer that never ran at all. A coverer that ran and freed something is
+    // `PartiallyRemoved`, and its `freed` already counts the inner artifact — retrying that one
+    // would report the same bytes twice.
+    fs::create_dir_all(root.path().join("vendor/bundle")).unwrap();
     let vendor = root.path().join("vendor");
     fs::set_permissions(&vendor, fs::Permissions::from_mode(0o555)).unwrap();
 
@@ -750,5 +753,45 @@ fn should_not_remove_a_file_merely_named_like_a_bazel_symlink() {
             .collect::<Vec<_>>(),
         vec![(Some("bazel-bin"), &Outcome::Refused(voom::delete::Refusal::Symlink))],
         "and the convenience symlink is still found and refused"
+    );
+}
+
+/// A coverer that ran and freed something already counted the inner artifact's bytes.
+///
+/// `PartiallyRemoved` is not `is_reclaimed`, so the covered artifact would otherwise be sent
+/// through a second removal and reported at its *pre-removal* size — bytes the outer removal's
+/// `freed` had already claimed. The footer would then say more was reclaimed than the disk gave
+/// back, which is the defect this release exists to fix, running the other way.
+#[test]
+#[cfg(unix)]
+fn should_not_count_a_covered_artifact_twice_when_its_coverer_partly_succeeded() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("Gemfile"), b"source 'https://rubygems.org'").unwrap();
+    fs::write(root.path().join("composer.json"), b"{}").unwrap();
+    fs::create_dir_all(root.path().join("vendor/bundle/gems")).unwrap();
+    fs::write(root.path().join("vendor/bundle/gems/rake.rb"), vec![0xA5; 64 * 1024]).unwrap();
+    let vendor = root.path().join("vendor");
+    fs::set_permissions(&vendor, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let mut settings = options(root.path());
+    settings.flags.enable.push("php.vendor".to_owned());
+    let result = run(&settings).expect("the run completes");
+    fs::set_permissions(&vendor, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let partial = result
+        .entries
+        .iter()
+        .any(|entry| matches!(entry.outcome, Outcome::PartiallyRemoved { .. }));
+    if !partial {
+        // Running as root, or a filesystem that let the whole removal through.
+        return;
+    }
+    assert_eq!(
+        result.entries.len(),
+        1,
+        "only the coverer is reported; the artifact inside it is not counted again: {:?}",
+        result.entries.iter().map(|entry| &entry.path).collect::<Vec<_>>()
     );
 }

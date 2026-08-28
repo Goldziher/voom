@@ -61,6 +61,8 @@ pub struct HumanOptions {
     pub verbose: bool,
     /// Suppress the per-artifact lines and print only the footer.
     pub summary_only: bool,
+    /// Whether the run carried `--force`, which decides whether suggesting it is useful.
+    pub forced: bool,
 }
 
 /// The palette.
@@ -161,23 +163,44 @@ fn shorten(path: &Path, base: Option<&Path>) -> String {
 }
 
 /// Appends what would plausibly get the rest of it, when there is anything to suggest.
-fn with_hint(detail: &str, kind: FailureKind) -> String {
-    match kind.hint() {
+///
+/// Silent when the run already carried `--force`: telling a user who just passed it to pass it
+/// is the failure mode the whole "say what happened in words" rewrite was against, and the shape
+/// that reaches here under `--force` is the one `--force` deliberately cannot fix — an
+/// obstruction in the artifact's *parent*.
+fn with_hint(detail: &str, kind: FailureKind, forced: bool) -> String {
+    match kind.hint().filter(|_| !forced) {
         Some(hint) => format!("{detail}; {hint}"),
         None => detail.to_owned(),
     }
 }
 
-fn artifact_line(entry: &Entry, base: Option<&Path>) -> Line {
+/// What is left of a partly removed artifact, in words rather than only in bytes.
+///
+/// An emptied directory occupies no blocks on most filesystems, so the honest byte count for one
+/// is zero — and `0 B left` beside a path that is still on disk reads as "nothing left". The
+/// artifact is what is left, whatever it weighs.
+pub(super) fn remaining_words(remaining: u64) -> String {
+    if remaining == 0 {
+        return "the directory itself is still there".to_owned();
+    }
+    format!("{} left", format_size(remaining, DECIMAL))
+}
+
+fn artifact_line(entry: &Entry, base: Option<&Path>, forced: bool) -> Line {
     let detail = match &entry.outcome {
         Outcome::Refused(refusal) => Some(refusal.to_string()),
         // What is *left* leads, because it is what the reader has to act on. The size column
         // already shows what went, so repeating it here would spend the line on the good news.
         Outcome::PartiallyRemoved { remaining, failure, .. } => Some(with_hint(
-            &format!("{} left; {failure}", format_size(*remaining, DECIMAL)),
+            // "still there" rather than a bare size: the residue is measured in bytes and an
+            // emptied directory occupies none of them on most filesystems, so `0 B left` read as
+            // "nothing left" about an artifact that was still sitting on disk.
+            &format!("{}; {failure}", remaining_words(*remaining)),
             failure.kind(),
+            forced,
         )),
-        Outcome::Failed(failure) => Some(with_hint(&failure.to_string(), failure.kind())),
+        Outcome::Failed(failure) => Some(with_hint(&failure.to_string(), failure.kind(), forced)),
         Outcome::Removed | Outcome::WouldRemove => match &entry.finding.provenance {
             // Shortened against the same base as the path. An `include` pattern is usually
             // the path it matched, so printing it in full puts the longest string on the line
@@ -259,7 +282,11 @@ pub fn render(result: &RunResult, options: HumanOptions, out: &mut impl io::Writ
 
     if !options.summary_only {
         let base = base_path(&result.roots);
-        let artifacts: Vec<Line> = result.entries.iter().map(|entry| artifact_line(entry, base)).collect();
+        let artifacts: Vec<Line> = result
+            .entries
+            .iter()
+            .map(|entry| artifact_line(entry, base, options.forced))
+            .collect();
         let skips = if options.verbose {
             skip_lines(result, base)
         } else {
@@ -351,6 +378,7 @@ mod tests {
         HumanOptions {
             verbose: true,
             summary_only: false,
+            forced: false,
         }
     }
 
@@ -526,6 +554,7 @@ mod tests {
         let options = HumanOptions {
             verbose: false,
             summary_only: true,
+            forced: false,
         };
         insta::assert_snapshot!(render_to_string(&mixed(), options));
     }
@@ -611,6 +640,7 @@ mod tests {
             artifact_line(
                 &entry(&long, "rust.target", 0, Outcome::Refused(Refusal::Symlink)),
                 None,
+                false,
             ),
             artifact_line(
                 &entry(
@@ -620,6 +650,7 @@ mod tests {
                     Outcome::Refused(Refusal::Symlink),
                 ),
                 None,
+                false,
             ),
         ];
 
@@ -791,5 +822,62 @@ mod tests {
         let rendered = render_to_string(&result, HumanOptions::default());
 
         assert!(!rendered.contains("dependency"), "no dependency line:\n{rendered}");
+    }
+
+    /// A partly removed artifact says the directory is still there, not that nothing is left.
+    ///
+    /// The residue is measured in bytes, and an emptied directory occupies none of them on most
+    /// filesystems — so the honest byte count is zero, and `0 B left` beside a path that is
+    /// still on disk reads as "nothing left". The artifact is what is left, whatever it weighs.
+    #[test]
+    fn should_not_report_an_emptied_directory_as_nothing_left() {
+        let entry = fixtures::entry(
+            &spell("/projects/api/target"),
+            "rust.target",
+            4_200,
+            Outcome::PartiallyRemoved {
+                freed: 4_200,
+                remaining: 0,
+                failure: fixtures::failure(std::io::ErrorKind::PermissionDenied),
+            },
+        );
+        let rendered = render_to_string(&fixtures::result(vec![entry], false), HumanOptions::default());
+
+        assert!(
+            rendered.contains("the directory itself is still there"),
+            "an emptied directory is still an artifact on disk:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("0 B left"),
+            "and never reads as nothing left:\n{rendered}"
+        );
+    }
+
+    /// The `--force` hint is silent on a run that already carried `--force`.
+    ///
+    /// The one shape that reaches here under it is the shape it deliberately cannot fix — an
+    /// obstruction in the artifact's parent — so suggesting the flag the user just passed is
+    /// exactly the unhelpful prose the failure messages were rewritten to remove.
+    #[test]
+    fn should_not_suggest_force_to_a_run_that_already_forced() {
+        let entry = fixtures::entry(
+            &spell("/projects/api/target"),
+            "rust.target",
+            4_200,
+            Outcome::Failed(fixtures::failure(std::io::ErrorKind::PermissionDenied)),
+        );
+        let result = fixtures::result(vec![entry], false);
+
+        let plain = render_to_string(&result, HumanOptions::default());
+        let forced = render_to_string(
+            &result,
+            HumanOptions {
+                forced: true,
+                ..HumanOptions::default()
+            },
+        );
+
+        assert!(plain.contains("--force"), "an unforced run is told about it:\n{plain}");
+        assert!(!forced.contains("--force"), "a forced run is not:\n{forced}");
     }
 }

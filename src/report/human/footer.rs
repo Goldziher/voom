@@ -169,11 +169,11 @@ pub(super) fn write_footer(
         // "counted above" is the whole point of the line: without it a reader who sees an
         // artifact still on disk has no way to know whether its bytes made it into the total.
         let text = format!(
-            "{} {} partly removed: {} freed and counted above, {} left",
+            "{} {} partly removed: {} freed and counted above, {}",
             totals.partial,
             plural(totals.partial, "artifact"),
             format_size(totals.partial_bytes, DECIMAL),
-            format_size(remaining_bytes(result), DECIMAL),
+            super::remaining_words(remaining_bytes(result)),
         );
         writeln!(out, "{GUTTER}{}", text.style(palette::partial()))?;
     }

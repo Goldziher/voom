@@ -20,7 +20,7 @@ use crate::caches::CacheRoots;
 use crate::classify::{ArtifactId, Classifier, Finding, Selection, SkipReason};
 use crate::config::resolve::Flags;
 use crate::config::{Resolved, Resolver, discover};
-use crate::delete::{Guard, Removal};
+use crate::delete::{Guard, Outcome, Removal};
 use crate::error::{Error, Result};
 use crate::report::{Entry, RunResult, Timings};
 use crate::scan::{PatternSet, ScanOptions, Skipped, scan};
@@ -248,14 +248,19 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
     // `vendor/bundle/` neither removed nor reported as removable, on every subsequent run —
     // a skip line asserting something that never took place. Nesting is rare, so this second
     // pass is almost always empty.
-    let reclaimed: std::collections::HashSet<&Path> = entries
+    //
+    // `PartiallyRemoved` counts as covered even though it is not `is_reclaimed`: the outer
+    // removal *ran*, its `freed` already counts whatever it took out of the inner artifact, and
+    // retrying on the pre-removal size would report those bytes a second time. Only a removal
+    // that never happened at all sends the inner one back.
+    let ran: std::collections::HashSet<&Path> = entries
         .iter()
-        .filter(|entry| entry.outcome.is_reclaimed())
+        .filter(|entry| entry.outcome.is_reclaimed() || matches!(entry.outcome, Outcome::PartiallyRemoved { .. }))
         .map(|entry| entry.path.as_path())
         .collect();
     let mut uncovered = Vec::new();
     for (finding, measured, by) in selected.covered {
-        if reclaimed.contains(by.as_path()) {
+        if ran.contains(by.as_path()) {
             note(collected, options.verbose, finding.path, SkipReason::Covered { by });
         } else {
             uncovered.push((finding, measured));
