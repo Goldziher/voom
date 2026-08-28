@@ -2,24 +2,39 @@
 name = "voom"
 version = "0.1.0"
 authors = ["Na'aman Hirschfeld <nhirschfeld@gmail.com>"]
-description = "Fast, safe, parallel build-artifact pruning across 20+ language ecosystems"
+description = "Fast, safe, parallel build-artifact pruning across 24 language ecosystems"
 edition = "2024"
 rust-version = "1.88"
-keywords = ["cleanup", "build", "artifacts", "disk-space", "prune"]
+keywords = ["clean", "cleanup", "build-artifacts", "disk-space", "monorepo"]
 categories = ["command-line-utilities", "development-tools", "filesystem"]
 license = "MIT"
 repository = "https://github.com/Goldziher/voom"
 homepage = "https://github.com/Goldziher/voom"
-documentation = "https://github.com/Goldziher/voom#readme"
+documentation = "https://docs.rs/voom"
 readme = "README.md"
+# What ships in the `.crate`. Repository tooling (poly, cargo-deny, pre-commit) is meaningless
+# outside the git checkout. `tests/` ships so the safety argument can be audited from the
+# published source, and `clippy.toml`/`rustfmt.toml` ship with it — but the suite does not
+# *run* from an unpacked `.crate`: cargo strips the path-only self dev-dependency that carries
+# the `test-support` feature, and two integration tests `include_str!` hook manifests that are
+# excluded below. `cargo publish` is unaffected; its verify step builds the lib and bin only.
+# `assets/**` is excluded because crates.io rewrites a rendered README's relative image paths
+# to point back at the repository — the banner still displays without the bytes in the tarball.
 exclude = [
   ".ai-rulez/**",
+  ".commitlintrc",
   ".github/**",
+  ".gitignore",
+  ".pre-commit-hooks.yaml",
   "adrs/**",
+  "assets/**",
+  "deny.toml",
   "npm-package/**",
   "pip-package/**",
+  "poly-hooks.lock",
+  "poly-hooks.toml",
+  "poly.toml",
   "scripts/**",
-  "tests/fixtures/**",
 ]
 
 # ~keep cargo-binstall metadata: fetch prebuilt archives from GitHub releases.

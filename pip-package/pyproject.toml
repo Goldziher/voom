@@ -5,32 +5,43 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "voom-cli"
 version = "0.1.0"
-description = "Fast, safe, parallel build-artifact pruning across 20+ language ecosystems"
+description = "Fast, safe, parallel build-artifact pruning across 24 language ecosystems"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Na'aman Hirschfeld", email = "nhirschfeld@gmail.com" }]
 classifiers = [
   "Development Status :: 4 - Beta",
+  "Environment :: Console",
   "Intended Audience :: Developers",
+  "Intended Audience :: System Administrators",
   "License :: OSI Approved :: MIT License",
+  # The wheel is pure Python; the binary it downloads exists only for these three, so a
+  # platform outside them fails at first run rather than at install. See voom/downloader.py.
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Programming Language :: Rust",
-  "Topic :: Utilities",
+  "Topic :: Software Development :: Build Tools",
   "Topic :: System :: Filesystems",
-  "Environment :: Console",
+  "Topic :: Utilities",
 ]
-keywords = ["cleanup", "build", "artifacts", "disk-space", "cli", "prune", "rust"]
+keywords = ["clean", "cleanup", "build-artifacts", "disk-space", "monorepo", "cli", "prune", "rust"]
 requires-python = ">=3.10"
 dependencies = ["certifi>=2024.7.4"]
 
 [project.urls]
 Homepage = "https://github.com/Goldziher/voom"
+Documentation = "https://github.com/Goldziher/voom#readme"
 Repository = "https://github.com/Goldziher/voom.git"
 Issues = "https://github.com/Goldziher/voom/issues"
+Changelog = "https://github.com/Goldziher/voom/blob/main/CHANGELOG.md"
 
 [project.scripts]
 voom = "voom.cli:main"

@@ -1,11 +1,17 @@
 version = "4.0"
 name = "voom"
-description = "Fast, safe, parallel build-artifact pruning across 20+ language ecosystems — a single pure-Rust binary that recursively finds and removes build output anywhere in a tree, proving every candidate against an ecosystem marker file before it deletes."
+description = "Fast, safe, parallel build-artifact pruning across 24 language ecosystems — a single pure-Rust binary that recursively finds and removes build output anywhere in a tree, proving every candidate against an ecosystem marker file before it deletes."
 gitignore = true
 
 presets = ["claude", "codex"]
 
-builtins = ["rust", "security", "git-workflow", "code-quality", "testing", "documentation", "default-commands"]
+# `testing` is auto-included and explicitly excluded here. Its six rules restate the
+# hand-written `tdd-and-hooks` rule, which carries this project's actual testing policy, and
+# its `tdd-workflow` ("wrote production code before the test? delete it, start over — no
+# exceptions") contradicts `minimal-changes` and `incremental-approach` in this same set.
+# What those six said that `tdd-and-hooks` did not — independence, naming, exact assertions,
+# a test that can fail — was folded into `tdd-and-hooks` before the exclusion landed.
+builtins = ["rust", "security", "git-workflow", "code-quality", "!testing", "documentation", "default-commands"]
 
 [[mcp_servers]]
 name = "poly"

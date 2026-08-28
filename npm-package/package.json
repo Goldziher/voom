@@ -1,14 +1,14 @@
 {
   "name": "@goldziher/voom",
   "version": "0.1.0",
-  "description": "Fast, safe, parallel build-artifact pruning across 20+ language ecosystems",
+  "description": "Fast, safe, parallel build-artifact pruning across 24 language ecosystems",
   "bin": {
     "voom": "bin/voom"
   },
   "scripts": {
     "postinstall": "node install.js"
   },
-  "keywords": ["cleanup", "build", "artifacts", "disk-space", "cli", "prune", "rust", "monorepo"],
+  "keywords": ["clean", "cleanup", "build-artifacts", "disk-space", "monorepo", "cli", "prune", "rust"],
   "author": "Na'aman Hirschfeld <nhirschfeld@gmail.com>",
   "license": "MIT",
   "repository": {
@@ -26,8 +26,8 @@
     "adm-zip": "^0.6.0",
     "tar": "^6.0.0"
   },
-  "files": ["install.js", "README.md"],
+  "files": ["install.js", "LICENSE", "README.md"],
   "engines": {
-    "node": ">=14"
+    "node": ">=18"
   }
 }
