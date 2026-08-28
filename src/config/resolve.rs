@@ -389,13 +389,135 @@ fn keep_from(table: &KeepTable, source: &Path) -> Result<KeepPolicy> {
 /// ADR 0004 says paths are "relative to this file or absolute", which is what makes a committed
 /// `voom.toml` portable between checkouts.
 fn expand(pattern: &str, dir: &Path) -> String {
-    if let Some(rest) = pattern.strip_prefix("~/")
+    // `~\` as well as `~/`: a Windows user types the separator their shell shows them, and a
+    // home prefix that silently became a relative path would point the pattern somewhere else
+    // entirely rather than fail.
+    if let Some(rest) = pattern.strip_prefix("~/").or_else(|| pattern.strip_prefix("~\\"))
         && let Some(home) = dirs::home_dir()
     {
-        return home.join(rest).display().to_string();
+        return as_glob(&home.join(rest));
     }
     if Path::new(pattern).is_absolute() || pattern.starts_with("**") {
         return pattern.to_owned();
     }
-    dir.join(pattern).display().to_string()
+    as_glob(&dir.join(pattern))
+}
+
+/// Renders a path as a glob pattern, which is always `/`-separated.
+///
+/// `Path::display` emits the platform's separator, and on Windows that is `\`, which glob syntax
+/// reads as an escape rather than a separator — an `exclude` built out of a rendered path is one
+/// escape away from quietly matching nothing, and an exclusion that stops working silently is
+/// what ADR 0004 exists to prevent. `globset` matches against a candidate it has already
+/// normalized to `/`, so `/` is the separator both sides agree on. Only [`MAIN_SEPARATOR`] is
+/// rewritten, which leaves a unix filename that genuinely contains a backslash alone.
+///
+/// [`MAIN_SEPARATOR`]: std::path::MAIN_SEPARATOR
+fn as_glob(path: &Path) -> String {
+    path.display().to_string().replace(std::path::MAIN_SEPARATOR, "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::load::read_in;
+    use crate::scan::ExcludeSet;
+    use crate::testing::tree;
+
+    fn home() -> PathBuf {
+        dirs::home_dir().expect("a home directory")
+    }
+
+    #[test]
+    fn should_expand_a_home_pattern_to_a_slash_separated_glob() {
+        let expanded = expand("~/work/client-x/**", Path::new("/anywhere"));
+        assert!(
+            !expanded.contains('\\'),
+            "a backslash escapes in glob syntax: {expanded}"
+        );
+        assert!(expanded.ends_with("/work/client-x/**"), "{expanded}");
+        assert_ne!(expanded, "~/work/client-x/**", "the home prefix must be expanded");
+    }
+
+    /// A Windows user types the separator their shell shows them, so `~\` has to mean `~/`.
+    #[test]
+    fn should_expand_a_backslash_home_prefix_the_same_way() {
+        let dir = Path::new("/anywhere");
+        assert_eq!(expand("~\\scratch/**", dir), expand("~/scratch/**", dir));
+    }
+
+    #[test]
+    fn should_expand_a_relative_pattern_to_a_slash_separated_glob() {
+        let fixture = tree(&["project/voom.toml"]);
+        let expanded = expand("build/**", &fixture.path().join("project"));
+        assert!(
+            !expanded.contains('\\'),
+            "a backslash escapes in glob syntax: {expanded}"
+        );
+        assert!(expanded.ends_with("/project/build/**"), "{expanded}");
+    }
+
+    /// A `**`-prefixed pattern is already root-relative, so it is passed through untouched.
+    #[test]
+    fn should_pass_a_double_star_pattern_through_unchanged() {
+        let expanded = expand("**/fixtures/**", Path::new("/anywhere"));
+        assert_eq!(expanded, "**/fixtures/**");
+        assert!(!expanded.contains('\\'), "{expanded}");
+    }
+
+    #[test]
+    fn should_pass_an_absolute_pattern_through_unchanged() {
+        let absolute = home().join("work").display().to_string();
+        let pattern = format!("{absolute}/**");
+        assert_eq!(expand(&pattern, Path::new("/anywhere")), pattern);
+    }
+
+    /// The property that silently breaks when the pattern carries platform separators: an
+    /// `exclude` written in a `voom.toml` must still match the path it names.
+    #[test]
+    fn should_produce_an_exclude_that_matches_the_path_it_names() {
+        let fixture = tree(&["project/voom.toml", "project/build/output.o"]);
+        let dir = fixture.path().join("project");
+        std::fs::write(dir.join("voom.toml"), "exclude = [\"build/**\"]\n").unwrap();
+
+        let layer = read_in(&dir).expect("it parses").expect("a layer");
+        let mut accumulated = Accumulated::default();
+        apply(&mut accumulated, &layer).expect("the layer applies");
+
+        let excludes = ExcludeSet::new(accumulated.exclude.clone()).expect("the exclude compiles");
+        assert_eq!(
+            excludes.matched(&dir.join("build").join("output.o")),
+            Some(accumulated.exclude[0].as_str())
+        );
+    }
+
+    /// The same property for a `~`-rooted exclude, where the expansion is a real system path and
+    /// therefore carries whatever separator the platform renders.
+    #[test]
+    fn should_produce_a_home_exclude_that_matches_the_path_it_names() {
+        let pattern = expand("~/work/client-x/**", Path::new("/anywhere"));
+        let excludes = ExcludeSet::new([pattern]).expect("the exclude compiles");
+        let candidate = home().join("work").join("client-x").join("target");
+        assert!(excludes.matched(&candidate).is_some(), "{}", candidate.display());
+    }
+
+    /// A `[[paths]]` rule compiles its pattern the same way, and must match the same path.
+    #[test]
+    fn should_produce_a_path_rule_that_matches_the_path_it_names() {
+        let fixture = tree(&["project/voom.toml"]);
+        let dir = fixture.path().join("project");
+        std::fs::write(
+            dir.join("voom.toml"),
+            "[[paths]]\nmatch = \"vendor/**\"\n[paths.keep]\nmin_age = \"7d\"\n",
+        )
+        .unwrap();
+
+        let layer = read_in(&dir).expect("it parses").expect("a layer");
+        let mut accumulated = Accumulated::default();
+        apply(&mut accumulated, &layer).expect("the layer applies");
+
+        let rule = accumulated.rules.first().expect("one rule");
+        assert!(!rule.pattern.contains('\\'), "{}", rule.pattern);
+        assert!(rule.glob.is_match(dir.join("vendor").join("target")));
+    }
 }

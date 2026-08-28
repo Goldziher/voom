@@ -93,7 +93,15 @@ fn collect(root: &Path, dir: &Path, paths: &mut Vec<String>) {
     let Ok(entries) = fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
-        let relative = path.strip_prefix(root).unwrap_or(&path).display().to_string();
+        // Callers assert against `/`-separated literals, and `display()` renders the platform's
+        // separator — on Windows every one of those assertions would fail for a reason that has
+        // nothing to do with the behaviour under test.
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .display()
+            .to_string()
+            .replace(std::path::MAIN_SEPARATOR, "/");
         let file_type = entry.file_type();
         let is_symlink = file_type.as_ref().is_ok_and(std::fs::FileType::is_symlink);
         let is_dir = file_type.as_ref().is_ok_and(std::fs::FileType::is_dir);

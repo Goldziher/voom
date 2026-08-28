@@ -64,7 +64,15 @@ fn collect(root: &Path, dir: &Path, paths: &mut Vec<String>) {
     let Ok(entries) = fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
-        let relative = path.strip_prefix(root).unwrap_or(&path).display().to_string();
+        // Callers assert against `/`-separated literals, and `display()` renders the platform's
+        // separator — on Windows every one of those assertions would fail for a reason that has
+        // nothing to do with the behaviour under test.
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .display()
+            .to_string()
+            .replace(std::path::MAIN_SEPARATOR, "/");
         let file_type = entry.file_type();
         let is_symlink = file_type.as_ref().is_ok_and(std::fs::FileType::is_symlink);
         let is_dir = file_type.as_ref().is_ok_and(std::fs::FileType::is_dir);
@@ -72,5 +80,23 @@ fn collect(root: &Path, dir: &Path, paths: &mut Vec<String>) {
         if is_dir && !is_symlink {
             collect(root, &path, paths);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The whole suite asserts against `/`-separated literals, so the snapshot has to produce
+    /// them on every platform rather than whatever the local separator happens to be.
+    #[test]
+    fn should_render_snapshot_paths_with_slash_separators() {
+        let fixture = tree(&["Cargo.toml", "src/main.rs", "target/debug/"]);
+        let paths = snapshot(fixture.path());
+        assert_eq!(
+            paths,
+            vec!["Cargo.toml", "src/", "src/main.rs", "target/", "target/debug/"]
+        );
+        assert!(paths.iter().all(|path| !path.contains('\\')), "{paths:?}");
     }
 }
