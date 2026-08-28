@@ -146,21 +146,31 @@ fn path_starts_with(child: &Path, ancestor: &Path) -> bool {
 
 /// The system locations that must never be removed, resolved against this machine.
 ///
-/// Two things make the compiled-in `C:\…` literals insufficient on Windows, and both fail
-/// silently rather than visibly:
+/// Every rail runs against the *canonicalized* candidate, and a protected literal is very often
+/// not its own canonical form. Comparing only the literals therefore fails silently rather than
+/// visibly — the entry is present, the test that iterates the list passes, and nothing is
+/// actually protected:
 ///
-/// 1. [`Path::canonicalize`] returns the *verbatim* form — `\\?\C:\Windows` — which is never
-///    equal to `Path::new("C:\\Windows")`. Every rail runs against the canonicalized path, so
-///    the literals as written cannot match anything at all. Resolving them here puts both sides
-///    of the comparison in the same form.
-/// 2. The literals assume the system drive is `C:`. On a machine that boots from `D:` they
-///    protect nothing that exists. The environment knows where Windows actually put itself.
+/// - On macOS `/tmp`, `/etc` and `/var` are symlinks into `/private`, and `/home` is an
+///   automount. A candidate resolving to `/private/etc` is not equal to `/etc`.
+/// - On a usrmerge Linux — Arch, Fedora, Debian since Bullseye — `/bin`, `/sbin` and `/lib`
+///   are symlinks into `/usr`. `/usr` is listed, but as an exact match, so it does not cover
+///   `/usr/bin`.
+/// - On Windows [`Path::canonicalize`] returns the verbatim form `\\?\C:\Windows`, which is
+///   never equal to `Path::new("C:\\Windows")`, and the literals additionally assume the system
+///   drive is `C:` when the environment knows where Windows actually put itself.
 ///
-/// This is additive: `PROTECTED_PATHS` is append-only and is still checked exactly as written.
-#[cfg(windows)]
+/// Resolving the list once at construction puts both sides of every comparison in the same form
+/// and lets the denylist follow whatever a given OS's layout resolves to, instead of requiring
+/// each platform's private-mount naming to be hand-enumerated.
+///
+/// This is additive and never subtractive: `PROTECTED_PATHS` is append-only and is still checked
+/// exactly as written, so an entry that cannot be canonicalized (it does not exist on this
+/// machine) still protects its literal spelling.
 fn resolved_protected_paths() -> Vec<PathBuf> {
     /// Locations Windows publishes for itself. `SystemDrive` is handled separately because it
     /// arrives without a separator.
+    #[cfg(windows)]
     const SYSTEM_VARIABLES: &[&str] = &[
         "SystemRoot",
         "ProgramFiles",
@@ -182,11 +192,13 @@ fn resolved_protected_paths() -> Vec<PathBuf> {
     for protected in PROTECTED_PATHS {
         push(Path::new(protected));
     }
+    #[cfg(windows)]
     for variable in SYSTEM_VARIABLES {
         if let Some(value) = std::env::var_os(variable) {
             push(Path::new(&value));
         }
     }
+    #[cfg(windows)]
     if let Some(drive) = std::env::var_os("SystemDrive") {
         // `SystemDrive` is `C:` with no separator, and a bare `C:` is *drive-relative*: it
         // resolves to the current directory on that drive, not to its root. Protecting that by
@@ -195,6 +207,7 @@ fn resolved_protected_paths() -> Vec<PathBuf> {
         root.push(std::path::MAIN_SEPARATOR_STR);
         push(Path::new(&root));
     }
+    #[cfg(windows)]
     if let Some(profile) = std::env::var_os("USERPROFILE") {
         // The profile's parent is this machine's `Users` root, wherever it was put.
         if let Some(parent) = Path::new(&profile).parent() {
@@ -356,8 +369,8 @@ pub struct Guard {
     #[cfg(unix)]
     root_devices: Vec<u64>,
     /// `PROTECTED_PATHS` and this machine's system locations, resolved into the same form the
-    /// candidate paths are compared in. Windows only, where the literals cannot match.
-    #[cfg(windows)]
+    /// candidate paths are compared in — which the literals frequently are not, on every
+    /// platform. See [`resolved_protected_paths`].
     resolved_protected: Vec<PathBuf>,
     home: Option<PathBuf>,
     one_file_system: bool,
@@ -397,7 +410,6 @@ impl Guard {
             roots: resolved,
             #[cfg(unix)]
             root_devices: devices,
-            #[cfg(windows)]
             resolved_protected: resolved_protected_paths(),
             home: dirs::home_dir().and_then(|home| home.canonicalize().ok()),
             one_file_system,
@@ -503,9 +515,9 @@ impl Guard {
         {
             return true;
         }
-        // The literals above are unreachable on Windows, where a canonical path is verbatim;
-        // these are that same list plus this machine's system locations, in that form.
-        #[cfg(windows)]
+        // The same list, canonicalized against this machine — which is the form every rail
+        // actually compares, and which the literals above frequently are not. See
+        // `resolved_protected_paths`.
         if self
             .resolved_protected
             .iter()
@@ -746,10 +758,14 @@ mod tests {
         );
     }
 
-    /// The denylist must fire against the *canonicalized* path, which on Windows is the
-    /// verbatim `\\?\C:\…` form that the typed literals can never equal.
+    /// Every protected literal, in the form the rails actually compare against.
+    ///
+    /// The rails run on canonicalized paths, and a protected literal is very often not its own
+    /// canonical form: on macOS `/tmp`, `/etc` and `/var` are symlinks into `/private`, on a
+    /// usrmerge Linux `/bin` and `/sbin` are symlinks into `/usr`, and on Windows every path
+    /// canonicalizes to the verbatim `\\?\C:\…` spelling. A denylist checked only as written
+    /// therefore passes its own test while protecting nothing that a real candidate resolves to.
     #[test]
-    #[cfg(windows)]
     fn should_refuse_every_resolved_protected_path() {
         let fixture = tree(&["Cargo.toml"]);
         let guard = guard(fixture.path());
