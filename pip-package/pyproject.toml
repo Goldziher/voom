@@ -34,7 +34,7 @@ classifiers = [
 ]
 keywords = ["clean", "cleanup", "build-artifacts", "disk-space", "monorepo", "cli", "prune", "rust"]
 requires-python = ">=3.10"
-dependencies = ["certifi>=2024.7.4"]
+dependencies = ["certifi>=2026.7.22"]
 
 [project.urls]
 Homepage = "https://github.com/Goldziher/voom"
