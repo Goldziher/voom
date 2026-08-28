@@ -90,7 +90,7 @@ Run without installing:
 
 ```bash
 npx -y @goldziher/voom@latest --dry-run ~
-uvx voom-cli --dry-run ~
+uvx --from voom-cli voom --dry-run ~
 ```
 
 <details>

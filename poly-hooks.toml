@@ -36,8 +36,8 @@ install = "npx -y @goldziher/voom@0.1.0 --version"
 [[hooks.paths]]
 channel = "uvx"
 check = "command -v uvx"
-run = "uvx voom-cli==0.1.0"
-install = "uvx voom-cli==0.1.0 --version"
+run = "uvx --from voom-cli==0.1.0 voom"
+install = "uvx --from voom-cli==0.1.0 voom --version"
 
 [[hooks]]
 id = "voom-prune"
@@ -60,5 +60,5 @@ install = "npx -y @goldziher/voom@0.1.0 --version"
 [[hooks.paths]]
 channel = "uvx"
 check = "command -v uvx"
-run = "uvx voom-cli==0.1.0"
-install = "uvx voom-cli==0.1.0 --version"
+run = "uvx --from voom-cli==0.1.0 voom"
+install = "uvx --from voom-cli==0.1.0 voom --version"

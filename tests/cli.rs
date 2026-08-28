@@ -455,3 +455,37 @@ fn should_accept_every_spelling_of_the_filesystem_boundary_flag() {
             .stdout(contains("would remove"));
     }
 }
+
+/// Every `uvx` invocation the hook manifests publish must name the package and the command
+/// separately.
+///
+/// `voom` was taken on `PyPI`, so the distribution is `voom-cli` while the command it installs is
+/// `voom` (ADR 0010). `uvx voom-cli` therefore does not run voom — uv looks for a command
+/// matching the package name, finds none, and refuses with a message pointing at `--from`. The
+/// manifests pinned the short form, so the uvx channel of both published hooks would have
+/// failed for every user on first run.
+///
+/// This asymmetry is permanent, which is why it is worth a test rather than a careful edit.
+#[test]
+fn should_invoke_uvx_with_the_package_named_separately_from_the_command() {
+    let manifest = include_str!("../poly-hooks.toml");
+    let invocations: Vec<&str> = manifest
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.contains("uvx ") && (line.starts_with("run =") || line.starts_with("install =")))
+        .collect();
+
+    assert!(
+        invocations.len() >= 2,
+        "poly-hooks.toml publishes a uvx channel; the scan found {} invocations",
+        invocations.len()
+    );
+
+    for line in invocations {
+        assert!(
+            line.contains("uvx --from voom-cli"),
+            "`{line}` runs uvx without --from, so uv will look for a command named `voom-cli` \
+             and fail; the package is voom-cli and the command is voom"
+        );
+    }
+}

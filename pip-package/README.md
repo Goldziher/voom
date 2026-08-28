@@ -10,7 +10,7 @@ voom --dry-run ~
 Or without installing:
 
 ```bash
-uvx voom-cli --dry-run ~
+uvx --from voom-cli voom --dry-run ~
 ```
 
 The first run downloads the prebuilt `voom` binary for your platform from the
