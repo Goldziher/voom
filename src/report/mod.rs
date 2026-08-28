@@ -70,6 +70,17 @@ impl Entry {
         self.finding.artifact().map(|id| id.artifact().path)
     }
 
+    /// Whether this entry is one of the opt-in dependency directories.
+    ///
+    /// A `Provenance::Included` entry answers `false`: an `include` names a path outright and
+    /// has no artifact behind it, so there is nothing to ask the catalog about.
+    #[must_use]
+    pub fn is_dependency(&self) -> bool {
+        self.finding
+            .artifact()
+            .is_some_and(|id| crate::catalog::is_dependency_artifact(&id.spec()))
+    }
+
     /// What this entry actually freed — the number the report's size column shows.
     ///
     /// `bytes` is what the artifact measured *before* the removal was attempted, which for a
@@ -109,6 +120,12 @@ pub struct Totals {
     pub partial: usize,
     /// Bytes those partial removals freed. **Already included in `bytes`.**
     pub partial_bytes: u64,
+    /// Dependency directories removed. **Already included in `reclaimed`.**
+    ///
+    /// Counted separately because ADR 0001 promised these would never be touched, and its
+    /// amendment made them reachable by explicit opt-in. A run that took one has to say so
+    /// outright rather than let it sit anonymously in the total.
+    pub dependencies: usize,
 }
 
 /// Everything one run produced.
@@ -153,6 +170,9 @@ impl RunResult {
             // came from is gone. `reclaimed` counts artifacts that *are* gone, so a partial
             // contributes to the first and not the second — it is still on disk.
             totals.bytes += entry.reclaimed_bytes();
+            if entry.outcome.is_reclaimed() && entry.is_dependency() {
+                totals.dependencies += 1;
+            }
             match &entry.outcome {
                 Outcome::Removed | Outcome::WouldRemove => totals.reclaimed += 1,
                 Outcome::Refused(_) => totals.refused += 1,

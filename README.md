@@ -216,10 +216,13 @@ named `bin`, 20 named `vendor`, and 12 named `obj` — each a build artifact in 
 and hand-written source in another. voom leaves every unproven one alone, and
 `--verbose` tells you which marker was missing.
 
-**2. Dependency directories are never touched.** `node_modules/`, composer's `vendor/`, Go's
-`vendor/`, mix's `deps/` — these are network-fetched caches, not build output. They are not
-in the catalog and no flag adds them. Deleting them costs you a re-download and breaks
-offline work.
+**2. Dependency directories are never touched unless you ask for them by name.**
+`node_modules/`, composer's `vendor/`, Go's `vendor/`, mix's `deps/` and Python's `.venv/` are
+network-fetched caches, not build output: removing one costs a re-download and breaks offline
+work. Every one of them is off by default, and no ordinary run — however many flags it carries —
+will take one. `--clean-dependencies` turns the group on, and `--enable node.node_modules` turns
+on exactly one. voom still proves each against its marker first, so a `vendor/` with no
+`composer.json` beside it is left alone like anything else.
 
 **3. Tool caches and installed toolchains are skipped.** `~/.cargo/registry`, `~/.npm`,
 `~/.pyenv`, `~/miniforge3`, `~/google-cloud-sdk` and friends are machine-global or are installed
@@ -245,9 +248,9 @@ Full reasoning in [ADR 0002](adrs/0002-marker-anchored-classification.md) and
 | Ecosystem | Marker | Artifacts |
 | --- | --- | --- |
 | Rust | `Cargo.toml` | `target/` |
-| Node / TypeScript | `package.json` | `dist/`, `.next/`, `.nuxt/`, `.svelte-kit/`, `.astro/`, `.turbo/`, `.parcel-cache/`, `.vite/`, `.nyc_output/`, `*.tsbuildinfo`, `build/`† |
+| Node / TypeScript | `package.json` | `dist/`, `.next/`, `.nuxt/`, `.svelte-kit/`, `.astro/`, `.turbo/`, `.parcel-cache/`, `.vite/`, `.nyc_output/`, `*.tsbuildinfo`, `build/`†, `node_modules/`† |
 | Python | `pyproject.toml`, `setup.py`, `setup.cfg` | `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `.tox/`, `*.egg-info/`, `htmlcov/`, `.coverage`, `build/`, `dist/`, `.venv/`† |
-| Go | `go.mod` | `bin/`† |
+| Go | `go.mod` | `bin/`†, `vendor/`† |
 | Zig | `build.zig` | `.zig-cache/`, `zig-cache/`, `zig-out/` |
 | Swift | `Package.swift` | `.build/` |
 | Xcode | `*.xcodeproj`, `*.xcworkspace` | `DerivedData/` |
@@ -256,9 +259,9 @@ Full reasoning in [ADR 0002](adrs/0002-marker-anchored-classification.md) and
 | .NET | `*.csproj`, `*.fsproj`, `*.vbproj`, `*.sln` | `bin/`, `obj/` |
 | CMake / C++ | `CMakeLists.txt` | `build/`, `cmake-build-*/`, `CMakeFiles/` |
 | Dart / Flutter | `pubspec.yaml` | `.dart_tool/`, `build/` |
-| Elixir | `mix.exs` | `_build/`, `.elixir_ls/` |
+| Elixir | `mix.exs` | `_build/`, `.elixir_ls/`, `deps/`† |
 | Ruby | `Gemfile`, `*.gemspec` | `.bundle/`, `vendor/bundle/`, `coverage/`, `pkg/`†, `tmp/`† |
-| PHP | `composer.json` | `.phpunit.cache/`, `.phpunit.result.cache` |
+| PHP | `composer.json` | `.phpunit.cache/`, `.phpunit.result.cache`, `vendor/`† |
 | Scala / sbt | `build.sbt` | `target/`, `project/target/`, `.bloop/`, `.metals/` |
 | Haskell | `*.cabal`, `stack.yaml` | `dist-newstyle/`, `.stack-work/` |
 | OCaml / dune | `dune-project` | `_build/` |
@@ -309,8 +312,9 @@ ecosystem, and JSON marks it `"source": "config-include"`. `exclude` always wins
 
 `include` only matches paths the walk actually visits, so it never reaches outside the roots
 you named: running `voom ~/projects` with `include = ["~/scratch"]` sweeps nothing extra. It
-*can* name a directory the walk would otherwise skip — a `node_modules/`, or a tool cache like
-`~/.npm` — and have it removed. It cannot reach *inside* one: skipping happens a whole
+*can* name a directory the walk would otherwise skip — a tool cache like `~/.npm`, say — and
+have it removed. For a dependency directory, prefer `--clean-dependencies` or `--enable`: those
+still prove the marker, and an `include` does not. It cannot reach *inside* one: skipping happens a whole
 directory at a time, so `include = ["~/.npm/_cacache/pkg"]` matches nothing. Name the cache as
 a scan root, or pass `--caches`.
 

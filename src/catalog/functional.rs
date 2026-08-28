@@ -7,7 +7,15 @@ pub(super) const ELIXIR: Ecosystem = Ecosystem {
     name: "Elixir",
     markers: &["mix.exs"],
     anchor: Anchor::Sibling,
-    artifacts: &[Artifact::on("_build/"), Artifact::on(".elixir_ls/")],
+    artifacts: &[
+        Artifact::on("_build/"),
+        Artifact::on(".elixir_ls/"),
+        Artifact::off(
+            "deps/",
+            "A network-fetched dependency cache, not build output: removing it costs a full \
+             `mix deps.get` and breaks offline work.",
+        ),
+    ],
 };
 
 pub(super) const HASKELL: Ecosystem = Ecosystem {

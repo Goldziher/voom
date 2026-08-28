@@ -188,6 +188,16 @@ pub struct PruneArgs {
     #[arg(long, value_name = "SPEC", help_heading = "Selection")]
     pub disable: Vec<String>,
 
+    /// Also remove dependency directories: `node_modules/`, composer and Go `vendor/`, mix
+    /// `deps/`, and Python virtualenvs.
+    ///
+    /// These are network-fetched caches rather than build output, so removing one costs a
+    /// re-download and can break offline work — which is why voom leaves them alone unless you
+    /// say otherwise. Exactly equivalent to `--enable`-ing each of the specs it covers, so a
+    /// marker still has to prove every directory it removes and every keep policy still applies.
+    #[arg(long, help_heading = "Selection")]
+    pub clean_dependencies: bool,
+
     /// Never scan these paths. Repeatable.
     #[arg(long, value_name = "GLOB", help_heading = "Selection")]
     pub exclude: Vec<String>,
@@ -254,11 +264,29 @@ impl PruneArgs {
     pub fn flags(&self) -> Result<Flags> {
         Ok(Flags {
             ecosystems: (!self.ecosystem.is_empty()).then(|| self.ecosystem.clone()),
-            enable: self.enable.clone(),
+            enable: self.enable_specs(),
             disable: self.disable.clone(),
             keep: self.keep()?,
             exclude: self.exclude.clone(),
         })
+    }
+
+    /// The `--enable` specs, with `--clean-dependencies` expanded into the group it stands for.
+    ///
+    /// Sugar rather than a mechanism: expanding here means the dependency opt-in travels the
+    /// same path as any other one — applied above every configuration layer, resolved against
+    /// each artifact's own directory, and listed by `voom config show` as a departure from the
+    /// catalog default.
+    fn enable_specs(&self) -> Vec<String> {
+        let mut enable = self.enable.clone();
+        if self.clean_dependencies {
+            enable.extend(
+                crate::catalog::DEPENDENCY_ARTIFACTS
+                    .iter()
+                    .map(|spec| (*spec).to_owned()),
+            );
+        }
+        enable
     }
 
     /// Turns flags into keep policies.
@@ -358,6 +386,15 @@ pub fn render_catalog(out: &mut impl io::Write) -> io::Result<()> {
         out,
         "{}",
         "`off` artifacts need an explicit opt-in: --enable <spec>, or in voom.toml.".dimmed()
+    )?;
+    writeln!(
+        out,
+        "{}",
+        format_args!(
+            "`--clean-dependencies` enables the dependency directories together: {}.",
+            crate::catalog::DEPENDENCY_ARTIFACTS.join(", ")
+        )
+        .dimmed()
     )
 }
 

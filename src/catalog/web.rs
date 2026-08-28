@@ -22,6 +22,11 @@ pub(super) const NODE: Ecosystem = Ecosystem {
             "build/",
             "`build/` beside a package.json is as often a hand-written build-script directory as output.",
         ),
+        Artifact::off(
+            "node_modules/",
+            "A network-fetched dependency cache, not build output: removing it costs a full \
+             reinstall and breaks offline work.",
+        ),
     ],
 };
 
@@ -30,7 +35,15 @@ pub(super) const PHP: Ecosystem = Ecosystem {
     name: "PHP",
     markers: &["composer.json"],
     anchor: Anchor::Sibling,
-    artifacts: &[Artifact::on(".phpunit.cache/"), Artifact::on(".phpunit.result.cache")],
+    artifacts: &[
+        Artifact::on(".phpunit.cache/"),
+        Artifact::on(".phpunit.result.cache"),
+        Artifact::off(
+            "vendor/",
+            "A network-fetched dependency cache, not build output: removing it costs a full \
+             `composer install` and breaks offline work.",
+        ),
+    ],
 };
 
 pub(super) const ELM: Ecosystem = Ecosystem {

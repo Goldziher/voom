@@ -224,11 +224,45 @@ pub const MAX_ECOSYSTEMS: usize = u32::BITS as usize;
 
 /// Directory names that are dependency caches, not build output.
 ///
-/// `adrs/0001-mission-and-scope.md` puts these out of scope entirely: they are network-fetched
-/// and removing them costs a re-download and breaks offline work. They are absent from the
-/// catalog by construction, never descended into by the scanner, and no flag turns them on.
-/// A user who wants them gone names the path explicitly in their own configuration.
+/// They are network-fetched, so removing one costs a re-download and can break offline work.
+/// The scanner never *descends* into one — that pruning is where most of the walk's saving
+/// comes from — and the catalog never turns one on by default.
+///
+/// Since the amendment to `adrs/0001-mission-and-scope.md` they are no longer absent from the
+/// catalog: several are declared as ordinary off-by-default artifacts so that a user who wants
+/// them gone can opt in with `--clean-dependencies` (or the individual specs) instead of
+/// hand-writing an unanchored `include`. A marker still has to prove each one, and a default
+/// run still leaves every one of them alone —
+/// `a_dependency_directory_artifact_is_never_on_by_default` is what keeps that true.
 pub const DEPENDENCY_DIRS: &[&str] = &["node_modules", "vendor", "deps", "bower_components"];
+
+/// The artifact specs `--clean-dependencies` turns on.
+///
+/// The flag is pure sugar: it is exactly equivalent to naming each of these to `--enable`, so
+/// it routes through the same [`Selection`](crate::classify::Selection) path as any other
+/// opt-in and inherits configuration layering, keep policies and reporting unchanged.
+///
+/// `python.venv` is here because a virtualenv is the same kind of thing — a fetched tree whose
+/// removal costs a reinstall rather than a rebuild — even though `.venv` is not one of the
+/// directory names in [`DEPENDENCY_DIRS`].
+pub const DEPENDENCY_ARTIFACTS: &[&str] = &[
+    "node.node_modules",
+    "php.vendor",
+    "go.vendor",
+    "elixir.deps",
+    "python.venv",
+];
+
+/// Whether an `<ecosystem>.<artifact>` spec is one of the dependency directories
+/// `--clean-dependencies` reaches.
+///
+/// The report uses this to name the flag in its footer: removing a dependency directory is the
+/// one thing voom's documentation promised would never happen, so a run that did it has to say
+/// so rather than let the removal pass as ordinary build output.
+#[must_use]
+pub fn is_dependency_artifact(spec: &str) -> bool {
+    DEPENDENCY_ARTIFACTS.contains(&spec)
+}
 
 /// The ecosystem with this id, if the catalog declares one.
 #[must_use]
@@ -321,21 +355,60 @@ mod tests {
         }
     }
 
-    /// ADR 0001 keeps dependency directories out of the catalog. `vendor/bundle/` is allowed
-    /// because it names Ruby's build output *inside* `vendor/`, not `vendor/` itself.
+    /// A dependency directory may be in the catalog, and may never be swept without being asked
+    /// for by name.
+    ///
+    /// This used to forbid the entry outright. ADR 0001's amendment allows it, and the property
+    /// that mattered is unchanged and still the thing asserted here: `node_modules/` and the
+    /// rest cannot be removed by a run that did not explicitly opt in, because `default_on` is
+    /// what a default run reads and it is false for every one of them. The mandatory note is
+    /// the second half — `voom catalog` and the `--verbose` skip line both print it, so a user
+    /// meeting the opt-in is told what it costs before they take it.
+    ///
+    /// `vendor/bundle/` is not one of these: it names Ruby's build output *inside* `vendor/`,
+    /// not `vendor/` itself, and stays on by default.
     #[test]
-    fn no_artifact_is_a_dependency_directory() {
+    fn a_dependency_directory_artifact_is_never_on_by_default() {
         for ecosystem in CATALOG {
             for artifact in ecosystem.artifacts {
                 let whole = artifact.path.trim_end_matches('/');
+                if !DEPENDENCY_DIRS.contains(&whole) {
+                    continue;
+                }
                 assert!(
-                    !DEPENDENCY_DIRS.contains(&whole),
-                    "`{}`: artifact `{}` is a dependency directory, which ADR 0001 puts out of scope",
+                    !artifact.default_on,
+                    "`{}`: artifact `{}` is a dependency directory and is on by default — a run \
+                     that asked for nothing would delete a network-fetched cache",
+                    ecosystem.id, artifact.path
+                );
+                assert!(
+                    artifact.note.is_some(),
+                    "`{}`: dependency directory `{}` has no note saying what removing it costs",
                     ecosystem.id,
                     artifact.path
                 );
             }
         }
+    }
+
+    /// `--clean-dependencies` is sugar over these specs, so each has to name a real declaration
+    /// and each has to be an opt-in — otherwise the flag would either fail at parse time or be
+    /// enabling something a default run already took.
+    #[test]
+    fn every_dependency_artifact_spec_names_an_opt_in_declaration() {
+        for spec in DEPENDENCY_ARTIFACTS {
+            let id = crate::classify::ArtifactId::from_spec(spec)
+                .unwrap_or_else(|| panic!("`{spec}` is in DEPENDENCY_ARTIFACTS but not in the catalog"));
+            assert!(
+                !id.artifact().default_on,
+                "`{spec}` is enabled by --clean-dependencies but is already on by default"
+            );
+            assert!(is_dependency_artifact(spec), "`{spec}` must answer to the predicate");
+        }
+        assert!(
+            !is_dependency_artifact("rust.target"),
+            "an ordinary artifact is not a dependency directory"
+        );
     }
 
     /// Every off-by-default artifact explains itself, because `voom catalog` prints the note

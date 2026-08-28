@@ -184,21 +184,7 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
     let resolver = resolver_for(root, options)?;
     let at_root = resolver.root_config()?;
 
-    // Classification runs permissively: an off-by-default artifact must still be *found* here,
-    // because a `voom.toml` deeper in the tree may turn it on. The real decision is made below,
-    // against the configuration resolved at each artifact's own location.
-    let selection = match &options.flags.ecosystems {
-        Some(ids) => {
-            let (selection, unknown) = Selection::only(ids.iter().map(String::as_str));
-            if let Some(name) = unknown.first() {
-                return Err(Error::UnknownEcosystem { name: name.clone() });
-            }
-            selection.permissive()
-        }
-        None => Selection::all().permissive(),
-    };
-
-    let classifier = Classifier::new(selection)?;
+    let classifier = Classifier::new(selection_for(options)?)?;
     let roots = std::slice::from_ref(&root.to_path_buf()).to_vec();
     let guard = Guard::new(&roots, options.one_file_system)?;
 
@@ -222,11 +208,68 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
     collected.skips.extend(scanned.skips);
     collected.skipped_count += scanned.skipped_count;
 
-    // The configuration in effect for an artifact is the one resolved at its own directory, so
-    // a repository's committed `voom.toml` governs its own subtree during a `$HOME`-wide run.
+    let to_remove = select(root, &resolver, scanned.findings, options, collected)?;
+
+    // Removal is independent per artifact and embarrassingly parallel; a failure on one is
+    // recorded and never aborts the run.
+    let removal = Removal {
+        dry_run: options.dry_run,
+        force: options.force,
+    };
+    let entries: Vec<Entry> = to_remove
+        .into_par_iter()
+        .map(|(finding, bytes)| {
+            let outcome = guard.remove(&finding.path, bytes, removal);
+            Entry {
+                path: finding.path.clone(),
+                finding,
+                bytes,
+                outcome,
+            }
+        })
+        .collect();
+    collected.entries.extend(entries);
+    Ok(())
+}
+
+/// Which ecosystems the classifier will consider, always permissively.
+///
+/// An off-by-default artifact must still be *found*, because a `voom.toml` deeper in the tree
+/// may turn it on. The real decision is made in [`select`], against the configuration resolved
+/// at each artifact's own location.
+///
+/// # Errors
+///
+/// [`Error::UnknownEcosystem`] if `--ecosystems` names one the catalog does not ship.
+fn selection_for(options: &RunOptions) -> Result<Selection> {
+    let Some(ids) = &options.flags.ecosystems else {
+        return Ok(Selection::all().permissive());
+    };
+    let (selection, unknown) = Selection::only(ids.iter().map(String::as_str));
+    if let Some(name) = unknown.first() {
+        return Err(Error::UnknownEcosystem { name: name.clone() });
+    }
+    Ok(selection.permissive())
+}
+
+/// Decides which findings are actually removed, and measures the ones that survive.
+///
+/// The configuration in effect for an artifact is the one resolved at its own directory, so a
+/// repository's committed `voom.toml` governs its own subtree during a `$HOME`-wide run.
+///
+/// # Errors
+///
+/// [`Error::Config`] if a `voom.toml` below the root is missing, unreadable, or invalid.
+fn select(
+    root: &Path,
+    resolver: &Resolver,
+    findings: Vec<Finding>,
+    options: &RunOptions,
+    collected: &mut Collected,
+) -> Result<Vec<(Finding, u64)>> {
     let now = SystemTime::now();
-    let mut survivors: Vec<(Finding, Arc<Resolved>)> = Vec::with_capacity(scanned.findings.len());
-    for finding in scanned.findings {
+    let mut survivors: Vec<(Finding, Arc<Resolved>)> = Vec::with_capacity(findings.len());
+    for finding in findings {
         let dir = finding.path.parent().unwrap_or(root);
         let config = resolver.for_dir(dir)?;
 
@@ -266,26 +309,29 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
         }
     }
 
-    // Removal is independent per artifact and embarrassingly parallel; a failure on one is
-    // recorded and never aborts the run.
-    let removal = Removal {
-        dry_run: options.dry_run,
-        force: options.force,
-    };
-    let entries: Vec<Entry> = to_remove
-        .into_par_iter()
-        .map(|(finding, bytes)| {
-            let outcome = guard.remove(&finding.path, bytes, removal);
-            Entry {
-                path: finding.path.clone(),
-                finding,
-                bytes,
-                outcome,
-            }
-        })
-        .collect();
-    collected.entries.extend(entries);
-    Ok(())
+    // An artifact nested inside another artifact that is also being removed is redundant: the
+    // outer removal takes it, so removing both would count its bytes twice in the report and
+    // then refuse the second as `Vanished`. Only the opt-in dependency artifacts can produce
+    // the nesting — the walker prunes at every other match — but the check is general, because
+    // the invariant it defends is.
+    //
+    // Sorted, one path of state: `Path`'s ordering is component-wise, so everything under a
+    // kept path sorts immediately after it and before anything that is not under it. Comparing
+    // each candidate against the last one kept is therefore enough, and keeps this linear
+    // rather than quadratic on a sweep with thousands of artifacts.
+    to_remove.sort_by(|(left, _), (right, _)| left.path.cmp(&right.path));
+    let mut covering: Option<PathBuf> = None;
+    to_remove.retain(|(finding, _)| {
+        if let Some(outer) = covering.as_ref().filter(|outer| finding.path.starts_with(outer)) {
+            let reason = SkipReason::Covered { by: outer.clone() };
+            note(collected, options.verbose, finding.path.clone(), reason);
+            return false;
+        }
+        covering = Some(finding.path.clone());
+        true
+    });
+
+    Ok(to_remove)
 }
 
 /// A spinner for the scan phase, or nothing when it would be noise.

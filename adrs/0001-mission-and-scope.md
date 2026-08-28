@@ -3,6 +3,8 @@
 - Status: Accepted
 - Date: 2026-08-28
 - Updated: 2026-08-28 — `--caches` shipped; recorded the wider skip list and why.
+- Updated: 2026-08-28 — dependency directories are in the catalog, off by default, behind
+  `--clean-dependencies`. See the second amendment.
 
 ## Context
 
@@ -123,3 +125,62 @@ under `~/workspace`. `--caches` restores the full set (475).
 Like the protected-path denylist (ADR 0006), `CACHE_DIRS` (`src/caches.rs`) is append-only:
 entries may be added, but removing or narrowing one requires an ADR amendment explaining why it
 is safe, never a drive-by edit.
+
+## Amendment — dependency directories become reachable, off by default — 2026-08-28
+
+The "Explicitly out of scope" list above says dependency directories "are excluded from the
+built-in catalog entirely, and can only be reached through explicit user configuration", and
+ADR 0003 restates it as "no flag turns them on". That is the hardest line in this document and
+it is now amended, at users' explicit request: `node_modules/`, composer's `vendor/`, Go's
+`vendor/`, and mix's `deps/` **are in the catalog**, as ordinary `default_on = false` entries,
+and `--clean-dependencies` turns the group on in one flag.
+
+**Nothing about a default run changes.** Every one of these entries is `Artifact::off` with a
+mandatory note, which is the same mechanism `python.venv` has used since 0.1.0. A run that asks
+for nothing sweeps none of them, reports none of them, and — because the walker still prunes at
+the directory level — does not so much as enumerate one.
+`a_dependency_directory_artifact_is_never_on_by_default` (`src/catalog/mod.rs`) asserts the
+`default_on` half over the whole table, and
+`should_never_remove_a_dependency_directory_by_default` (`tests/safety.rs`) asserts the
+end-to-end half against a real tree. The second was watched failing against an
+`Artifact::on("node_modules/")`.
+
+**The original exclusion was right and remains the default.** The reasoning in the decision
+above is unchanged: these are network-fetched caches, removing one costs a re-download and can
+break offline work, and that is a materially different bargain from removing build output that
+regenerates from source already on disk. It is the *default* that this reasoning determines,
+not the availability. `safety-first`'s "prefer a false negative" is a rule about what voom does
+when nobody has told it otherwise; a user who types `--clean-dependencies` has told it
+otherwise.
+
+**Why the catalog rather than a bespoke mechanism.** Every one of these directories has a real
+marker file — `package.json`, `composer.json`, `go.mod`, `mix.exs` — so marker anchoring
+(ADR 0002) applies to them unchanged, and a `node_modules/` with nothing proving it is left
+alone exactly like an unproven `target/`. Expressing them as catalog entries means the
+generated fixtures cover them (both the positive and the negative), configuration layering and
+`[[paths]]` rules address them by spec, keep policies apply, and both renderers report them —
+none of which a special case would have inherited. `--clean-dependencies` is sugar over
+`--enable`, listed in `catalog::DEPENDENCY_ARTIFACTS`; there is no second selection path.
+
+The alternative this replaces — telling users to write an unanchored `include` — was strictly
+worse. `include` (ADR 0004) removes a path with *no* marker requirement at all, so the advice
+voom was giving amounted to "disable the safety rail and name the directory yourself", on the
+one case where users most predictably want the behaviour. An opt-in that keeps marker anchoring
+is safer than the workaround it removes the need for.
+
+What does **not** change:
+
+- `.git/`, `.hg/` and `.svn/` are unreachable by this or any flag. They are in
+  `scan.rs::NEVER_DESCEND` for a different reason and are neither descended into nor
+  classified.
+- The walk never enters a dependency directory. Classification happens at the directory itself
+  and the walker still returns `WalkState::Skip`, so an enabled `node_modules/` costs one
+  memoized anchor listing and zero entries below it
+  (`should_not_enumerate_inside_an_enabled_dependency_directory`).
+- Build output declared *inside* a dependency directory — Ruby's `vendor/bundle/`, Julia's
+  `deps/build/` — is reached exactly as before, with the flag on or off.
+- `bower_components/` stays out. It is pruned, but no ecosystem declares it, because no marker
+  distinguishes a Bower install from any other directory of that name.
+- Machine-global caches and installed toolchains remain a *location* exclusion under
+  `--caches`, for the reason the previous amendment gives: marker anchoring cannot tell an
+  installed program from a project built in place.

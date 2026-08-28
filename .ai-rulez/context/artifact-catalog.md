@@ -58,12 +58,18 @@ pub(super) const RUST: Ecosystem = Ecosystem {
    marker the catalog does not have — but it will not notice a marker or artifact the README
    *omits*, so check the other direction yourself.
 
-## What never goes in
+## What goes in only as an opt-in
 
 Dependency directories: `node_modules/`, composer `vendor/`, Go `vendor/`, mix `deps/`.
 These are network-fetched caches, not build output — removing them costs the user a
-re-download and can break offline work. ADR 0001 puts them out of scope and no flag turns
-them on. Users who want them gone name the path explicitly in their own config.
+re-download and can break offline work. ADR 0001's amendment lets them into the table, but
+**only ever as `Artifact::off` with a note**. `--clean-dependencies` enables the group
+(`catalog::DEPENDENCY_ARTIFACTS`) and is pure sugar over `--enable`; a default run sweeps none
+of them, and the walker still never descends into one.
+
+`bower_components/` is the one that stays out entirely: it is pruned like the others, but no
+marker distinguishes a Bower install from any other directory of that name, so ADR 0002 gives
+us nothing to write.
 
 Machine-global tool caches and installed toolchains (`~/.cargo/registry`, `~/.npm`, `~/.pyenv`,
 `~/google-cloud-sdk`) are likewise not catalog entries. They are excluded by *location* instead,
@@ -80,8 +86,9 @@ In `src/catalog/mod.rs`, over the whole table:
 - Every entry declares at least one artifact, and every `id` is unique.
 - No artifact path is absolute, home-relative, or contains a `..` or `.` segment — it must
   stay under its anchor.
-- No artifact is a known dependency directory name (`vendor/bundle/` passes: it names Ruby's
-  build output *inside* `vendor/`, not `vendor/` itself).
+- No artifact matching a known dependency directory name is on by default, and each carries a
+  note (`vendor/bundle/` is unaffected: it names Ruby's build output *inside* `vendor/`, not
+  `vendor/` itself).
 - Every off-by-default artifact has a `note`.
 - The catalog fits the classifier's `u32` marker bitmask (`MAX_ECOSYSTEMS` = 32 entries).
 - No ancestor anchor climbs more than 8 levels.

@@ -286,6 +286,58 @@ fn should_sweep_a_cache_named_as_the_scan_root_without_the_flag() {
     assert!(cache.join("package.json").exists(), "and only its build output is");
 }
 
+/// A tree with a proven `node_modules/` and a `dist/` beside it.
+fn node_tree() -> TempDir {
+    let root = TempDir::new().expect("a temporary directory");
+    fs::write(root.path().join("package.json"), b"{}").unwrap();
+    fs::create_dir_all(root.path().join("node_modules/left-pad")).unwrap();
+    fs::write(root.path().join("node_modules/left-pad/index.js"), b"module").unwrap();
+    fs::create_dir_all(root.path().join("dist")).unwrap();
+    fs::write(root.path().join("dist/bundle.js"), b"bundled").unwrap();
+    root
+}
+
+/// The whole flag, through the real binary: without it the dependency cache is untouched.
+#[test]
+fn should_leave_node_modules_alone_without_the_dependency_flag() {
+    let tree = node_tree();
+
+    voom().arg(tree.path()).assert().success();
+
+    assert!(
+        tree.path().join("node_modules/left-pad/index.js").exists(),
+        "an ordinary sweep must not reach a dependency cache"
+    );
+    assert!(!tree.path().join("dist").exists(), "and still sweeps build output");
+}
+
+#[test]
+fn should_remove_node_modules_with_the_dependency_flag() {
+    let tree = node_tree();
+
+    voom().arg("--clean-dependencies").arg(tree.path()).assert().success();
+
+    assert!(!tree.path().join("node_modules").exists());
+    assert!(tree.path().join("package.json").exists(), "the source is untouched");
+}
+
+/// `--dry-run` is the same pipeline with the last step withheld, and that has to hold for the
+/// one flag that reaches directories nothing else does.
+#[test]
+fn should_predict_a_dependency_removal_in_a_dry_run() {
+    let tree = node_tree();
+    let before = snapshot(tree.path());
+
+    voom()
+        .args(["--clean-dependencies", "--dry-run"])
+        .arg(tree.path())
+        .assert()
+        .success()
+        .stdout(contains("node_modules"));
+
+    assert_eq!(snapshot(tree.path()), before, "a dry run must not touch the tree");
+}
+
 #[test]
 fn should_print_the_catalog() {
     voom()

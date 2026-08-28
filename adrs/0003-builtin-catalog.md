@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-28
 - Updated: 2026-08-28 — the .NET `ancestor(3)` bound is now exercised end to end.
+- Updated: 2026-08-28 — dependency directories added as `†` entries (see ADR 0001's amendment).
 
 ## Context
 
@@ -40,9 +41,9 @@ The initial catalog covers **24 ecosystems**:
 | id | Markers | Artifacts | Anchor |
 | --- | --- | --- | --- |
 | `rust` | `Cargo.toml` | `target/` | sibling |
-| `node` | `package.json` | `dist/`, `.next/`, `.nuxt/`, `.svelte-kit/`, `.astro/`, `.turbo/`, `.parcel-cache/`, `.vite/`, `.nyc_output/`, `*.tsbuildinfo`, `build/`† | sibling |
+| `node` | `package.json` | `dist/`, `.next/`, `.nuxt/`, `.svelte-kit/`, `.astro/`, `.turbo/`, `.parcel-cache/`, `.vite/`, `.nyc_output/`, `*.tsbuildinfo`, `build/`†, `node_modules/`† | sibling |
 | `python` | `pyproject.toml`, `setup.py`, `setup.cfg` | `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `.tox/`, `*.egg-info/`, `htmlcov/`, `.coverage`, `build/`, `dist/`, `.venv/`† | sibling / ancestor(1) for `__pycache__` |
-| `go` | `go.mod` | `bin/`† | sibling |
+| `go` | `go.mod` | `bin/`†, `vendor/`† | sibling |
 | `zig` | `build.zig` | `.zig-cache/`, `zig-cache/`, `zig-out/` | sibling |
 | `swift` | `Package.swift` | `.build/` | sibling |
 | `xcode` | `*.xcodeproj`, `*.xcworkspace` | `DerivedData/` | sibling |
@@ -51,9 +52,9 @@ The initial catalog covers **24 ecosystems**:
 | `dotnet` | `*.csproj`, `*.fsproj`, `*.vbproj`, `*.sln` | `bin/`, `obj/` | ancestor(3) |
 | `cmake` | `CMakeLists.txt` | `build/`, `cmake-build-*/`, `CMakeFiles/` | sibling |
 | `dart` | `pubspec.yaml` | `.dart_tool/`, `build/` | sibling |
-| `elixir` | `mix.exs` | `_build/`, `.elixir_ls/` | sibling |
+| `elixir` | `mix.exs` | `_build/`, `.elixir_ls/`, `deps/`† | sibling |
 | `ruby` | `Gemfile`, `*.gemspec` | `.bundle/`, `vendor/bundle/`, `coverage/`, `pkg/`†, `tmp/`† | sibling |
-| `php` | `composer.json` | `.phpunit.cache/`, `.phpunit.result.cache` | sibling |
+| `php` | `composer.json` | `.phpunit.cache/`, `.phpunit.result.cache`, `vendor/`† | sibling |
 | `scala` | `build.sbt` | `target/`, `project/target/`, `.bloop/`, `.metals/` | sibling |
 | `haskell` | `*.cabal`, `stack.yaml` | `dist-newstyle/`, `.stack-work/` | sibling |
 | `ocaml` | `dune-project` | `_build/` | sibling |
@@ -70,14 +71,15 @@ source directory even inside that ecosystem (`build/` under `package.json`, `bin
 cheap (`.venv/`, which costs a reinstall). Users enable them per-ecosystem or per-path in
 `voom.toml` (ADR 0004).
 
-**Dependency directories are absent by construction**, per ADR 0001: `node_modules/`,
-composer's `vendor/`, mix's `deps/`, and Go's `vendor/` are not in the table at all and no
-flag turns them on. Reaching them requires the user to name a path explicitly.
+**Dependency directories are never on by default.** `node_modules/`, composer's `vendor/`,
+Go's `vendor/`, and mix's `deps/` are in the table as `†` entries only, reachable through
+`--clean-dependencies` or the individual specs. See the amendment at the end of this file and
+ADR 0001's.
 
 The catalog is guarded by construction-time tests over the whole table: every entry has ≥1
 marker (enforcing ADR 0002) and ≥1 artifact, every `id` is unique, no artifact path escapes its
-anchor via `..` or an absolute component, no artifact matches a dependency directory name, every
-off-by-default artifact carries a `note`, artifact slugs are unique within an ecosystem, the
+anchor via `..` or an absolute component, no artifact matching a dependency directory name is
+on by default, every off-by-default artifact carries a `note`, artifact slugs are unique within an ecosystem, the
 table fits the classifier's `u32` marker bitmask, and no ancestor anchor climbs more than eight
 levels.
 
@@ -146,3 +148,32 @@ sweep over a real nested tree remove exactly what `ancestor(3)` promises and not
 wrong bound is either lost recall (too small) or a deletion justified by a marker several
 directories away from what it actually proved (too large); this test would catch either
 direction of regression.
+
+## Amendment — dependency directories are `†` entries — 2026-08-28
+
+"Including `node_modules/` behind a flag" is listed above under *Alternatives considered*,
+rejected on the grounds that such a flag "belongs to a different tool with a different safety
+story". ADR 0001's amendment reverses that at users' explicit request, and this records what it
+means for the table.
+
+Four entries were added — `node.node_modules`, `php.vendor`, `go.vendor`, `elixir.deps` — each
+`Artifact::off` with a mandatory note. `python.venv` was already `†` and is unchanged. The `†`
+footnote's list of reasons an artifact is off by default gains a third: *removal is a
+re-download rather than a rebuild*.
+
+The safety story is not different, which is the point. Each of these directories has a real
+marker — `package.json`, `composer.json`, `go.mod`, `mix.exs` — so ADR 0002's rule applies to
+them exactly as to `target/`, and an unproven `node_modules/` is left alone by the generated
+negative fixture like every other entry. What makes them a different *kind* of entry is only
+the cost of being wrong about timing rather than about identity, and `default_on = false` is
+the mechanism this ADR already provides for that.
+
+The construction-time invariant changed shape, not strength. `no_artifact_is_a_dependency_directory`
+became `a_dependency_directory_artifact_is_never_on_by_default`: the entry is now permitted, and
+permitted only when `default_on == false` *and* it carries a `note`. The property that mattered —
+that no run which asked for nothing can sweep one — is still what is asserted, and is now
+asserted end to end as well, in `tests/safety.rs`.
+
+`bower_components/` remains in `DEPENDENCY_DIRS` and out of the catalog: it is pruned like the
+others, but no marker distinguishes a Bower install from any other directory of that name, so
+there is no entry that ADR 0002 would let us write.

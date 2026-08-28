@@ -65,6 +65,7 @@ expression: document_for_tests()
   ],
   "totals": {
     "bytes": 4200000000,
+    "dependencies": 0,
     "failed": 1,
     "partial": 0,
     "partial_bytes": 0,

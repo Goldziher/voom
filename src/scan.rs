@@ -20,11 +20,13 @@ use crate::caches::CacheRoots;
 use crate::classify::{Classifier, Finding, Provenance, SkipReason, Verdict, is_dependency_dir};
 use crate::error::{Error, Result};
 
-/// Directories that are never descended into, whatever else is true of them.
+/// Directories that are never descended into and never classified, whatever else is true of
+/// them.
 ///
-/// `.git` is not an artifact and its contents are irreplaceable; the rest are the dependency
-/// caches ADR 0001 puts out of scope. Skipping them is where most of the saving comes from —
-/// they are the deepest and widest subtrees on a typical disk.
+/// A VCS directory is not an artifact and its contents are irreplaceable, so it is out of reach
+/// of every flag — `--clean-dependencies` included. Dependency caches are pruned just as hard
+/// but are *not* in this list: they are classified at the directory itself before the prune, so
+/// that the opt-in artifacts declared for them (ADR 0001's amendment) can fire.
 pub const NEVER_DESCEND: &[&str] = &[".git", ".hg", ".svn"];
 
 /// A compiled set of configured path globs, and the pattern each match came from.
@@ -328,11 +330,12 @@ impl Visitor<'_> {
             return WalkState::Skip;
         }
 
-        if is_dir && is_pruned(entry.file_name()) {
-            // Two catalog entries declare build output *inside* a dependency directory
-            // (Ruby's `vendor/bundle/`, Julia's `deps/build/`). Check those exact paths
-            // before pruning, so the entries are reachable without walking the cache below.
-            self.check_inside_dependency(entry.file_name(), path, sender);
+        if is_dir && is_never_descended(entry.file_name()) {
+            return WalkState::Skip;
+        }
+
+        if is_dir && is_dependency_dir(entry.file_name()) {
+            self.visit_dependency_dir(entry.file_name(), path, sender);
             return WalkState::Skip;
         }
 
@@ -359,6 +362,37 @@ impl Visitor<'_> {
         }
 
         WalkState::Continue
+    }
+
+    /// Decides what a dependency directory is, without ever entering it.
+    ///
+    /// ~keep The caller prunes unconditionally on return, and that is not negotiable: declining
+    /// to enumerate `node_modules/` is where essentially all of the walk's wall-clock saving
+    /// comes from. What this adds is one classification of the *directory itself*, which costs
+    /// at most a single memoized `read_dir` of its anchor — a directory the classifier has
+    /// almost always listed already for the artifacts beside it — and never touches an entry
+    /// below. `should_not_enumerate_inside_an_enabled_dependency_directory` pins both halves.
+    ///
+    /// Classification runs whether or not the artifact is enabled, because the enable decision
+    /// belongs to the classifier and to the configuration resolved at the artifact's own
+    /// directory (ADR 0004) — the walker does not get a second opinion on it. With the opt-in
+    /// off, the verdict is a `NotEnabled` skip that says which spec would turn it on.
+    fn visit_dependency_dir(&self, name: &OsStr, path: &Path, sender: &mpsc::Sender<Message>) {
+        // The inside-check runs on every verdict, including `Artifact`. The classifier here is
+        // permissive (`run.rs` builds it that way so a deeper `voom.toml` can still turn an
+        // artifact on), so an `Artifact` verdict means "this could be taken", not "this will
+        // be" — and skipping the check on it lost Ruby's `vendor/bundle/` on any tree that also
+        // had a `composer.json` beside the same `vendor/`. Whether the outer directory is
+        // actually taken is decided in `run.rs`, which also drops a finding the outer one
+        // covers, so nothing is counted twice.
+        self.check_inside_dependency(name, path, sender);
+        match self.classifier.classify(self.root, path, true) {
+            Verdict::Artifact(finding) => {
+                let _ = sender.send(Message::Found(Box::new(finding)));
+            }
+            Verdict::Skip(reason) => self.note_skip(sender, path, reason),
+            Verdict::NotACandidate => {}
+        }
     }
 
     /// Classifies the specific paths the catalog declares inside a dependency directory.
@@ -401,9 +435,9 @@ impl Visitor<'_> {
     }
 }
 
-/// Whether a directory is one voom never enters.
-fn is_pruned(name: &std::ffi::OsStr) -> bool {
-    NEVER_DESCEND.iter().any(|never| name == std::ffi::OsStr::new(never)) || is_dependency_dir(name)
+/// Whether a directory is one voom neither enters nor classifies.
+fn is_never_descended(name: &OsStr) -> bool {
+    NEVER_DESCEND.iter().any(|never| name == OsStr::new(never))
 }
 
 #[cfg(test)]
@@ -731,6 +765,58 @@ mod tests {
         assert!(
             found(&scan, fixture.path()).is_empty(),
             "nothing else inside vendor/ is walked"
+        );
+    }
+
+    /// The performance property `--clean-dependencies` had to be built around: a dependency
+    /// directory that is *going to be deleted* is still never enumerated.
+    ///
+    /// Two independent assertions, because either alone can pass while the walk is wrong. The
+    /// nested `target/` proves no entry below `node_modules/` reached the classifier at all.
+    /// The probe count proves it more precisely: marker resolution is the one place
+    /// classification touches the filesystem, and one probe is the project directory itself —
+    /// the anchor `node_modules/` resolves against. A walk that descended would probe
+    /// `node_modules/pkg` for the nested `target/` too.
+    #[test]
+    fn should_not_enumerate_inside_an_enabled_dependency_directory() {
+        let fixture = tree(&[
+            "package.json",
+            "node_modules/pkg/Cargo.toml",
+            "node_modules/pkg/target/app",
+        ]);
+        let mut selection = Selection::all();
+        assert!(selection.set("node.node_modules", true));
+        let classifier = Classifier::new(selection).expect("the catalog compiles");
+
+        let scan = scan(&[fixture.path().to_path_buf()], &classifier, &verbose());
+
+        assert_eq!(
+            found(&scan, fixture.path()),
+            vec!["node_modules".to_owned()],
+            "the directory itself is taken, and nothing inside it is even seen"
+        );
+        assert_eq!(
+            classifier.probe_count(),
+            1,
+            "one anchor listing — the project directory — and none below the prune"
+        );
+    }
+
+    /// With the opt-in off, the same tree yields nothing at all, and the skip says which spec
+    /// would change that.
+    #[test]
+    fn should_explain_a_dependency_directory_it_did_not_take() {
+        let fixture = tree(&["package.json", "node_modules/left-pad/index.js"]);
+        let scan = run(fixture.path(), &verbose());
+
+        assert!(found(&scan, fixture.path()).is_empty());
+        assert!(
+            scan.skips.iter().any(|skip| matches!(
+                &skip.reason,
+                SkipReason::NotEnabled { spec, note } if spec == "node.node_modules" && note.is_some()
+            )),
+            "a pruned dependency directory now explains its opt-in, got {:?}",
+            scan.skips
         );
     }
 

@@ -333,6 +333,16 @@ pub enum SkipReason {
     FilesystemBoundary,
     /// It is a symlink, which is never followed and never deleted through.
     Symlink,
+    /// Another artifact that is being removed already contains it.
+    ///
+    /// Only the opt-in dependency artifacts can produce this. The catalog declares build output
+    /// *inside* two dependency directories (Ruby's `vendor/bundle/`, Julia's `deps/build/`), so
+    /// enabling the outer directory as well makes the inner one redundant — and removing both
+    /// would count its bytes twice and then refuse the second as `Vanished`.
+    Covered {
+        /// The artifact that contains it.
+        by: PathBuf,
+    },
     /// Its anchor directory could not be listed, so nothing could prove it.
     Unreadable,
 }
@@ -349,6 +359,7 @@ impl SkipReason {
             Self::KeptByPolicy { .. } => "kept_by_policy",
             Self::FilesystemBoundary => "filesystem_boundary",
             Self::Symlink => "symlink",
+            Self::Covered { .. } => "covered",
             Self::Unreadable => "unreadable",
         }
     }
@@ -372,6 +383,17 @@ impl fmt::Display for SkipReason {
             Self::KeptByPolicy { rule, detail } => write!(f, "kept by {rule} ({detail})"),
             Self::FilesystemBoundary => write!(f, "on a different filesystem than the scan root"),
             Self::Symlink => write!(f, "is a symlink"),
+            // The final component only: the covering artifact is always an ancestor of the path
+            // this line already names, and the renderer prints that one relative to the scan
+            // root — repeating the absolute path here would be the longest string on the line
+            // and would say nothing the reader cannot see.
+            Self::Covered { by } => {
+                write!(
+                    f,
+                    "already inside {}",
+                    by.file_name().unwrap_or(by.as_os_str()).display()
+                )
+            }
             Self::Unreadable => write!(f, "its anchor directory could not be read"),
         }
     }

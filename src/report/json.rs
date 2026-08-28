@@ -112,6 +112,9 @@ pub fn document(result: &RunResult) -> Value {
             // Already inside `bytes`; broken out so a consumer can tell how much of the run's
             // reclaim came from artifacts that are still on disk.
             "partial_bytes": totals.partial_bytes,
+            // Already inside `reclaimed`; broken out because ADR 0001 promised these would
+            // never be removed and its amendment made them reachable only by explicit opt-in.
+            "dependencies": totals.dependencies,
         },
         "elapsed_ms": u64::try_from(result.elapsed.as_millis()).unwrap_or(u64::MAX),
     })

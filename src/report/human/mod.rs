@@ -408,6 +408,23 @@ fn write_footer(
         writeln!(out, "{GUTTER}{}", text.style(palette::refused()))?;
     }
 
+    if totals.dependencies > 0 {
+        // Named outright rather than left inside the headline: ADR 0001 promised these would
+        // never be removed, and its amendment made them reachable only by explicit opt-in. A
+        // run that took one owes the reader the sentence.
+        let noun = if totals.dependencies == 1 {
+            "directory"
+        } else {
+            "directories"
+        };
+        let text = format!(
+            "{} of them {} a dependency {noun} — a re-download, not build output",
+            totals.dependencies,
+            if totals.dependencies == 1 { "is" } else { "are" },
+        );
+        writeln!(out, "{GUTTER}{}", text.style(palette::refused()))?;
+    }
+
     if totals.partial > 0 {
         // "counted above" is the whole point of the line: without it a reader who sees an
         // artifact still on disk has no way to know whether its bytes made it into the total.
@@ -873,5 +890,57 @@ mod tests {
             render_to_string(&result, HumanOptions::default()),
             render_to_string(&result, HumanOptions::default())
         );
+    }
+
+    /// ADR 0001 promised dependency directories would never be removed, and its amendment made
+    /// them reachable only by an explicit opt-in. A run that took one has to say so in words —
+    /// a reader who sees `node_modules` in a list of artifacts should not have to know the
+    /// catalog to realise what just happened.
+    #[test]
+    fn should_name_a_dependency_directory_it_removed() {
+        let result = fixtures::result(
+            vec![
+                fixtures::entry(&spell("/projects/api/target"), "rust.target", 4_200, Outcome::Removed),
+                fixtures::entry(
+                    &spell("/projects/web/node_modules"),
+                    "node.node_modules",
+                    9_100,
+                    Outcome::Removed,
+                ),
+            ],
+            false,
+        );
+
+        let rendered = render_to_string(&result, HumanOptions::default());
+
+        assert!(
+            rendered.contains("1 of them is a dependency directory — a re-download, not build output"),
+            "the footer must name it:\n{rendered}"
+        );
+        assert_eq!(result.totals().dependencies, 1);
+        assert_eq!(
+            result.totals().reclaimed,
+            2,
+            "and it still counts as an artifact removed"
+        );
+    }
+
+    /// Two artifacts, neither of them a dependency: the line must not appear at all. A footer
+    /// that always carries it would train the reader to skim the one place a warning belongs.
+    #[test]
+    fn should_say_nothing_about_dependencies_when_none_were_removed() {
+        let result = fixtures::result(
+            vec![fixtures::entry(
+                &spell("/projects/api/target"),
+                "rust.target",
+                4_200,
+                Outcome::Removed,
+            )],
+            false,
+        );
+
+        let rendered = render_to_string(&result, HumanOptions::default());
+
+        assert!(!rendered.contains("dependency"), "no dependency line:\n{rendered}");
     }
 }

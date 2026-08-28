@@ -97,6 +97,68 @@ fn should_not_follow_a_symlink_out_of_the_scan_root() {
     );
 }
 
+/// Ruby declares build output *inside* a dependency directory (`vendor/bundle/`), and the
+/// walker reaches it by constructing that one path rather than walking the cache. A tree that
+/// is both Ruby and PHP has one `vendor/` with two claims on it, and the PHP claim is off by
+/// default — so the Ruby artifact must still be found.
+///
+/// This is a regression test with a date: the first `--clean-dependencies` implementation
+/// classified the dependency directory and, on an artifact verdict, skipped the inside-check.
+/// The classifier the pipeline uses is permissive, so "could be taken" was read as "will be
+/// taken", and a default run silently stopped finding `vendor/bundle/`.
+#[test]
+fn should_still_find_build_output_inside_a_dependency_directory_another_ecosystem_claims() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("Gemfile"), b"source 'https://rubygems.org'").unwrap();
+    fs::write(root.path().join("composer.json"), b"{}").unwrap();
+    fs::create_dir_all(root.path().join("vendor/bundle/gems")).unwrap();
+    fs::write(root.path().join("vendor/bundle/gems/rake.rb"), b"gem").unwrap();
+    fs::write(root.path().join("vendor/autoload.php"), b"<?php").unwrap();
+
+    let result = run(&options(root.path())).expect("the run completes");
+
+    assert_eq!(
+        result
+            .entries
+            .iter()
+            .map(|entry| entry.path.strip_prefix(root.path()).unwrap_or(&entry.path).to_owned())
+            .collect::<Vec<_>>(),
+        vec![std::path::PathBuf::from("vendor").join("bundle")],
+        "the Ruby artifact is found and the PHP dependency directory is not taken"
+    );
+    assert!(
+        root.path().join("vendor/autoload.php").exists(),
+        "and the rest of vendor/ is untouched"
+    );
+}
+
+/// Enabling the outer dependency directory makes the artifact declared inside it redundant.
+/// Removing both would count the inner one's bytes twice in the footer and then refuse it as
+/// `Vanished`, which is a report that contradicts itself.
+#[test]
+fn should_not_remove_an_artifact_another_removal_already_covers() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("Gemfile"), b"source 'https://rubygems.org'").unwrap();
+    fs::write(root.path().join("composer.json"), b"{}").unwrap();
+    fs::create_dir_all(root.path().join("vendor/bundle/gems")).unwrap();
+    fs::write(root.path().join("vendor/bundle/gems/rake.rb"), b"gem").unwrap();
+
+    let mut settings = options(root.path());
+    settings.flags.enable.push("php.vendor".to_owned());
+    let result = run(&settings).expect("the run completes");
+
+    assert_eq!(
+        result
+            .entries
+            .iter()
+            .map(|entry| entry.path.strip_prefix(root.path()).unwrap_or(&entry.path).to_owned())
+            .collect::<Vec<_>>(),
+        vec![std::path::PathBuf::from("vendor")],
+        "only the covering artifact is removed"
+    );
+    assert!(!root.path().join("vendor").exists(), "and it really went");
+}
+
 /// `.git/` is never entered, so nothing inside it can ever be classified.
 #[test]
 fn should_never_descend_into_a_vcs_directory() {
@@ -112,9 +174,8 @@ fn should_never_descend_into_a_vcs_directory() {
     assert_eq!(snapshot(root.path()), before);
 }
 
-/// Dependency caches are out of scope (ADR 0001) and no flag turns them on.
-#[test]
-fn should_never_remove_a_dependency_directory() {
+/// Builds a `package.json` with a populated `node_modules/` beside it.
+fn node_project() -> TempDir {
     let root = TempDir::new().unwrap();
     fs::write(root.path().join("package.json"), b"{}").unwrap();
     fs::create_dir_all(root.path().join("node_modules/left-pad")).unwrap();
@@ -123,13 +184,146 @@ fn should_never_remove_a_dependency_directory() {
         b"module.exports = 0",
     )
     .unwrap();
+    root
+}
+
+/// **The data-loss regression test for `--clean-dependencies`.**
+///
+/// ADR 0001's amendment put dependency directories *into* the catalog, which means the thing
+/// standing between a proven `node_modules/` and its deletion is now one `default_on` flag
+/// rather than its absence from the table. A default run — the one every user gets, and the one
+/// the README's "point it at `$HOME`" claim rests on — must leave it byte for byte alone.
+///
+/// Verified to fail: flipping the entry to `Artifact::on` deletes the tree here.
+#[test]
+fn should_never_remove_a_dependency_directory_by_default() {
+    let root = node_project();
+    let before = snapshot(root.path());
+
+    let result = run(&options(root.path())).expect("the run completes");
+
+    assert_eq!(
+        snapshot(root.path()),
+        before,
+        "a default run changed a tree whose only removable thing is a dependency cache"
+    );
+    assert!(
+        result.entries.is_empty(),
+        "a dependency directory must not even be reported as removable without the opt-in"
+    );
+}
+
+/// Nor does asking for some *other* opt-in reach it. `--enable` is per artifact, so an
+/// unrelated spec must not drag the dependency group along with it.
+#[test]
+fn should_not_remove_a_dependency_directory_for_an_unrelated_opt_in() {
+    let root = node_project();
+    fs::create_dir_all(root.path().join("build")).unwrap();
+    fs::write(root.path().join("build/out.js"), b"bundled").unwrap();
 
     let mut options = options(root.path());
-    // Even asking for everything cannot reach them: they are absent from the catalog.
     options.flags.enable = vec!["node.build".to_owned()];
     run(&options).expect("the run completes");
 
-    assert!(root.path().join("node_modules/left-pad/index.js").exists());
+    assert!(!root.path().join("build").exists(), "the artifact asked for goes");
+    assert!(
+        root.path().join("node_modules/left-pad/index.js").exists(),
+        "and the one that was not asked for stays"
+    );
+}
+
+/// The opt-in itself, end to end. ADR 0001's amendment is what allows this at all, and it is
+/// still marker-anchored: the `package.json` above is what proves the directory.
+#[test]
+fn should_remove_a_dependency_directory_when_it_is_explicitly_enabled() {
+    let root = node_project();
+
+    let mut options = options(root.path());
+    options.flags.enable = vec!["node.node_modules".to_owned()];
+    let result = run(&options).expect("the run completes");
+
+    assert!(!root.path().join("node_modules").exists());
+    assert_eq!(result.entries.len(), 1);
+    assert_eq!(result.entries[0].outcome, Outcome::Removed);
+    assert!(root.path().join("package.json").exists(), "the source is untouched");
+}
+
+/// Enabling one member of the dependency group must not enable the rest — the group only
+/// exists as `--clean-dependencies` sugar, not as a unit the classifier knows about.
+#[test]
+fn should_not_let_one_dependency_opt_in_enable_the_others() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("package.json"), b"{}").unwrap();
+    fs::write(root.path().join("composer.json"), b"{}").unwrap();
+    fs::write(root.path().join("mix.exs"), b"defmodule M do end").unwrap();
+    for dependency in ["node_modules", "vendor", "deps"] {
+        fs::create_dir_all(root.path().join(dependency)).unwrap();
+        fs::write(root.path().join(dependency).join("payload"), b"fetched").unwrap();
+    }
+
+    let mut options = options(root.path());
+    options.flags.enable = vec!["node.node_modules".to_owned()];
+    run(&options).expect("the run completes");
+
+    assert!(!root.path().join("node_modules").exists(), "the one named goes");
+    assert!(root.path().join("vendor/payload").exists(), "composer's stays");
+    assert!(root.path().join("deps/payload").exists(), "mix's stays");
+}
+
+/// `--clean-dependencies` is exactly the group, and nothing wider. A `.git/` in the same tree
+/// is out of its reach for a different reason and stays that way.
+#[test]
+fn should_remove_the_whole_dependency_group_when_the_flag_asks_for_it() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("package.json"), b"{}").unwrap();
+    fs::write(root.path().join("composer.json"), b"{}").unwrap();
+    fs::write(root.path().join("pyproject.toml"), b"[project]").unwrap();
+    for dependency in ["node_modules", "vendor", ".venv"] {
+        fs::create_dir_all(root.path().join(dependency)).unwrap();
+        fs::write(root.path().join(dependency).join("payload"), b"fetched").unwrap();
+    }
+    fs::create_dir_all(root.path().join(".git")).unwrap();
+    fs::write(root.path().join(".git/HEAD"), b"ref: refs/heads/main").unwrap();
+
+    let mut options = options(root.path());
+    options.flags.enable = voom::catalog::DEPENDENCY_ARTIFACTS
+        .iter()
+        .map(|spec| (*spec).to_owned())
+        .collect();
+    run(&options).expect("the run completes");
+
+    for dependency in ["node_modules", "vendor", ".venv"] {
+        assert!(
+            !root.path().join(dependency).exists(),
+            "`{dependency}` survived the opt-in that names it"
+        );
+    }
+    assert!(
+        root.path().join(".git/HEAD").exists(),
+        "a VCS directory is never reached"
+    );
+}
+
+/// Ruby's `vendor/bundle/` is build output declared *inside* a dependency directory, and it is
+/// on by default. Making `vendor/` itself an opt-in artifact must not have broken the targeted
+/// check that reaches through the prune to find it.
+#[test]
+fn should_still_reach_build_output_inside_a_dependency_directory() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("Gemfile"), b"source 'https://rubygems.org'").unwrap();
+    fs::create_dir_all(root.path().join("vendor/bundle/gems")).unwrap();
+    fs::write(root.path().join("vendor/bundle/gems/rake.rb"), b"# gem").unwrap();
+    fs::create_dir_all(root.path().join("vendor/hand-written")).unwrap();
+    fs::write(root.path().join("vendor/hand-written/keep.rb"), b"# mine").unwrap();
+
+    let result = run(&options(root.path())).expect("the run completes");
+
+    assert_eq!(result.entries.len(), 1);
+    assert!(!root.path().join("vendor/bundle").exists(), "the gems go");
+    assert!(
+        root.path().join("vendor/hand-written/keep.rb").exists(),
+        "and the rest of vendor/ is not touched by a default run"
+    );
 }
 
 /// A `.venv/` next to a `pyproject.toml` is proven, but expensive to rebuild, so it needs an

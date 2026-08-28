@@ -30,9 +30,14 @@ something the user wrote. Read `adrs/0002-marker-anchored-classification.md` and
   into a source tree must not become a deletion of that source tree.
 - **`--dry-run` is the same pipeline with the final step withheld** — never a parallel
   implementation. If dry-run and a real run could ever disagree, the design is wrong.
-- **Dependency directories stay out of the built-in catalog.** `node_modules/`, composer
-  `vendor/`, Go `vendor/`, mix `deps/` are not artifacts. No flag turns them on; only an
-  explicit user path reaches them.
+- **Dependency directories are never on by default.** `node_modules/`, composer `vendor/`, Go
+  `vendor/`, mix `deps/` and `.venv/` *are* in the catalog since ADR 0001's amendment, but only
+  ever as `Artifact::off` entries with a note. A run that asks for nothing must not sweep one,
+  must not report one, and must not enumerate inside one — reaching them takes
+  `--clean-dependencies` or the individual spec, and a marker still has to prove each. Do not
+  flip one to `Artifact::on`, and do not add a new one without both halves;
+  `a_dependency_directory_artifact_is_never_on_by_default` and
+  `should_never_remove_a_dependency_directory_by_default` are what enforce it.
 
 ## When you are unsure
 

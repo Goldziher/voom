@@ -15,10 +15,17 @@ pub(super) const GO: Ecosystem = Ecosystem {
     name: "Go",
     markers: &["go.mod"],
     anchor: Anchor::Sibling,
-    artifacts: &[Artifact::off(
-        "bin/",
-        "`bin/` beside a go.mod is as often hand-written scripts as `go install` output.",
-    )],
+    artifacts: &[
+        Artifact::off(
+            "bin/",
+            "`bin/` beside a go.mod is as often hand-written scripts as `go install` output.",
+        ),
+        Artifact::off(
+            "vendor/",
+            "A network-fetched dependency cache, not build output: removing it costs a full \
+             `go mod vendor` and breaks offline and `-mod=vendor` builds.",
+        ),
+    ],
 };
 
 pub(super) const ZIG: Ecosystem = Ecosystem {
