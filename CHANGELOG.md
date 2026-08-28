@@ -7,7 +7,7 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
-## [Unreleased]
+## [0.2.0] - 2026-08-28
 
 The `uvx` and publish fixes below were prepared as `0.1.1` and never tagged, so they ship here
 instead.
@@ -205,5 +205,6 @@ nothing; this is the tool.
 - Size accounting sums allocated blocks, so on a copy-on-write filesystem such as APFS the bytes
   reported can exceed the space actually freed where files are shared between clones.
 
-[Unreleased]: https://github.com/Goldziher/voom/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Goldziher/voom/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Goldziher/voom/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Goldziher/voom/releases/tag/v0.1.0
