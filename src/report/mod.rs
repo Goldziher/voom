@@ -143,8 +143,34 @@ pub struct RunResult {
     pub failures: Vec<WalkFailure>,
     /// Whether the final step was withheld.
     pub dry_run: bool,
-    /// Wall-clock time for the run.
-    pub elapsed: Duration,
+    /// Wall-clock time, for the run and for each stage of it.
+    pub timings: Timings,
+}
+
+/// Wall-clock time for the run and for each stage of the pipeline.
+///
+/// A tool whose claim is "it sweeps a home directory in seconds" owes the user the number, and
+/// one number is not enough to act on: a run that spends nine seconds walking and one deleting
+/// wants a different fix from one that spends nine seconds sizing. The stages are the ones in
+/// ADR 0001's pipeline, measured where they are actually called.
+///
+/// The stages do not sum to [`Timings::total`]. The difference is configuration loading, root
+/// normalization and building the worker pool — deliberately left as a residue rather than
+/// given a line of its own, because a stage nobody can act on is noise in a footer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Timings {
+    /// Everything, end to end.
+    pub total: Duration,
+    /// Walking the tree and classifying what it held (ADR 0005, ADR 0002).
+    pub scan: Duration,
+    /// Resolving each artifact's own configuration and applying the keep rules (ADR 0004).
+    pub policy: Duration,
+    /// Measuring each artifact, once, fanned out over `rayon` (ADR 0005).
+    pub size: Duration,
+    /// The rails and the removal itself (ADR 0006). Withheld under `--dry-run`, which is why
+    /// a dry run's number is near zero rather than absent.
+    pub delete: Duration,
 }
 
 impl RunResult {
@@ -295,7 +321,13 @@ pub(crate) mod fixtures {
             skipped_count: 0,
             failures: Vec::new(),
             dry_run,
-            elapsed: Duration::from_millis(1234),
+            timings: Timings {
+                total: Duration::from_millis(1234),
+                scan: Duration::from_millis(900),
+                policy: Duration::from_millis(12),
+                size: Duration::from_millis(210),
+                delete: Duration::from_millis(98),
+            },
         };
         result.sort();
         result

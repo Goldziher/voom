@@ -6,4 +6,5 @@ expression: "render_to_string(&skipped(), HumanOptions::default())"
   removed  100 B  rust  api/target
 
 1 artifact, 100 B reclaimed in 1.23s
+  scan 900.00ms · policy 12.00ms · size 210.00ms · delete 98.00ms
   2 candidates skipped  --verbose for why

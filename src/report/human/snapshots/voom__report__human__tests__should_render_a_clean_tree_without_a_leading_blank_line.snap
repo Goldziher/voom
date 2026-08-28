@@ -3,3 +3,4 @@ source: src/report/human/mod.rs
 expression: "render_to_string(&result(Vec::new(), false), HumanOptions::default())"
 ---
 0 artifacts, 0 B reclaimed in 1.23s
+  scan 900.00ms · policy 12.00ms · size 210.00ms · delete 98.00ms

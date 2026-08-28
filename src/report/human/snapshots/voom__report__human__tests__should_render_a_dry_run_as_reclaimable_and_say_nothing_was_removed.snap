@@ -6,4 +6,5 @@ expression: "render_to_string(&result, HumanOptions::default())"
   would remove  4.20 GB  rust  api/target
 
 1 artifact, 4.20 GB reclaimable in 1.23s
+  scan 900.00ms · policy 12.00ms · size 210.00ms · withheld 98.00ms
 Dry run — nothing was removed.

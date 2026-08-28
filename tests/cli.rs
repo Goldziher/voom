@@ -389,10 +389,13 @@ fn should_produce_identical_output_across_two_dry_runs() {
             .assert()
             .success();
         let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-        // The elapsed time is the one line that legitimately varies between runs.
+        // Wall-clock time is the only thing that legitimately varies between two runs over one
+        // tree: the headline's total, and the stage breakdown under it. Both are dropped by
+        // name rather than by a substring that an artifact path could also contain.
         stdout
             .lines()
-            .filter(|line| !line.contains(" in "))
+            .filter(|line| !line.contains(" reclaimable in ") && !line.contains(" reclaimed in "))
+            .filter(|line| !line.trim_start().starts_with("scan "))
             .collect::<Vec<_>>()
             .join("\n")
     };

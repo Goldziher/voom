@@ -381,8 +381,10 @@ fn write_footer(
         totals.reclaimed.bold(),
         plural(totals.reclaimed, "artifact"),
         format_size(totals.bytes, DECIMAL).bold(),
-        result.elapsed
+        result.timings.total
     )?;
+
+    writeln!(out, "{GUTTER}{}", stage_breakdown(result).style(palette::quiet()))?;
 
     if let Some(summary) = ecosystem_summary(result) {
         writeln!(out, "{GUTTER}{}", summary.style(palette::quiet()))?;
@@ -450,6 +452,30 @@ fn write_footer(
         writeln!(out, "{}", "Dry run — nothing was removed.".style(palette::quiet()))?;
     }
     Ok(())
+}
+
+/// Where the run's time actually went, stage by stage.
+///
+/// One number cannot be acted on: a sweep that spends nine seconds walking wants a different
+/// fix from one that spends nine seconds sizing, and voom's headline claim is about how long it
+/// takes. The stages are ADR 0001's pipeline, measured where each is called.
+///
+/// They deliberately do not sum to the headline. The residue — loading configuration,
+/// normalizing roots, building the worker pool — is real but is not something a reader can do
+/// anything about, and a footer line nobody can act on is noise.
+fn stage_breakdown(result: &RunResult) -> String {
+    let timings = &result.timings;
+    format!(
+        "scan {:.2?} · policy {:.2?} · size {:.2?} · {} {:.2?}",
+        timings.scan,
+        timings.policy,
+        timings.size,
+        // Under `--dry-run` the stage still runs — it is the same pipeline with the final step
+        // withheld — so the number is real and near zero rather than absent. Naming it
+        // "withheld" stops a reader reading that near-zero as a fast deletion.
+        if result.dry_run { "withheld" } else { "delete" },
+        timings.delete,
+    )
 }
 
 #[cfg(test)]

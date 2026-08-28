@@ -63,6 +63,13 @@ expression: document_for_tests()
       "reason": "no_marker"
     }
   ],
+  "timings_us": {
+    "delete": 98000,
+    "policy": 12000,
+    "scan": 900000,
+    "size": 210000,
+    "total": 1234000
+  },
   "totals": {
     "bytes": 4200000000,
     "dependencies": 0,

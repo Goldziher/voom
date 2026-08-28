@@ -9,4 +9,5 @@ expression: "render_to_string(&skipped(), verbose())"
   skipped  tool/bin     — not enabled — `bin/` beside a go.mod is as often hand-written scripts as output. Enable with `go.bin`
 
 1 artifact, 100 B reclaimed in 1.23s
+  scan 900.00ms · policy 12.00ms · size 210.00ms · delete 98.00ms
   2 candidates skipped

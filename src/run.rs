@@ -22,7 +22,7 @@ use crate::config::resolve::Flags;
 use crate::config::{Resolved, Resolver, discover};
 use crate::delete::{Guard, Removal};
 use crate::error::{Error, Result};
-use crate::report::{Entry, RunResult};
+use crate::report::{Entry, RunResult, Timings};
 use crate::scan::{PatternSet, ScanOptions, Skipped, scan};
 use crate::size::measure_all;
 
@@ -64,6 +64,12 @@ struct Collected {
     skips: Vec<Skipped>,
     skipped_count: usize,
     failures: Vec<crate::scan::WalkFailure>,
+    // Accumulated across roots: each root runs the whole pipeline, so a two-root run has two
+    // scan phases and the user wants the time the stage cost them, not the time one of them did.
+    scan: Duration,
+    policy: Duration,
+    size: Duration,
+    delete: Duration,
 }
 
 /// Runs the whole pipeline.
@@ -98,7 +104,13 @@ pub fn run(options: &RunOptions) -> Result<RunResult> {
         skipped_count: collected.skipped_count,
         failures: collected.failures,
         dry_run: options.dry_run,
-        elapsed: started.elapsed(),
+        timings: Timings {
+            total: started.elapsed(),
+            scan: collected.scan,
+            policy: collected.policy,
+            size: collected.size,
+            delete: collected.delete,
+        },
     };
     result.sort();
     Ok(result)
@@ -199,7 +211,9 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
     // Progress goes to stderr so it never contaminates piped stdout, and only when stderr is a
     // terminal — a redirected run gets nothing.
     let spinner = start_progress(options.progress, root);
+    let started = Instant::now();
     let scanned = scan(&roots, &classifier, &scan_options);
+    collected.scan += started.elapsed();
     if let Some(spinner) = spinner {
         spinner.finish_and_clear();
     }
@@ -216,6 +230,7 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
         dry_run: options.dry_run,
         force: options.force,
     };
+    let started = Instant::now();
     let entries: Vec<Entry> = to_remove
         .into_par_iter()
         .map(|(finding, bytes)| {
@@ -228,6 +243,7 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
             }
         })
         .collect();
+    collected.delete += started.elapsed();
     collected.entries.extend(entries);
     Ok(())
 }
@@ -268,6 +284,7 @@ fn select(
     collected: &mut Collected,
 ) -> Result<Vec<(Finding, u64)>> {
     let now = SystemTime::now();
+    let started = Instant::now();
     let mut survivors: Vec<(Finding, Arc<Resolved>)> = Vec::with_capacity(findings.len());
     for finding in findings {
         let dir = finding.path.parent().unwrap_or(root);
@@ -297,9 +314,16 @@ fn select(
         }
     }
 
-    let paths: Vec<PathBuf> = survivors.iter().map(|(finding, _)| finding.path.clone()).collect();
-    let sizes = measure_all(&paths);
+    collected.policy += started.elapsed();
 
+    let paths: Vec<PathBuf> = survivors.iter().map(|(finding, _)| finding.path.clone()).collect();
+    let started = Instant::now();
+    let sizes = measure_all(&paths);
+    collected.size += started.elapsed();
+
+    // The `min_size` and `max_size` rules are answered from the sizes just measured, so this
+    // loop is charged to the policy stage rather than to sizing.
+    let started = Instant::now();
     let mut to_remove: Vec<(Finding, u64)> = Vec::with_capacity(survivors.len());
     for ((finding, config), bytes) in survivors.into_iter().zip(sizes) {
         let keep = config.keep_for(&finding.path, finding.ecosystem());
@@ -330,6 +354,7 @@ fn select(
         covering = Some(finding.path.clone());
         true
     });
+    collected.policy += started.elapsed();
 
     Ok(to_remove)
 }

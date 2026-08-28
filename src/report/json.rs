@@ -116,8 +116,29 @@ pub fn document(result: &RunResult) -> Value {
             // never be removed and its amendment made them reachable only by explicit opt-in.
             "dependencies": totals.dependencies,
         },
-        "elapsed_ms": u64::try_from(result.elapsed.as_millis()).unwrap_or(u64::MAX),
+        "elapsed_ms": u64::try_from(result.timings.total.as_millis()).unwrap_or(u64::MAX),
+        // Microseconds, not milliseconds: a sweep of a small tree finishes in under one of the
+        // latter, and a stage breakdown that reads `0` for three of its four stages measures
+        // nothing. `elapsed_ms` stays for consumers that only want the headline.
+        //
+        // The stages do not sum to `total`; the residue is configuration loading, root
+        // normalization and building the worker pool.
+        "timings_us": {
+            "total": micros(result.timings.total),
+            "scan": micros(result.timings.scan),
+            "policy": micros(result.timings.policy),
+            "size": micros(result.timings.size),
+            "delete": micros(result.timings.delete),
+        },
     })
+}
+
+/// A duration in whole microseconds, saturating rather than wrapping.
+///
+/// A run long enough to overflow a `u64` of microseconds is around 584,000 years, so the
+/// saturation is a formality — but a wrapping cast here would report a fast run as a slow one.
+fn micros(duration: std::time::Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
 /// Renders the document as pretty-printed JSON on one line-delimited object.
