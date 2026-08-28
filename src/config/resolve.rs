@@ -64,6 +64,12 @@ struct Accumulated {
 pub struct Resolved {
     selection: Selection,
     keep: KeepPolicy,
+    /// The keep policy the command line asked for, kept apart from the merged configuration so
+    /// that [`Resolved::keep_for`] can apply it last. Folding it into `keep` alone is not
+    /// enough: the per-ecosystem and `[[paths]]` overrides narrow that value afterwards, and
+    /// narrowing lets the later value win — so a committed `voom.toml` could release an
+    /// artifact that `--min-age` was holding.
+    flags_keep: KeepPolicy,
     keep_by_ecosystem: BTreeMap<String, KeepPolicy>,
     rules: Vec<Rule>,
     /// Paths never scanned, absolute where the source made them so.
@@ -92,7 +98,14 @@ impl Resolved {
     }
 
     /// The keep policy for one artifact: the base, narrowed by its ecosystem's override, then
-    /// by every matching `[[paths]]` rule in order.
+    /// by every matching `[[paths]]` rule in order — and finally by the command line, which
+    /// outranks all of them.
+    ///
+    /// The flags go last because [`KeepPolicy::narrow`] lets the *later* value win, so applying
+    /// them to the base alone would leave any config layer named after it free to overrule
+    /// them. A repository that ships `[keep.rust] min_age = "0s"` could then release an
+    /// artifact that the operator's `--min-age 30d` was holding, which inverts the precedence
+    /// this module promises and does it in the unsafe direction.
     #[must_use]
     pub fn keep_for(&self, path: &Path, ecosystem: Option<&str>) -> KeepPolicy {
         let mut keep = self.keep;
@@ -104,7 +117,7 @@ impl Resolved {
                 keep = keep.narrow(rule.keep);
             }
         }
-        keep
+        keep.narrow(self.flags_keep)
     }
 
     /// The base keep policy, for `voom config show`.
@@ -260,6 +273,7 @@ impl Resolver {
         Ok(Resolved {
             selection,
             keep: accumulated.keep.narrow(self.flags.keep),
+            flags_keep: self.flags.keep,
             keep_by_ecosystem: accumulated.keep_by_ecosystem.clone(),
             rules: accumulated.rules.clone(),
             exclude,

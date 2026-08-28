@@ -13,10 +13,13 @@
 mod support;
 
 use std::path::Path;
+use std::time::Duration;
 
 use support::{options, snapshot, tree};
 use voom::classify::SkipReason;
-use voom::run::run;
+use voom::config::resolve::Flags;
+use voom::policy::KeepPolicy;
+use voom::run::{RunOptions, run};
 
 /// Writes a configuration file into a fixture tree.
 fn write(root: &Path, relative: &str, contents: &str) {
@@ -343,4 +346,68 @@ fn should_let_the_nearest_config_win() {
     run(&options(fixture.path())).expect("the run completes");
 
     assert!(!fixture.path().join("repo/target").exists(), "the nearer file wins");
+}
+
+/// `--min-age` is a blanket safety net, and a `voom.toml` in the tree must not be able to
+/// release an artifact from it.
+///
+/// This is the case the module's own doc comment promises ("flags always win"), and the one an
+/// operator relies on when sweeping an unfamiliar `$HOME` full of cloned repositories: any of
+/// them may ship a committed `voom.toml`, and none of them should get to overrule the guard the
+/// person at the keyboard asked for. Config-versus-config narrowing is a separate question, and
+/// `should_narrow_the_base_policy_with_a_per_ecosystem_override` still pins it.
+#[test]
+fn should_not_let_a_per_ecosystem_override_release_an_artifact_a_flag_held() {
+    let fixture = tree(&["Cargo.toml", "target/app", "voom.toml"]);
+    write(fixture.path(), "voom.toml", "[keep.rust]\nmin_age = \"0s\"\n");
+    let before = snapshot(fixture.path());
+
+    let options = RunOptions {
+        flags: Flags {
+            keep: KeepPolicy {
+                min_age: Some(Duration::from_secs(30 * 86_400)),
+                ..KeepPolicy::default()
+            },
+            ..Flags::default()
+        },
+        ..options(fixture.path())
+    };
+    let result = run(&options).expect("the run completes");
+
+    assert_eq!(
+        snapshot(fixture.path()),
+        before,
+        "`--min-age 30d` holds the artifact; the repository's own config cannot release it"
+    );
+    assert!(matches!(
+        result.skips[0].reason,
+        SkipReason::KeptByPolicy { rule: "min_age", .. }
+    ));
+}
+
+/// The same precedence, through a `[[paths]]` rule rather than a per-ecosystem table — the
+/// other route by which configuration reaches the policy after the flags were folded in.
+#[test]
+fn should_not_let_a_path_rule_release_an_artifact_a_flag_held() {
+    let fixture = tree(&["Cargo.toml", "target/app", "voom.toml"]);
+    write(
+        fixture.path(),
+        "voom.toml",
+        "[[paths]]\nmatch = \"**/target\"\nkeep = { min_age = \"0s\" }\n",
+    );
+    let before = snapshot(fixture.path());
+
+    let options = RunOptions {
+        flags: Flags {
+            keep: KeepPolicy {
+                min_age: Some(Duration::from_secs(30 * 86_400)),
+                ..KeepPolicy::default()
+            },
+            ..Flags::default()
+        },
+        ..options(fixture.path())
+    };
+    run(&options).expect("the run completes");
+
+    assert_eq!(snapshot(fixture.path()), before, "the flag still holds it");
 }
