@@ -224,7 +224,14 @@ fn should_print_only_the_footer_with_summary() {
 /// Tool caches are skipped by location, before classification, because an installed toolchain
 /// and a built project are the same shape on disk (ADR 0001). Driven through the binary with a
 /// fake `HOME`, which is process-scoped and so leaves other tests alone.
+///
+/// Unix only, and not because the behaviour is: `dirs::home_dir()` reads `$HOME` on Unix but
+/// goes through the Shell known-folder API on Windows, so no environment variable can point it
+/// at a fixture there. Faking a real profile directory would mean writing into the actual one.
+/// The resolution this exercises takes `home` as an argument and is covered on every platform
+/// by the unit tests in `src/caches.rs`; what is Unix-only here is the end-to-end wiring.
 #[test]
+#[cfg(unix)]
 fn should_skip_a_tool_cache_under_home_and_sweep_it_with_the_flag() {
     let home = TempDir::new().unwrap();
     let cache = home.path().join(".npm/_cacache/pkg");
@@ -256,7 +263,12 @@ fn should_skip_a_tool_cache_under_home_and_sweep_it_with_the_flag() {
 
 /// Pointing voom *at* a cache is explicit intent. The skip is a rule about what a walk wanders
 /// into, not about what the user asked for, so it must not need the flag.
+///
+/// Unix only for the reason above — and this one had to be gated rather than left alone,
+/// because on Windows the fake `HOME` was ignored, no cache root resolved, and the assertion
+/// passed without the skip logic ever running. A test that cannot fail is not a test.
 #[test]
+#[cfg(unix)]
 fn should_sweep_a_cache_named_as_the_scan_root_without_the_flag() {
     let home = TempDir::new().unwrap();
     let cache = home.path().join(".npm/_cacache/pkg");
