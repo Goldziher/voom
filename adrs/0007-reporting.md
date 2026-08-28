@@ -2,7 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-08-28
-- Updated: 2026-08-28 — `--summary` shipped; noted the two labels other ADRs added.
+- Updated: 2026-08-28 — `--summary` shipped; noted the two labels other ADRs added; the
+  human layout was rebuilt around blocks and root-relative paths.
 
 ## Context
 
@@ -27,7 +28,8 @@ Human output:
 - **Sorted deterministically by path**, always, regardless of completion order. Two runs over
   an unchanged tree produce byte-identical output, which makes the report diffable.
 - One line per artifact: path, ecosystem id, reclaimed size, and outcome. Sizes are
-  human-readable (`4.2 GB`) with the raw byte count reserved for JSON.
+  human-readable (`4.2 GB`) with the raw byte count reserved for JSON. The layout this became
+  is described in the amendment below.
 - A summary footer with totals: artifacts removed, bytes reclaimed, artifacts skipped,
   errors, and elapsed time.
 - **Skips are shown with their reason** at `--verbose`: the missing marker (ADR 0002), the
@@ -116,3 +118,38 @@ there rather than duplicated here:
 Both exist for the same reason the skip reasons do: a destructive tool's report is its safety
 surface, so a state the reader would interpret differently gets its own label rather than being
 folded into a neighbouring one.
+
+## Amendment — 2026-08-28 (layout)
+
+The one-line-per-artifact shape above survives; how it is laid out does not.
+
+A `$HOME` sweep prints on the order of two hundred absolute paths, and absolute paths wrap. Two
+hundred findings became roughly four hundred terminal rows, which is not a report anyone reads.
+The renderer now:
+
+- names the scan root once in a header and prints every path **relative to it** — or to the
+  deepest common ancestor when several roots were given. A path outside every root, which a
+  configured `include` can produce, still prints in full;
+- emits three blank-line-separated **blocks** — artifacts, skips, walk failures — each with
+  column widths measured over its own rows. A skip has no size and no ecosystem, so in a shared
+  table it rendered as a row with two holes in it;
+- introduces a reason with an aligned em dash rather than parentheses, because the reasons
+  themselves contain parentheses (`no rust marker (Cargo.toml) proves it`);
+- splits the footer into a headline, a per-ecosystem breakdown ordered by bytes, and separate
+  lines for skipped, refused and failed.
+
+**The artifact list is deliberately not truncated.** A `+N more` line is the obvious answer to
+volume and it is the wrong one here: this report is the only record of a destructive act, and
+the reader most likely to be scrolling it is the one checking what voom just deleted. Width was
+the actual problem, and width is what was fixed. Should a cap ever be wanted it belongs behind
+an explicit flag, capping only removals and never a refusal or a failure.
+
+**Colour.** Refused moved from blue to cyan: plain ANSI blue is the one standard colour that is
+unreadable against dark backgrounds in common themes, and it was carrying the state a reader
+most needs to notice. Ecosystem moved to dim, which also lets the magenta `unanchored` marker
+carry further. Every state is still named in words, so colour remains a second channel and
+never the only one.
+
+One consequence worth recording: `Outcome::Failed` no longer embeds the path in its message,
+because every renderer already names it on the same line. That changes the JSON `detail` field,
+which now holds the underlying error alone — `path` is in the same object.
