@@ -18,6 +18,9 @@ mod support;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+// Only the `--no-git` case negates a predicate, and it drives the real binary, which the
+// backdating fixtures make unix-only.
+#[cfg(unix)]
 use predicates::prelude::PredicateBooleanExt;
 use support::snapshot;
 use tempfile::TempDir;
@@ -578,6 +581,7 @@ fn should_predict_git_housekeeping_in_a_dry_run_without_performing_it() {
 /// every repository a sweep passes and nearly always finds nothing, so a block that appeared
 /// whenever it *ran* would be on almost every report.
 #[test]
+#[cfg(unix)]
 fn should_say_nothing_about_a_repository_that_needed_nothing() {
     if !git_available() {
         return;

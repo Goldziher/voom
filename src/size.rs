@@ -127,10 +127,15 @@ pub fn measure_fully(path: &Path) -> Measured {
 /// other tool the user will compare against.
 #[derive(Debug, Default)]
 struct Links {
+    // Off unix there is no portable link count through `std`, so nothing is ever inserted and
+    // the set would be an array of mutexes no code reads. Windows deserves the empty struct
+    // rather than a warning about a field that cannot be used there.
+    #[cfg(unix)]
     shards: [std::sync::Mutex<std::collections::HashSet<(u64, u64)>>; LINK_SHARDS],
 }
 
 /// Enough shards that the lock is never the bottleneck, few enough to stay cheap to construct.
+#[cfg(unix)]
 const LINK_SHARDS: usize = 16;
 
 impl Links {

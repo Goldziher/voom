@@ -232,7 +232,9 @@ fn clear_immutable(path: &Path, metadata: &std::fs::Metadata) {
     }
 }
 
-#[cfg(not(target_vendor = "apple"))]
+/// Every unix that is not Apple: `std` exposes no BSD flags to clear, and there is nothing else
+/// a mode bit has not already covered.
+#[cfg(all(unix, not(target_vendor = "apple")))]
 fn clear_immutable(_path: &Path, _metadata: &std::fs::Metadata) {}
 
 #[cfg(test)]
@@ -241,7 +243,11 @@ mod tests {
 
     use super::*;
     use crate::delete::{Guard, Outcome, PROTECTED_PATHS};
-    use crate::testing::{snapshot, tree};
+    use crate::testing::tree;
+    // Only the dry-run test compares whole trees, and it is unix-only — every other case here
+    // asserts on a mode or a path.
+    #[cfg(unix)]
+    use crate::testing::snapshot;
 
     fn guard(root: &Path) -> Guard {
         Guard::new(&[root.to_path_buf()], true).expect("the fixture root resolves")
