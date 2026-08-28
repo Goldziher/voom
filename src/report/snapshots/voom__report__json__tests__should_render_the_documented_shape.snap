@@ -37,7 +37,7 @@ expression: document_for_tests()
       "include_pattern": null,
       "marker_dir": "/projects/locked",
       "outcome": {
-        "detail": "removing `/projects/locked/obj`: Permission denied",
+        "detail": "Permission denied",
         "reason": "removal_failed",
         "status": "failed"
       },

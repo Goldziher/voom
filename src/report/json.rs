@@ -127,7 +127,7 @@ mod tests {
                     "/projects/locked/obj",
                     "dotnet.obj",
                     900,
-                    Outcome::Failed("removing `/projects/locked/obj`: Permission denied".to_owned()),
+                    Outcome::Failed("Permission denied".to_owned()),
                 ),
             ],
             false,

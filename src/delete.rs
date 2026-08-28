@@ -554,7 +554,9 @@ impl Guard {
             // A file vanishing between the walk and the removal is a race, not a failure: the
             // desired state was reached by someone else.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Outcome::Refused(Refusal::Vanished),
-            Err(error) => Outcome::Failed(format!("removing `{}`: {error}", verified.canonical.display())),
+            // The path is deliberately absent: every reporter already names it on the same
+            // line, and repeating it there put the longest string on the line twice.
+            Err(error) => Outcome::Failed(error.to_string()),
         }
     }
 }
