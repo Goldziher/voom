@@ -1,15 +1,28 @@
+<!-- markdownlint-disable MD033 MD041 -->
 <div align="center">
 
-# voom
+<img src="assets/banner.svg" alt="voom — clean up the pink snow" width="820">
 
-**Clean up the pink snow.**
+<em>
+Then the Voom&hellip;<br>
+It went VOOM!<br>
+And, oh boy!<br>
+What a VOOM!<br>
+<br>
+Now, don't ask me what Voom is.<br>
+I never will know.<br>
+But, boy!<br>
+Let me tell you it does clean up snow!
+</em>
+
+<sub>Dr. Seuss, <em>The Cat in the Hat Comes Back</em></sub>
+
+<br>
 
 voom finds and removes build artifacts across your whole disk — `target/`, `dist/`,
 `__pycache__/`, `.gradle/`, `.zig-cache/` and the rest of 24 ecosystems — in one parallel pass.
 It proves every candidate against an ecosystem marker file before it deletes, so it will
 never take your hand-written `bin/` directory.
-
-24 ecosystems&nbsp;·&nbsp;marker-anchored&nbsp;·&nbsp;parallel&nbsp;·&nbsp;`$HOME`-safe&nbsp;·&nbsp;dry-run&nbsp;·&nbsp;watch mode
 
 [![crates.io](https://img.shields.io/crates/v/voom?style=flat-square&color=2dd4bf)](https://crates.io/crates/voom)
 [![npm](https://img.shields.io/npm/v/@goldziher/voom?style=flat-square&color=2dd4bf&label=npm)](https://www.npmjs.com/package/@goldziher/voom)

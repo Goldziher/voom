@@ -1,0 +1,111 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 1200 340"
+  width="1200"
+  height="340"
+  role="img"
+  aria-label="voom — clean up the pink snow"
+>
+  <defs>
+    <radialGradient id="glowTeal" cx="32%" cy="24%" r="64%">
+      <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0.20" />
+      <stop offset="100%" stop-color="#2dd4bf" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="glowPink" cx="74%" cy="80%" r="58%">
+      <stop offset="0%" stop-color="#f472b6" stop-opacity="0.14" />
+      <stop offset="100%" stop-color="#f472b6" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="rule" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0" />
+      <stop offset="50%" stop-color="#2dd4bf" stop-opacity="0.55" />
+      <stop offset="100%" stop-color="#2dd4bf" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="340" rx="20" fill="#0d1117" />
+  <rect width="1200" height="340" rx="20" fill="url(#glowTeal)" />
+  <rect width="1200" height="340" rx="20" fill="url(#glowPink)" />
+
+  <!-- The mark and the snow are the same pixel grid in two colours: one being cleared away by
+       the other. The trail thins to the left because the V is moving right. -->
+  <g>
+    <rect x="489" y="95" width="10" height="10" rx="1" fill="#f472b6" opacity="0.8" />
+    <rect x="489" y="128" width="10" height="10" rx="1" fill="#f472b6" opacity="0.66" />
+    <rect x="478" y="106" width="10" height="10" rx="1" fill="#f472b6" opacity="0.72" />
+    <rect x="478" y="139" width="10" height="10" rx="1" fill="#f472b6" opacity="0.48" />
+    <rect x="467" y="84" width="10" height="10" rx="1" fill="#f472b6" opacity="0.55" />
+    <rect x="467" y="117" width="10" height="10" rx="1" fill="#f472b6" opacity="0.6" />
+    <rect x="456" y="95" width="10" height="10" rx="1" fill="#f472b6" opacity="0.4" />
+    <rect x="456" y="128" width="10" height="10" rx="1" fill="#f472b6" opacity="0.34" />
+    <rect x="445" y="106" width="10" height="10" rx="1" fill="#f472b6" opacity="0.3" />
+    <rect x="445" y="139" width="10" height="10" rx="1" fill="#f472b6" opacity="0.22" />
+    <rect x="434" y="84" width="10" height="10" rx="1" fill="#f472b6" opacity="0.2" />
+    <rect x="434" y="117" width="10" height="10" rx="1" fill="#f472b6" opacity="0.24" />
+    <rect x="423" y="95" width="10" height="10" rx="1" fill="#f472b6" opacity="0.14" />
+    <rect x="423" y="128" width="10" height="10" rx="1" fill="#f472b6" opacity="0.12" />
+    <rect x="412" y="106" width="10" height="10" rx="1" fill="#f472b6" opacity="0.09" />
+  </g>
+  <g>
+    <rect x="500" y="84" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="511" y="84" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="577" y="84" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="588" y="84" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="500" y="95" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="511" y="95" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="577" y="95" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="588" y="95" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="500" y="106" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="511" y="106" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="577" y="106" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="588" y="106" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="511" y="117" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="522" y="117" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="566" y="117" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="577" y="117" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="511" y="128" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="522" y="128" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="566" y="128" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="577" y="128" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="522" y="139" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="533" y="139" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="555" y="139" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="566" y="139" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="533" y="150" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="544" y="150" width="10" height="10" rx="1" fill="#2dd4bf" />
+    <rect x="555" y="150" width="10" height="10" rx="1" fill="#2dd4bf" />
+  </g>
+
+  <text
+    x="643"
+    y="152"
+    font-family="'JetBrains Mono','SF Mono','DejaVu Sans Mono',ui-monospace,monospace"
+    font-size="58"
+    font-weight="700"
+    letter-spacing="-1.5"
+  >
+    <tspan fill="#2dd4bf">v</tspan>
+    <tspan fill="#c9d1d9">oom</tspan>
+  </text>
+
+  <text
+    x="600"
+    y="220"
+    text-anchor="middle"
+    font-family="'JetBrains Mono','SF Mono','DejaVu Sans Mono',ui-monospace,monospace"
+    font-size="25"
+    fill="#c9d1d9"
+    letter-spacing="0.5"
+  >Clean up the pink snow.</text>
+
+  <line x1="470" y1="254" x2="730" y2="254" stroke="url(#rule)" stroke-width="2" />
+
+  <text
+    x="600"
+    y="292"
+    text-anchor="middle"
+    font-family="'SF Pro Text','DejaVu Sans',ui-sans-serif,system-ui,sans-serif"
+    font-size="14"
+    fill="#6b7280"
+    letter-spacing="2.5"
+  >24 ECOSYSTEMS &#183; MARKER-ANCHORED &#183; PARALLEL &#183; $HOME-SAFE</text>
+</svg>

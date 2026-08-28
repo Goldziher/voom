@@ -1,0 +1,118 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 1280 640"
+  width="1280"
+  height="640"
+  role="img"
+  aria-label="voom — clean up the pink snow"
+>
+  <defs>
+    <radialGradient id="glowTeal" cx="30%" cy="22%" r="66%">
+      <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0.22" />
+      <stop offset="100%" stop-color="#2dd4bf" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="glowPink" cx="76%" cy="82%" r="60%">
+      <stop offset="0%" stop-color="#f472b6" stop-opacity="0.16" />
+      <stop offset="100%" stop-color="#f472b6" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="rule" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0" />
+      <stop offset="50%" stop-color="#2dd4bf" stop-opacity="0.55" />
+      <stop offset="100%" stop-color="#2dd4bf" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="640" fill="#0d1117" />
+  <rect width="1280" height="640" fill="url(#glowTeal)" />
+  <rect width="1280" height="640" fill="url(#glowPink)" />
+
+  <g>
+    <rect x="454" y="184" width="14" height="14" rx="2" fill="#f472b6" opacity="0.8" />
+    <rect x="454" y="232" width="14" height="14" rx="2" fill="#f472b6" opacity="0.66" />
+    <rect x="438" y="200" width="14" height="14" rx="2" fill="#f472b6" opacity="0.72" />
+    <rect x="438" y="248" width="14" height="14" rx="2" fill="#f472b6" opacity="0.48" />
+    <rect x="422" y="168" width="14" height="14" rx="2" fill="#f472b6" opacity="0.55" />
+    <rect x="422" y="216" width="14" height="14" rx="2" fill="#f472b6" opacity="0.6" />
+    <rect x="406" y="184" width="14" height="14" rx="2" fill="#f472b6" opacity="0.4" />
+    <rect x="406" y="232" width="14" height="14" rx="2" fill="#f472b6" opacity="0.34" />
+    <rect x="390" y="200" width="14" height="14" rx="2" fill="#f472b6" opacity="0.3" />
+    <rect x="390" y="248" width="14" height="14" rx="2" fill="#f472b6" opacity="0.22" />
+    <rect x="374" y="168" width="14" height="14" rx="2" fill="#f472b6" opacity="0.2" />
+    <rect x="374" y="216" width="14" height="14" rx="2" fill="#f472b6" opacity="0.24" />
+    <rect x="358" y="184" width="14" height="14" rx="2" fill="#f472b6" opacity="0.14" />
+    <rect x="358" y="232" width="14" height="14" rx="2" fill="#f472b6" opacity="0.12" />
+  </g>
+  <g>
+    <rect x="470" y="168" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="486" y="168" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="582" y="168" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="598" y="168" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="470" y="184" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="486" y="184" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="582" y="184" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="598" y="184" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="470" y="200" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="486" y="200" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="582" y="200" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="598" y="200" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="486" y="216" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="502" y="216" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="566" y="216" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="582" y="216" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="486" y="232" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="502" y="232" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="566" y="232" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="582" y="232" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="502" y="248" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="518" y="248" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="550" y="248" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="566" y="248" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="518" y="264" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="534" y="264" width="14" height="14" rx="2" fill="#2dd4bf" />
+    <rect x="550" y="264" width="14" height="14" rx="2" fill="#2dd4bf" />
+  </g>
+
+  <text
+    x="642"
+    y="268"
+    font-family="'JetBrains Mono','SF Mono','DejaVu Sans Mono',ui-monospace,monospace"
+    font-size="86"
+    font-weight="700"
+    letter-spacing="-2"
+  >
+    <tspan fill="#2dd4bf">v</tspan>
+    <tspan fill="#c9d1d9">oom</tspan>
+  </text>
+
+  <text
+    x="640"
+    y="368"
+    text-anchor="middle"
+    font-family="'JetBrains Mono','SF Mono','DejaVu Sans Mono',ui-monospace,monospace"
+    font-size="34"
+    fill="#c9d1d9"
+    letter-spacing="0.5"
+  >Clean up the pink snow.</text>
+
+  <line x1="440" y1="416" x2="840" y2="416" stroke="url(#rule)" stroke-width="2" />
+
+  <text
+    x="640"
+    y="466"
+    text-anchor="middle"
+    font-family="'SF Pro Text','DejaVu Sans',ui-sans-serif,system-ui,sans-serif"
+    font-size="21"
+    fill="#8b949e"
+    letter-spacing="0.3"
+  >Fast, safe, parallel build-artifact pruning across 24 ecosystems</text>
+
+  <text
+    x="640"
+    y="524"
+    text-anchor="middle"
+    font-family="'SF Pro Text','DejaVu Sans',ui-sans-serif,system-ui,sans-serif"
+    font-size="16"
+    fill="#6b7280"
+    letter-spacing="2.5"
+  >MARKER-ANCHORED &#183; PARALLEL &#183; $HOME-SAFE &#183; DRY-RUN &#183; WATCH MODE</text>
+</svg>
