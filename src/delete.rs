@@ -783,6 +783,57 @@ mod tests {
         assert_eq!(guard.remove(&fixture.path().join("target"), false), Outcome::Removed);
     }
 
+    /// The denylist is append-only (ADR 0006, CONTRIBUTING). `should_refuse_every_protected_path`
+    /// iterates whatever the list happens to contain, so it passes just as happily after someone
+    /// removes an entry — which is the edit the rule exists to stop. This names the entries, so
+    /// removing one fails here and the failure says which rule was broken.
+    ///
+    /// Adding an entry does not fail this test. That is the asymmetry the rule asks for.
+    #[test]
+    fn the_protected_denylist_is_append_only() {
+        const REQUIRED: &[&str] = &[
+            "/",
+            "/Applications",
+            "/bin",
+            "/boot",
+            "/dev",
+            "/etc",
+            "/home",
+            "/Library",
+            "/opt",
+            "/private",
+            "/proc",
+            "/root",
+            "/sbin",
+            "/srv",
+            "/sys",
+            "/System",
+            "/tmp",
+            "/usr",
+            "/var",
+            "/Users",
+            "/Volumes",
+            "C:\\",
+            "C:\\Program Files",
+            "C:\\Program Files (x86)",
+            "C:\\Users",
+            "C:\\Windows",
+        ];
+
+        for required in REQUIRED {
+            assert!(
+                PROTECTED_PATHS.contains(required),
+                "`{required}` was removed from PROTECTED_PATHS. The list is append-only: \
+                 removing or narrowing an entry needs an ADR 0006 amendment saying why it was \
+                 safe, never a drive-by edit."
+            );
+        }
+
+        for vcs in [".git", ".hg", ".svn"] {
+            assert!(VCS_DIRS.contains(&vcs), "`{vcs}` was removed from VCS_DIRS");
+        }
+    }
+
     /// Every refusal reaches JSON as a code a hook branches on, so two refusals sharing one
     /// code would make them indistinguishable to a consumer — and a refusal is the tool saying
     /// it declined to delete something, which is exactly what a consumer needs to tell apart.

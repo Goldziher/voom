@@ -242,6 +242,40 @@ mod tests {
         assert!(CacheRoots::under(home.path(), home.path()).is_empty());
     }
 
+    /// `CACHE_DIRS` is append-only for the same reason the protected denylist is: adding an
+    /// entry costs a user reclaimable space, removing one can cost them a working toolchain.
+    /// The entries below are the ones a sweep of a real machine proved were needed — see the
+    /// module doc and ADR 0001's amendment.
+    #[test]
+    fn the_cache_list_is_append_only() {
+        const REQUIRED: &[&str] = &[
+            ".bun",
+            ".cache",
+            ".cargo/git",
+            ".cargo/registry",
+            ".gem",
+            ".gradle",
+            ".m2",
+            ".npm",
+            ".pub-cache",
+            ".pyenv",
+            ".rustup",
+            "Library/Application Support",
+            "Library/Caches",
+            "google-cloud-sdk",
+            "miniforge3",
+        ];
+
+        for required in REQUIRED {
+            assert!(
+                CACHE_DIRS.contains(required),
+                "`{required}` was removed from CACHE_DIRS. The list is append-only: removing an \
+                 entry means voom will sweep build output out of an installed toolchain again, \
+                 which is what ADR 0001's amendment exists to prevent."
+            );
+        }
+    }
+
     #[test]
     fn every_cache_dir_is_relative_and_stays_under_home() {
         for cache in CACHE_DIRS {
