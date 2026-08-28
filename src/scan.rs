@@ -133,6 +133,13 @@ pub struct WalkFailure {
     pub path: Option<PathBuf>,
     /// What happened.
     pub message: String,
+    /// Whether this was a transient interruption rather than a real inability to read.
+    ///
+    /// A sweep of `$HOME` on macOS produces a handful of `EINTR`s every single time, under
+    /// `~/Library/Containers`. Listing them beside genuine permission and IO failures teaches
+    /// the reader to skim past the section where those genuine failures appear, so they are
+    /// separated. See [`WalkFailure::transient`].
+    pub transient: bool,
 }
 
 /// What one walk found.
@@ -247,9 +254,17 @@ impl Visitor<'_> {
                     ignore::Error::WithPath { path, .. } => Some(path.clone()),
                     _ => None,
                 };
+                // `EINTR` means the read was interrupted by a signal, not that the directory
+                // could not be read. The walker's callback gives no way to resume the entry, so
+                // it cannot be retried from here — but it can be told apart from a real failure
+                // instead of being reported as one.
+                let transient = error
+                    .io_error()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::Interrupted);
                 let failure = WalkFailure {
                     path,
                     message: error.to_string(),
+                    transient,
                 };
                 let _ = sender.send(Message::Failure(Box::new(failure)));
                 return WalkState::Continue;

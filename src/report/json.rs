@@ -66,6 +66,7 @@ pub fn document(result: &RunResult) -> Value {
             .map(|failure| json!({
                 "path": failure.path.as_ref().map(|path| path.display().to_string()),
                 "detail": failure.message,
+                "transient": failure.transient,
             }))
             .collect::<Vec<_>>(),
         "totals": {
@@ -131,6 +132,29 @@ mod tests {
     #[test]
     fn should_render_the_documented_shape() {
         insta::assert_json_snapshot!(document_for_tests());
+    }
+
+    /// A machine consumer has no `--verbose` to reach for, so JSON always carries every walk
+    /// error — but it has to say which of them are worth alerting on.
+    #[test]
+    fn should_mark_which_walk_errors_were_only_interruptions() {
+        let mut result = crate::report::fixtures::result(Vec::new(), true);
+        result.failures = vec![
+            crate::scan::WalkFailure {
+                path: Some(std::path::PathBuf::from("/projects/locked")),
+                message: "Permission denied (os error 13)".to_owned(),
+                transient: false,
+            },
+            crate::scan::WalkFailure {
+                path: Some(std::path::PathBuf::from("/projects/containers")),
+                message: "Interrupted system call (os error 4)".to_owned(),
+                transient: true,
+            },
+        ];
+
+        let errors = document(&result)["walk_errors"].clone();
+        assert_eq!(errors[0]["transient"], serde_json::json!(false));
+        assert_eq!(errors[1]["transient"], serde_json::json!(true));
     }
 
     #[test]

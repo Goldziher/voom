@@ -83,11 +83,21 @@ pub fn render(result: &RunResult, options: HumanOptions, out: &mut impl io::Writ
         }
 
         for failure in &result.failures {
+            // A transient interruption is not something the reader can act on, and a $HOME
+            // sweep produces a handful every time. Listing them here beside real permission
+            // failures is what teaches people to skim the section.
+            if failure.transient && !options.verbose {
+                continue;
+            }
             let path = failure
                 .path
                 .as_ref()
                 .map_or_else(|| "-".to_owned(), |path| path.display().to_string());
-            writeln!(out, "  {:<12} {path}  ({})", "walk error".red(), failure.message)?;
+            if failure.transient {
+                writeln!(out, "  {:<12} {path}  ({})", "interrupted".dimmed(), failure.message)?;
+            } else {
+                writeln!(out, "  {:<12} {path}  ({})", "walk error".red(), failure.message)?;
+            }
         }
     }
 
@@ -146,6 +156,51 @@ mod tests {
         render(result, options, &mut buffer).expect("writing to a Vec cannot fail");
         let text = String::from_utf8(buffer).expect("the renderer emits UTF-8");
         anstream::adapter::strip_str(&text).to_string()
+    }
+
+    /// A run whose walk hit one real failure and one interruption.
+    fn interrupted() -> RunResult {
+        let mut result = result(Vec::new(), true);
+        result.failures = vec![
+            crate::scan::WalkFailure {
+                path: Some(PathBuf::from("/projects/locked")),
+                message: "Permission denied (os error 13)".to_owned(),
+                transient: false,
+            },
+            crate::scan::WalkFailure {
+                path: Some(PathBuf::from("/projects/containers")),
+                message: "Interrupted system call (os error 4)".to_owned(),
+                transient: true,
+            },
+        ];
+        result
+    }
+
+    /// A $HOME sweep produces these every run. Listing them beside the failures a reader can
+    /// act on is what teaches people to skim the section those failures appear in.
+    #[test]
+    fn should_not_list_a_transient_interruption_by_default() {
+        let text = render_to_string(&interrupted(), HumanOptions::default());
+
+        assert!(text.contains("Permission denied"), "{text}");
+        assert!(!text.contains("Interrupted system call"), "{text}");
+    }
+
+    #[test]
+    fn should_list_a_transient_interruption_when_asked_for_detail() {
+        let text = render_to_string(
+            &interrupted(),
+            HumanOptions {
+                verbose: true,
+                ..HumanOptions::default()
+            },
+        );
+
+        assert!(text.contains("Interrupted system call"), "{text}");
+        assert!(
+            text.contains("interrupted"),
+            "it is labelled as an interruption, not as a walk error: {text}"
+        );
     }
 
     fn mixed() -> RunResult {
