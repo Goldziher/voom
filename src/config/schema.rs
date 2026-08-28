@@ -28,6 +28,18 @@ pub struct ConfigFile {
     /// Per-path overrides, glob-matched; later entries win.
     #[serde(default)]
     pub paths: Vec<PathRule>,
+    /// Git housekeeping (ADR 0011), which an ordinary sweep runs.
+    #[serde(default)]
+    pub git: GitSection,
+}
+
+/// `[git]`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitSection {
+    /// Whether an ordinary sweep runs git's own local housekeeping in the repositories it walks
+    /// past. Unset inherits the layer above; `--no-git` overrides every layer.
+    pub enabled: Option<bool>,
 }
 
 /// `[ecosystems]`.

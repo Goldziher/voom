@@ -107,6 +107,8 @@ pub struct ScanOptions {
     pub include: PatternSet,
     /// Tool caches and installed toolchains never descended into (ADR 0001).
     pub caches: CacheRoots,
+    /// Whether to collect the repositories the walk passes, for git housekeeping (ADR 0011).
+    pub collect_repositories: bool,
 }
 
 impl Default for ScanOptions {
@@ -118,6 +120,7 @@ impl Default for ScanOptions {
             exclude: PatternSet::default(),
             include: PatternSet::default(),
             caches: CacheRoots::default(),
+            collect_repositories: false,
         }
     }
 }
@@ -158,6 +161,10 @@ pub struct Scan {
     pub skipped_count: usize,
     /// Per-path walk failures. Reported, never fatal.
     pub failures: Vec<WalkFailure>,
+    /// Working trees of the repositories the walk passed, when `collect_repositories` was set
+    /// (ADR 0011). Not deduplicated here — resolving a linked worktree to its object store is
+    /// the git module's job, and it needs the paths as walked.
+    pub repositories: Vec<PathBuf>,
 }
 
 enum Message {
@@ -165,6 +172,7 @@ enum Message {
     Skipped(Box<Skipped>),
     SkippedCount,
     Failure(Box<WalkFailure>),
+    Repository(PathBuf),
 }
 
 /// Walks every root and classifies what it finds.
@@ -205,6 +213,7 @@ fn scan_root(root: &Path, classifier: &Classifier, options: &ScanOptions, scan: 
             }
             Message::SkippedCount => scan.skipped_count += 1,
             Message::Failure(failure) => scan.failures.push(*failure),
+            Message::Repository(path) => scan.repositories.push(path),
         }
     }
 }
@@ -328,6 +337,20 @@ impl Visitor<'_> {
         if is_dir && self.options.caches.contains(path) {
             self.note_skip(sender, path, SkipReason::ToolCache);
             return WalkState::Skip;
+        }
+
+        // Git housekeeping discovers repositories here, at the moment the walker meets `.git`
+        // and is about to prune it: one name comparison, no syscall (ADR 0011). A second walk
+        // over `$HOME` to find the same directories would roughly double the run, which is the
+        // whole reason this is a line in the artifact walk rather than a pass of its own.
+        //
+        // It does not return: the prune below still refuses to descend into a `.git` directory,
+        // and a `.git` *file* — a linked worktree or a submodule — falls through to the
+        // classifier, which has nothing to say about it.
+        if self.options.collect_repositories
+            && let Some(work_tree) = crate::git::repository_at(entry.file_name(), path, is_symlink)
+        {
+            let _ = sender.send(Message::Repository(work_tree.to_path_buf()));
         }
 
         if is_dir && is_never_descended(entry.file_name()) {

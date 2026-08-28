@@ -64,12 +64,14 @@ struct Collected {
     skips: Vec<Skipped>,
     skipped_count: usize,
     failures: Vec<crate::scan::WalkFailure>,
+    git: Option<crate::git::GitPruneResult>,
     // Accumulated across roots: each root runs the whole pipeline, so a two-root run has two
     // scan phases and the user wants the time the stage cost them, not the time one of them did.
     scan: Duration,
     policy: Duration,
     size: Duration,
     delete: Duration,
+    git_elapsed: Duration,
 }
 
 /// Runs the whole pipeline.
@@ -104,12 +106,14 @@ pub fn run(options: &RunOptions) -> Result<RunResult> {
         skipped_count: collected.skipped_count,
         failures: collected.failures,
         dry_run: options.dry_run,
+        git: collected.git,
         timings: Timings {
             total: started.elapsed(),
             scan: collected.scan,
             policy: collected.policy,
             size: collected.size,
             delete: collected.delete,
+            git: collected.git_elapsed,
         },
     };
     result.sort();
@@ -207,6 +211,7 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
         exclude: PatternSet::new(at_root.exclude.clone())?,
         include: PatternSet::new(at_root.include.clone())?,
         caches: CacheRoots::for_root(root, options.caches),
+        collect_repositories: at_root.git,
     };
     // Progress goes to stderr so it never contaminates piped stdout, and only when stderr is a
     // terminal — a redirected run gets nothing.
@@ -221,6 +226,11 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
     collected.failures.extend(scanned.failures);
     collected.skips.extend(scanned.skips);
     collected.skipped_count += scanned.skipped_count;
+
+    // Git's own local housekeeping over the repositories the walk already passed (ADR 0011).
+    // It runs on this pool, never fails the sweep — a machine without git simply has nothing to
+    // do here — and says nothing in the report when it did nothing.
+    prune_repositories(root, &scanned.repositories, &at_root, options, collected)?;
 
     let to_remove = select(root, &resolver, scanned.findings, options, collected)?;
 
@@ -245,6 +255,50 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
         .collect();
     collected.delete += started.elapsed();
     collected.entries.extend(entries);
+    Ok(())
+}
+
+/// Runs git's own housekeeping over the repositories the walk passed.
+///
+/// Never fails the sweep. A machine with no git, or a tree with no repositories, simply produces
+/// nothing — this is not the command the user asked for, and failing their artifact sweep over
+/// it would be the wrong trade. Per-repository failures are carried in the result and reported.
+///
+/// # Errors
+///
+/// [`Error::CatalogPattern`] if the configured `exclude` will not compile, which is the same
+/// error the scan would already have raised for it.
+fn prune_repositories(
+    root: &Path,
+    work_trees: &[PathBuf],
+    at_root: &Resolved,
+    options: &RunOptions,
+    collected: &mut Collected,
+) -> Result<()> {
+    if !at_root.git || work_trees.is_empty() {
+        return Ok(());
+    }
+
+    // Timed from here rather than around the call, so a run that never asked for housekeeping
+    // reports no git stage at all instead of a few hundred nanoseconds of deciding not to.
+    let started = Instant::now();
+    let git_options = crate::git::GitPruneOptions {
+        roots: vec![root.to_path_buf()],
+        dry_run: options.dry_run,
+        one_file_system: options.one_file_system,
+        exclude: PatternSet::new(at_root.exclude.clone())?,
+        caches: options.caches,
+        // Deliberately not `jobs`: this runs on the ambient pool, which `run` already built to
+        // honour `-j`. Setting it here would nest a second pool inside that one.
+        ..crate::git::GitPruneOptions::default()
+    };
+    if let Some(pruned) = crate::git::prune_during_sweep(work_trees, &git_options) {
+        match &mut collected.git {
+            Some(existing) => existing.merge(pruned),
+            None => collected.git = Some(pruned),
+        }
+    }
+    collected.git_elapsed += started.elapsed();
     Ok(())
 }
 

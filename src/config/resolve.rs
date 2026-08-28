@@ -35,6 +35,8 @@ pub struct Flags {
     pub keep: KeepPolicy,
     /// `--exclude` globs.
     pub exclude: Vec<String>,
+    /// `--no-git`, as `Some(false)`. `None` leaves the decision to configuration.
+    pub git: Option<bool>,
 }
 
 /// One compiled `[[paths]]` rule.
@@ -56,6 +58,7 @@ struct Accumulated {
     rules: Vec<Rule>,
     exclude: Vec<String>,
     include: Vec<String>,
+    git: Option<bool>,
     sources: Vec<PathBuf>,
 }
 
@@ -76,6 +79,9 @@ pub struct Resolved {
     pub exclude: Vec<String>,
     /// Paths swept without a marker — explicit user intent (ADR 0002).
     pub include: Vec<String>,
+    /// Whether an ordinary sweep runs git housekeeping here (ADR 0011). On unless something
+    /// turned it off.
+    pub git: bool,
     /// The files that contributed, in ascending precedence.
     pub sources: Vec<PathBuf>,
 }
@@ -278,6 +284,10 @@ impl Resolver {
             rules: accumulated.rules.clone(),
             exclude,
             include: accumulated.include.clone(),
+            // Flags last, on the same principle as the selection above: no `voom.toml` below a
+            // scan root may turn housekeeping back on for a run that was invoked with
+            // `--no-git`. On by default, which is what makes it ordinary behaviour.
+            git: self.flags.git.or(accumulated.git).unwrap_or(true),
             sources: accumulated.sources.clone(),
         })
     }
@@ -295,6 +305,12 @@ fn apply(accumulated: &mut Accumulated, layer: &Layer) -> Result<()> {
     for spec in &layer.file.ecosystems.enable {
         validate_spec(spec, source)?;
         accumulated.ops.push((spec.clone(), true));
+    }
+
+    // Later layer wins, matching every other scalar key: a repository's committed `voom.toml`
+    // decides for its own subtree.
+    if let Some(enabled) = layer.file.git.enabled {
+        accumulated.git = Some(enabled);
     }
 
     accumulated.keep = accumulated.keep.narrow(keep_from(&layer.file.keep.scalars(), source)?);

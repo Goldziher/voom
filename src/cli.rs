@@ -47,6 +47,43 @@ pub enum Command {
     },
     /// Keep a tree pruned continuously as you work.
     Watch(WatchArgs),
+    /// Run git's own housekeeping over every repository in a tree.
+    ///
+    /// An ordinary sweep already does the local half of this; the subcommand is for running it
+    /// alone, and for the network step a sweep will not do (`--remotes`).
+    GitPrune(GitPruneArgs),
+}
+
+/// `voom git-prune` arguments.
+#[derive(Debug, Args)]
+pub struct GitPruneArgs {
+    /// Trees to search for repositories.
+    #[arg(value_name = "PATH", default_value = ".")]
+    pub paths: Vec<PathBuf>,
+
+    /// Report what git would prune, without letting it repack.
+    #[arg(short = 'n', long)]
+    pub dry_run: bool,
+
+    /// Output format.
+    ///
+    /// Duplicated from the top-level flag rather than inherited: `args_conflicts_with_subcommands`
+    /// makes `voom --format json git-prune .` a usage error, so without this the subcommand has
+    /// no route to JSON at all.
+    #[arg(long, value_enum, default_value_t = Format::Human)]
+    pub format: Format,
+
+    /// Also prune remote-tracking branches whose upstream is gone.
+    ///
+    /// Off by default, and deliberately not part of a sweep, because it contacts the remote: one
+    /// network round trip per remote per repository, which hangs without connectivity and can
+    /// block on a credential prompt.
+    #[arg(long)]
+    pub remotes: bool,
+
+    /// How long one repository's housekeeping may take, e.g. `30s`.
+    #[arg(long, value_name = "DURATION")]
+    pub timeout: Option<String>,
 }
 
 /// `voom config` actions.
@@ -113,6 +150,15 @@ pub struct PruneArgs {
     /// Exit 3 when a dry run finds artifacts, so a hook can fail on findings.
     #[arg(long, help_heading = "Behaviour")]
     pub exit_code: bool,
+
+    /// Skip git housekeeping: `git worktree prune` and `git gc --auto` in every repository swept.
+    ///
+    /// Both steps are local, idempotent, and are what git itself runs after an ordinary commit —
+    /// which is why they are on by default. Neither contacts a network, and neither expires a
+    /// reflog beyond git's own policy. Also settable as `[git] enabled = false` in `voom.toml`,
+    /// which this flag overrides.
+    #[arg(long, help_heading = "Behaviour")]
+    pub no_git: bool,
 
     /// Retry a failed removal, repairing permissions inside the artifact first.
     ///
@@ -255,6 +301,51 @@ impl WatchArgs {
     }
 }
 
+impl GitPruneArgs {
+    /// The options for an explicit `voom git-prune`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidDuration`] for an unparseable timeout, or [`Error::CatalogPattern`] for
+    /// an `--exclude` glob that will not compile.
+    pub fn to_git_options(&self, prune: &PruneArgs) -> Result<crate::git::GitPruneOptions> {
+        Ok(crate::git::GitPruneOptions {
+            roots: self.paths.clone(),
+            dry_run: self.dry_run,
+            jobs: prune.jobs,
+            one_file_system: prune.one_file_system,
+            timeout: self
+                .timeout
+                .as_deref()
+                .map(parse_duration)
+                .transpose()?
+                .unwrap_or(crate::git::DEFAULT_TIMEOUT),
+            exclude: crate::scan::PatternSet::new(prune.exclude.clone())?,
+            caches: prune.caches,
+            remotes: self.remotes,
+            // The explicit surface says what a withheld repack would have had to work with; a
+            // sweep does not, because the census is a question nobody asked it.
+            count_objects: true,
+        })
+    }
+}
+
+/// Renders a finished `git-prune` in the requested format.
+///
+/// # Errors
+///
+/// Propagates write failures from `out`.
+pub fn render_git(
+    result: &crate::git::GitPruneResult,
+    args: &GitPruneArgs,
+    out: &mut impl io::Write,
+) -> io::Result<()> {
+    match args.format {
+        Format::Human => crate::git::render_human(result, out),
+        Format::Json => crate::git::render_json(result, out),
+    }
+}
+
 impl PruneArgs {
     /// Turns flags into the overrides that sit above every configuration layer.
     ///
@@ -268,6 +359,9 @@ impl PruneArgs {
             disable: self.disable.clone(),
             keep: self.keep()?,
             exclude: self.exclude.clone(),
+            // Only ever `Some(false)`: the flag can turn housekeeping off, and nothing turns it
+            // on, because it is already on.
+            git: self.no_git.then_some(false),
         })
     }
 

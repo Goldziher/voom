@@ -143,6 +143,12 @@ pub struct RunResult {
     pub failures: Vec<WalkFailure>,
     /// Whether the final step was withheld.
     pub dry_run: bool,
+    /// What git housekeeping did, when it ran (ADR 0011).
+    ///
+    /// `None` when it was turned off, when the tree held no repositories, or when the machine
+    /// has no git — three states a reader never needs told apart, because all three mean the
+    /// report has nothing to say about git.
+    pub git: Option<crate::git::GitPruneResult>,
     /// Wall-clock time, for the run and for each stage of it.
     pub timings: Timings,
 }
@@ -171,6 +177,9 @@ pub struct Timings {
     /// The rails and the removal itself (ADR 0006). Withheld under `--dry-run`, which is why
     /// a dry run's number is near zero rather than absent.
     pub delete: Duration,
+    /// Git's own housekeeping in the repositories the walk passed (ADR 0011). Zero when it was
+    /// turned off, and near zero when every repository was already tidy.
+    pub git: Duration,
 }
 
 impl RunResult {
@@ -321,12 +330,14 @@ pub(crate) mod fixtures {
             skipped_count: 0,
             failures: Vec::new(),
             dry_run,
+            git: None,
             timings: Timings {
                 total: Duration::from_millis(1234),
                 scan: Duration::from_millis(900),
                 policy: Duration::from_millis(12),
                 size: Duration::from_millis(210),
                 delete: Duration::from_millis(98),
+                git: Duration::default(),
             },
         };
         result.sort();

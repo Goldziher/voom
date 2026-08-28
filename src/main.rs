@@ -42,8 +42,21 @@ fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
             Ok(exit::SUCCESS)
         }
         Some(Command::Watch(args)) => watch(cli, args),
+        Some(Command::GitPrune(args)) => git_prune(cli, args),
         None => prune(cli),
     }
+}
+
+/// `voom git-prune`: git's own housekeeping, run on its own.
+fn git_prune(cli: &Cli, args: &voom::cli::GitPruneArgs) -> anyhow::Result<i32> {
+    let options = args.to_git_options(&cli.prune)?;
+    let result = voom::git::prune(&options).context("pruning repositories")?;
+
+    let mut out = anstream::stdout().lock();
+    voom::cli::render_git(&result, args, &mut out).context("writing the report")?;
+    out.flush().context("flushing the report")?;
+
+    Ok(result.exit_code())
 }
 
 fn watch(cli: &Cli, args: &voom::cli::WatchArgs) -> anyhow::Result<i32> {

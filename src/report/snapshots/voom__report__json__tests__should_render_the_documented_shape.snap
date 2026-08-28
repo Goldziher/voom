@@ -52,6 +52,7 @@ expression: document_for_tests()
   ],
   "dry_run": false,
   "elapsed_ms": 1234,
+  "git": null,
   "roots": [
     "/projects"
   ],
@@ -65,6 +66,7 @@ expression: document_for_tests()
   ],
   "timings_us": {
     "delete": 98000,
+    "git": 0,
     "policy": 12000,
     "scan": 900000,
     "size": 210000,

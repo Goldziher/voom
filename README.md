@@ -144,6 +144,15 @@ voom -j 4 ~
 # Include tool caches and installed toolchains, which are skipped by default
 voom --dry-run --caches ~
 
+# Also remove dependency directories -- node_modules/, vendor/, deps/, .venv/
+voom --dry-run --clean-dependencies ~
+
+# Skip the git housekeeping an ordinary sweep does
+voom --no-git ~
+
+# Git housekeeping on its own, including the network step a sweep will not do
+voom git-prune -n --remotes ~/projects
+
 # What does voom know about?
 voom catalog
 ```
@@ -292,6 +301,9 @@ include = ["~/scratch/build-junk"]                   # swept without a marker �
 enable  = ["python.venv"]     # opt into a † artifact
 disable = ["terraform"]
 
+[git]
+enabled = false      # skip the housekeeping a sweep otherwise does here
+
 [keep]
 min_age  = "7d"      # never remove something modified more recently
 min_size = "1MB"     # not worth the rebuild below this
@@ -328,6 +340,43 @@ exclude = ['C:\Users\me\work\**']
 
 `voom config show` lists the files the configuration was merged from, in ascending precedence,
 and then the merged result. Details in [ADR 0004](adrs/0004-configuration.md).
+
+## Git housekeeping
+
+An ordinary sweep also runs git's own local housekeeping in every repository it walks past.
+Discovery is free — the walker already meets `.git` on its way past, so there is no second pass —
+and the two steps are the ones git itself runs after a commit:
+
+| Step | What it does |
+| --- | --- |
+| `git worktree prune` | drops the administrative files of worktrees whose checkout is gone |
+| `git gc --auto` | repacks **only if** git's own thresholds say it is worth it |
+
+Neither contacts a network. Neither expires a reflog beyond git's own policy, and voom never
+passes `--prune=now`, `--aggressive`, or `git reflog expire`: the reflog is how you get a commit
+back, and "prunable" does not mean "unreachable by you". A repository with an operation half
+finished — a rebase, a merge, a cherry-pick, a bisect — is skipped and said so, and a linked
+worktree is resolved to its object store and pruned once rather than once per checkout.
+
+The report says nothing when nothing was found, because that is the usual case:
+
+```text
+  pruned  api  — 2 stale worktrees pruned
+```
+
+Turn it off with `--no-git`, or with `[git] enabled = false` in a `voom.toml`, which lets one
+repository set a policy for its own subtree. The flag beats the file.
+
+`voom git-prune` runs the same housekeeping on its own, and is the only place the network step
+lives:
+
+```bash
+voom git-prune -n ~/projects            # what would be pruned
+voom git-prune --remotes ~/projects     # also drop remote-tracking branches whose upstream is gone
+```
+
+`--remotes` is deliberately not part of a sweep: it is one network round trip per remote per
+repository, which hangs without connectivity and can block on a credential prompt.
 
 ## Watch mode
 

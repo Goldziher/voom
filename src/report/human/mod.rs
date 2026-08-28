@@ -284,6 +284,18 @@ pub fn render(result: &RunResult, options: HumanOptions, out: &mut impl io::Writ
             write_block(block, out)?;
             (wrote_block, wrote_body) = (true, true);
         }
+
+        // Git housekeeping speaks only when it has something to say. It runs in nearly every
+        // repository a sweep walks past and nearly always finds nothing to do, so a block that
+        // appeared whenever it *ran* would be on almost every report and would train the reader
+        // to skim the region where refusals and failures live.
+        if let Some(git) = result.git.as_ref().filter(|git| !git.noteworthy().is_empty()) {
+            if wrote_block {
+                writeln!(out)?;
+            }
+            crate::git::write_sweep_block(git, base, out)?;
+            wrote_body = true;
+        }
     }
 
     write_footer(result, options, wrote_body, out)
@@ -466,7 +478,7 @@ fn write_footer(
 fn stage_breakdown(result: &RunResult) -> String {
     let timings = &result.timings;
     format!(
-        "scan {:.2?} · policy {:.2?} · size {:.2?} · {} {:.2?}",
+        "scan {:.2?} · policy {:.2?} · size {:.2?} · {} {:.2?}{}",
         timings.scan,
         timings.policy,
         timings.size,
@@ -475,6 +487,13 @@ fn stage_breakdown(result: &RunResult) -> String {
         // "withheld" stops a reader reading that near-zero as a fast deletion.
         if result.dry_run { "withheld" } else { "delete" },
         timings.delete,
+        // Only when it ran. A stage that was switched off is not a stage that took no time, and
+        // printing `git 0ns` on every run of a machine without git says nothing.
+        if timings.git.is_zero() {
+            String::new()
+        } else {
+            format!(" · git {:.2?}", timings.git)
+        },
     )
 }
 

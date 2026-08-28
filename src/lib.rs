@@ -26,6 +26,7 @@ pub mod scan;
 pub mod cli;
 pub mod config;
 pub mod delete;
+pub mod git;
 pub mod policy;
 pub mod report;
 pub mod run;

@@ -123,12 +123,16 @@ pub fn document(result: &RunResult) -> Value {
         //
         // The stages do not sum to `total`; the residue is configuration loading, root
         // normalization and building the worker pool.
+        // Absent rather than null when housekeeping did not run: a consumer branching on the
+        // key gets the same answer whether it was turned off or the tree held no repositories.
+        "git": result.git.as_ref().map(crate::git::document),
         "timings_us": {
             "total": micros(result.timings.total),
             "scan": micros(result.timings.scan),
             "policy": micros(result.timings.policy),
             "size": micros(result.timings.size),
             "delete": micros(result.timings.delete),
+            "git": micros(result.timings.git),
         },
     })
 }
