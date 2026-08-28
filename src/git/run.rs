@@ -21,8 +21,20 @@ use super::{GitError, Step, StepKind, StepOutcome};
 /// The program voom delegates to, resolved through `PATH` so a user's own git wins.
 const GIT: &str = "git";
 
-/// How often the wait loop asks whether the child has finished.
-const POLL_INTERVAL: Duration = Duration::from_millis(25);
+/// How long the wait loop sleeps before asking again the first time.
+///
+/// A git step against a local repository returns in one to three milliseconds, so a fixed 25 ms
+/// poll missed once and then charged 25 ms of a blocked `rayon` worker to *every* step — one per
+/// repository on a dry run, two on a real one. On a tree with 300 repositories that was most of
+/// the git stage: a dry run measured 731 ms against 415 ms with this backoff, and a real run
+/// 1.60 s against 0.80 s.
+const POLL_START: Duration = Duration::from_micros(100);
+
+/// The ceiling the backoff doubles up to.
+///
+/// Kept at the original interval: the deadline exists for a stalled network mount, and there is
+/// nothing to gain from asking a hung process four hundred times a second.
+const POLL_CEILING: Duration = Duration::from_millis(25);
 
 /// A finished child process.
 #[derive(Debug)]
@@ -151,6 +163,7 @@ fn join_reader(handle: std::thread::JoinHandle<String>) -> String {
 /// Waits for the child, killing it once the deadline has passed. Returns its code, and whether it
 /// was killed.
 fn wait_with_deadline(child: &mut Child, deadline: Instant) -> io::Result<(Option<i32>, bool)> {
+    let mut wait = POLL_START;
     loop {
         if let Some(status) = child.try_wait()? {
             return Ok((status.code(), false));
@@ -160,7 +173,8 @@ fn wait_with_deadline(child: &mut Child, deadline: Instant) -> io::Result<(Optio
             let status = child.wait()?;
             return Ok((status.code(), true));
         }
-        std::thread::sleep(POLL_INTERVAL);
+        std::thread::sleep(wait);
+        wait = (wait * 2).min(POLL_CEILING);
     }
 }
 

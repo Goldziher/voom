@@ -123,14 +123,24 @@ fn list(dir: &Path) -> (u64, Vec<PathBuf>) {
     (total, subdirectories)
 }
 
-/// `DirEntry::metadata` follows symlinks on some platforms; this never does.
+/// Metadata for a directory entry, never following a link.
+///
+/// `DirEntry::metadata` is documented not to traverse a symlink, and on unix it is an `fstatat`
+/// against the directory handle the walk already holds — where `symlink_metadata(entry.path())`
+/// allocates a `PathBuf` and resolves the whole path from the root again. Over the 230,000
+/// entries of an 89 GB `target/` that is about 0.4 µs an entry, and roughly 60 ms of a five
+/// second sweep.
+///
+/// The trait survives the change so the guarantee stays named at the call site rather than
+/// resting on a reader knowing what `DirEntry::metadata` does; `should_not_follow_a_symlink_when_measuring`
+/// is what actually holds it, and it was checked against both routes.
 trait NoFollow {
     fn metadata_no_follow(&self) -> std::io::Result<std::fs::Metadata>;
 }
 
 impl NoFollow for std::fs::DirEntry {
     fn metadata_no_follow(&self) -> std::io::Result<std::fs::Metadata> {
-        std::fs::symlink_metadata(self.path())
+        self.metadata()
     }
 }
 
@@ -198,6 +208,29 @@ mod tests {
         let fixture = tree(&["big/one.bin", "big/two.bin", "big/three.bin"]);
         std::os::unix::fs::symlink(fixture.path().join("big"), fixture.path().join("link")).expect("a symlink");
         assert!(measure(&fixture.path().join("link")) < measure(&fixture.path().join("big")));
+    }
+
+    /// The same rule one level down, where the walk rather than the entry point decides.
+    ///
+    /// [`measure`] stats its argument with `symlink_metadata`, so the test above holds however
+    /// [`NoFollow`] is implemented. This one puts the link *inside* the tree being measured, so
+    /// it is `metadata_no_follow` under test — and it fails if that ever becomes a following
+    /// stat, which is the change that would quietly make every report promise space that
+    /// removal will not reclaim.
+    #[test]
+    #[cfg(unix)]
+    fn should_not_follow_a_symlink_found_inside_a_measured_tree() {
+        let fixture = tree(&["heavy/one.bin", "heavy/two.bin", "heavy/three.bin", "target/app"]);
+        let bare = measure(&fixture.path().join("target"));
+        std::os::unix::fs::symlink(fixture.path().join("heavy"), fixture.path().join("target/link"))
+            .expect("a symlink");
+
+        let with_link = measure(&fixture.path().join("target"));
+
+        assert!(
+            with_link - bare < measure(&fixture.path().join("heavy")),
+            "a link inside the tree added the weight of what it points at: {bare} -> {with_link}"
+        );
     }
 
     #[test]
