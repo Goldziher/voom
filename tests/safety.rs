@@ -168,6 +168,36 @@ fn should_never_remove_the_scan_root() {
 
 /// Ambiguous names resolve by ecosystem, not by precedence: `target/` beside a `Cargo.toml` is
 /// Rust's, beside a `pom.xml` is Maven's, and beside neither is nobody's.
+/// `Ancestor(3)` is the only anchor in the catalog that climbs, and a sweep of a real machine
+/// found all 55 .NET artifacts sitting directly beside their project file — so the climb has
+/// never actually run outside a classifier unit test. This exercises it end to end, and pins
+/// the bound in the same shape, because a wrong bound is either lost recall or a deletion
+/// justified by a marker three directories away from what it proved.
+#[test]
+fn should_sweep_a_nested_dotnet_artifact_and_stop_at_the_ancestor_bound() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("App.csproj"), b"<Project />").unwrap();
+
+    for nesting in ["", "a/", "a/b/", "a/b/c/", "a/b/c/d/"] {
+        let obj = root.path().join(format!("{nesting}obj"));
+        fs::create_dir_all(&obj).unwrap();
+        fs::write(obj.join("build.o"), b"output").unwrap();
+    }
+
+    run(&options(root.path())).expect("the run completes");
+
+    for nesting in ["", "a/", "a/b/", "a/b/c/"] {
+        assert!(
+            !root.path().join(format!("{nesting}obj")).exists(),
+            "obj/ {nesting} levels below its .csproj is within the bound and must be swept"
+        );
+    }
+    assert!(
+        root.path().join("a/b/c/d/obj/build.o").exists(),
+        "four levels down is beyond Ancestor(3) and nothing proves it"
+    );
+}
+
 #[test]
 fn should_resolve_an_ambiguous_name_by_which_marker_is_present() {
     let root = TempDir::new().unwrap();
