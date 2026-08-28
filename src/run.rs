@@ -900,6 +900,27 @@ mod config_tests {
         );
     }
 
+    /// `deny_unknown_fields` is a safety mechanism, not a strictness preference: a typo in a
+    /// key like `exclude` would otherwise leave the user with a guard they believe they have
+    /// and do not. ADR 0004 makes this explicit, and nothing pinned it.
+    #[test]
+    fn should_reject_an_unknown_key_rather_than_ignoring_it() {
+        for broken in ["exlude = [\"x\"]\n", "[keep]\nmin_agee = \"7d\"\n"] {
+            let fixture = tree(&["Cargo.toml", "target/app", "voom.toml"]);
+            write(fixture.path(), "voom.toml", broken);
+
+            let error = run(&options(fixture.path())).unwrap_err();
+            assert!(
+                error.to_string().contains("voom.toml"),
+                "the file has to be named: {error}"
+            );
+            assert!(
+                fixture.path().join("target/app").exists(),
+                "and nothing is removed under a configuration voom could not read"
+            );
+        }
+    }
+
     #[test]
     fn should_reject_an_unknown_ecosystem_in_config() {
         let fixture = tree(&["Cargo.toml", "target/app", "voom.toml"]);

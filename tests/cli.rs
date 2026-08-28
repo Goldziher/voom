@@ -221,6 +221,59 @@ fn should_print_only_the_footer_with_summary() {
         .stdout(contains("reclaimable"));
 }
 
+/// Tool caches are skipped by location, before classification, because an installed toolchain
+/// and a built project are the same shape on disk (ADR 0001). Driven through the binary with a
+/// fake `HOME`, which is process-scoped and so leaves other tests alone.
+#[test]
+fn should_skip_a_tool_cache_under_home_and_sweep_it_with_the_flag() {
+    let home = TempDir::new().unwrap();
+    let cache = home.path().join(".npm/_cacache/pkg");
+    fs::create_dir_all(cache.join("dist")).unwrap();
+    fs::write(cache.join("package.json"), b"{}").unwrap();
+    fs::write(cache.join("dist/bundle.js"), b"built").unwrap();
+
+    let project = home.path().join("project");
+    fs::create_dir_all(project.join("dist")).unwrap();
+    fs::write(project.join("package.json"), b"{}").unwrap();
+    fs::write(project.join("dist/bundle.js"), b"built").unwrap();
+
+    voom()
+        .env("HOME", home.path())
+        .args(["--dry-run", "--format", "json"])
+        .arg(home.path())
+        .assert()
+        .success()
+        .stdout(contains("project/dist").and(contains("_cacache").not()));
+
+    voom()
+        .env("HOME", home.path())
+        .args(["--dry-run", "--caches", "--format", "json"])
+        .arg(home.path())
+        .assert()
+        .success()
+        .stdout(contains("project/dist").and(contains("_cacache")));
+}
+
+/// Pointing voom *at* a cache is explicit intent. The skip is a rule about what a walk wanders
+/// into, not about what the user asked for, so it must not need the flag.
+#[test]
+fn should_sweep_a_cache_named_as_the_scan_root_without_the_flag() {
+    let home = TempDir::new().unwrap();
+    let cache = home.path().join(".npm/_cacache/pkg");
+    fs::create_dir_all(cache.join("dist")).unwrap();
+    fs::write(cache.join("package.json"), b"{}").unwrap();
+    fs::write(cache.join("dist/bundle.js"), b"built").unwrap();
+
+    voom()
+        .env("HOME", home.path())
+        .arg(home.path().join(".npm"))
+        .assert()
+        .success();
+
+    assert!(!cache.join("dist").exists(), "a cache the user named outright is swept");
+    assert!(cache.join("package.json").exists(), "and only its build output is");
+}
+
 #[test]
 fn should_print_the_catalog() {
     voom()

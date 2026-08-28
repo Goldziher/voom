@@ -8,9 +8,14 @@
 // Helper functions here are not `#[test]` bodies, which is all `allow-expect-in-tests` covers.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use std::collections::BTreeSet;
+mod support;
 
+use std::collections::BTreeSet;
+use std::fs;
+
+use tempfile::TempDir;
 use voom::catalog::CATALOG;
+use voom::run::{RunOptions, run};
 
 /// The first column of the README's "Supported ecosystems" table.
 fn readme_ecosystems() -> Vec<String> {
@@ -90,5 +95,71 @@ fn every_marker_the_readme_advertises_is_a_real_marker() {
                 ecosystem.markers
             );
         }
+    }
+}
+
+/// Every `voom.toml` example in the README, parsed by the real loader.
+///
+/// The blocks are identified by what they are *not*: the git-hooks section carries a
+/// `[[hooks.sources]]` example, which is poly's schema rather than voom's.
+fn readme_config_examples() -> Vec<String> {
+    let readme = include_str!("../README.md");
+    let mut blocks = Vec::new();
+    let mut current: Option<String> = None;
+    for line in readme.lines() {
+        match (&mut current, line.trim()) {
+            (None, "```toml") => current = Some(String::new()),
+            (Some(_), "```") => blocks.push(current.take().unwrap_or_default()),
+            (Some(block), _) => {
+                block.push_str(line);
+                block.push('\n');
+            }
+            (None, _) => {}
+        }
+    }
+    blocks.retain(|block| !block.contains("[[hooks."));
+    blocks
+}
+
+/// A configuration example nobody can use is worse than none: every struct in the schema is
+/// `deny_unknown_fields`, so one stale key turns a copied example into a hard load error. TOML
+/// ordering is the other trap — a top-level key written after a `[table]` silently becomes a
+/// key *of* that table, which is how `exclude` once stopped being an exclusion.
+///
+/// Run through the real pipeline rather than against the schema directly, because that is what
+/// a reader copying the block actually does.
+#[test]
+fn every_readme_configuration_example_loads() {
+    let examples = readme_config_examples();
+    assert!(!examples.is_empty(), "the README documents configuration somewhere");
+
+    for example in examples {
+        let fixture = TempDir::new().expect("a temp dir");
+        fs::write(fixture.path().join("voom.toml"), &example).expect("a config file");
+
+        let options = RunOptions {
+            dry_run: true,
+            ..support::options(fixture.path())
+        };
+        if let Err(error) = run(&options) {
+            panic!("a README example does not load: {error}\n\n{example}");
+        }
+    }
+}
+
+/// The keys the prose promises are the keys the schema accepts. `deny_unknown_fields` turns a
+/// typo into a hard error, so a key named in the README that voom does not know is a config
+/// file that fails for everyone who copies it.
+#[test]
+fn every_top_level_key_the_readme_documents_is_accepted() {
+    for key in ["exclude", "include"] {
+        let fixture = TempDir::new().expect("a temp dir");
+        fs::write(fixture.path().join("voom.toml"), format!("{key} = []\n")).expect("a config file");
+
+        let options = RunOptions {
+            dry_run: true,
+            ..support::options(fixture.path())
+        };
+        assert!(run(&options).is_ok(), "`{key}` is documented but not accepted");
     }
 }

@@ -301,10 +301,14 @@ impl Visitor<'_> {
         }
 
         // `include` outranks every prune below but never `exclude`, which ADR 0004 makes
-        // absolute. That ordering is what lets an explicit include reach into a dependency
-        // directory — ADR 0001 keeps those out of the catalog, and says configuration is the
-        // one way to name them anyway. `.git` stays unreachable regardless: the deletion guard
-        // refuses a VCS directory by name whatever produced it.
+        // absolute. That ordering lets an explicit include *name* a directory the walk would
+        // otherwise prune — a dependency directory or a tool cache, both of which ADR 0001
+        // keeps out of the catalog and says configuration is the one way to reach.
+        //
+        // It does not let one reach *inside* such a directory: pruning is what makes the walk
+        // fast, and once the walk declines to descend nothing below is offered to any matcher.
+        // `.git` stays unreachable either way — the deletion guard refuses a VCS directory by
+        // name whatever produced it.
         if let Some(pattern) = self.options.include.matched(path) {
             let finding = Finding {
                 path: path.to_path_buf(),
@@ -489,6 +493,46 @@ mod tests {
         let scan = run(fixture.path(), &options);
 
         assert_eq!(found(&scan, fixture.path()), vec!["node_modules"]);
+    }
+
+    /// `include` outranks the cache skip the same way it outranks the dependency prune: it can
+    /// name the pruned directory itself.
+    #[test]
+    fn should_let_an_include_name_a_tool_cache_outright() {
+        let fixture = tree(&[".npm/_cacache/pkg/leftovers.o"]);
+        let options = ScanOptions {
+            caches: CacheRoots::under(fixture.path(), fixture.path()),
+            include: PatternSet::new([format!("{}/.npm", fixture.path().display())]).expect("the include compiles"),
+            ..verbose()
+        };
+
+        let scan = run(fixture.path(), &options);
+
+        assert_eq!(found(&scan, fixture.path()), vec![".npm"]);
+    }
+
+    /// What it cannot do is reach *inside* one, and that is worth pinning rather than leaving
+    /// to be discovered. Pruning happens at the directory level — that is where all the
+    /// wall-clock saving comes from — so once the walk declines to descend into `.npm`, nothing
+    /// below it is ever offered to any matcher. Deciding otherwise would mean asking, at every
+    /// prune, whether some glob might match an unknown descendant, which globs cannot answer.
+    ///
+    /// It fails toward not deleting, which is the direction `safety-first` asks for. A user who
+    /// wants a path inside a cache swept names the cache as a scan root, or passes `--caches`.
+    #[test]
+    fn should_not_let_an_include_reach_inside_a_pruned_directory() {
+        let fixture = tree(&[".npm/_cacache/pkg/leftovers.o"]);
+        let options = ScanOptions {
+            caches: CacheRoots::under(fixture.path(), fixture.path()),
+            include: PatternSet::new([format!("{}/.npm/_cacache/pkg", fixture.path().display())])
+                .expect("the include compiles"),
+            ..verbose()
+        };
+
+        let scan = run(fixture.path(), &options);
+
+        assert!(scan.findings.is_empty());
+        assert!(fixture.path().join(".npm/_cacache/pkg/leftovers.o").exists());
     }
 
     /// An installed toolchain is shaped exactly like a project — `~/.cache/node/corepack` really

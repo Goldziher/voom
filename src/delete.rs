@@ -783,6 +783,33 @@ mod tests {
         assert_eq!(guard.remove(&fixture.path().join("target"), false), Outcome::Removed);
     }
 
+    /// Every refusal reaches JSON as a code a hook branches on, so two refusals sharing one
+    /// code would make them indistinguishable to a consumer — and a refusal is the tool saying
+    /// it declined to delete something, which is exactly what a consumer needs to tell apart.
+    #[test]
+    fn every_refusal_has_its_own_code_and_its_own_words() {
+        let refusals = [
+            Refusal::Symlink,
+            Refusal::ReparsePoint,
+            Refusal::Protected,
+            Refusal::EscapesRoot,
+            Refusal::FilesystemBoundary,
+            Refusal::Vanished,
+        ];
+
+        let mut codes = std::collections::HashSet::new();
+        let mut words = std::collections::HashSet::new();
+        for refusal in refusals {
+            assert!(codes.insert(refusal.code()), "duplicate code: {}", refusal.code());
+            assert!(words.insert(refusal.to_string()), "duplicate wording: {refusal}");
+            assert!(
+                !refusal.code().contains(' '),
+                "a code is machine-readable: {}",
+                refusal.code()
+            );
+        }
+    }
+
     #[test]
     fn should_refuse_a_vcs_directory_wherever_it_appears() {
         let fixture = tree(&["Cargo.toml", ".git/HEAD", "nested/.git/HEAD"]);

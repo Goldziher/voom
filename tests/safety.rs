@@ -14,7 +14,8 @@ use std::fs;
 
 use support::{options, snapshot};
 use tempfile::TempDir;
-use voom::run::run;
+use voom::delete::Outcome;
+use voom::run::{RunOptions, run};
 
 /// Build artifacts are precisely what `.gitignore` lists. A walker that respects ignore files
 /// finds nothing and reports a clean machine — a silent total failure nobody would report as a
@@ -237,4 +238,101 @@ fn should_isolate_a_failure_to_the_artifact_it_happened_on() {
     if result.totals().failed > 0 {
         assert_eq!(result.exit_code(false), 1, "a failed removal is exit code 1");
     }
+}
+
+/// `include` bypasses marker proof, not the rails. ADR 0004 calls it a loaded foot-gun by
+/// design; ADR 0006's denylist is what stops the gun pointing at a repository's history.
+#[test]
+fn should_refuse_an_included_path_that_the_denylist_protects() {
+    let root = TempDir::new().unwrap();
+    fs::create_dir_all(root.path().join(".git")).unwrap();
+    fs::write(root.path().join(".git/HEAD"), b"ref: refs/heads/main").unwrap();
+    fs::write(
+        root.path().join("voom.toml"),
+        format!("include = ['{}']\n", root.path().join(".git").display()),
+    )
+    .unwrap();
+
+    let result = run(&options(root.path())).expect("the run completes");
+
+    assert!(
+        root.path().join(".git/HEAD").exists(),
+        "no configuration reaches a VCS directory"
+    );
+    assert!(
+        result
+            .entries
+            .iter()
+            .all(|entry| matches!(entry.outcome, Outcome::Refused(_))),
+        "and the refusal is reported rather than silent: {:?}",
+        result.entries
+    );
+}
+
+/// Keep policies are about whether *now* is the moment to remove something, not about what it
+/// is, so they apply to an unanchored path exactly as to a proven one.
+#[test]
+fn should_hold_an_included_path_that_a_keep_policy_covers() {
+    let root = TempDir::new().unwrap();
+    fs::create_dir_all(root.path().join("junk")).unwrap();
+    fs::write(root.path().join("junk/leftovers.o"), b"output").unwrap();
+    fs::write(
+        root.path().join("voom.toml"),
+        format!(
+            "include = ['{}']\n\n[keep]\nmin_age = \"30d\"\n",
+            root.path().join("junk").display()
+        ),
+    )
+    .unwrap();
+
+    let result = run(&options(root.path())).expect("the run completes");
+
+    assert!(
+        root.path().join("junk/leftovers.o").exists(),
+        "a fresh directory is held by min_age however it was named"
+    );
+    assert!(result.entries.is_empty());
+}
+
+/// ADR 0006's central property, for the one path that reaches deletion without a marker.
+#[test]
+fn should_predict_an_unanchored_removal_in_a_dry_run() {
+    let build = |root: &std::path::Path| {
+        fs::create_dir_all(root.join("junk")).unwrap();
+        fs::write(root.join("junk/leftovers.o"), b"output").unwrap();
+        fs::write(
+            root.join("voom.toml"),
+            format!("include = ['{}']\n", root.join("junk").display()),
+        )
+        .unwrap();
+    };
+
+    let dry_root = TempDir::new().unwrap();
+    build(dry_root.path());
+    let before = snapshot(dry_root.path());
+    let dry = run(&RunOptions {
+        dry_run: true,
+        ..options(dry_root.path())
+    })
+    .expect("the dry run completes");
+
+    assert_eq!(snapshot(dry_root.path()), before, "a dry run changes nothing");
+
+    let real_root = TempDir::new().unwrap();
+    build(real_root.path());
+    let real = run(&options(real_root.path())).expect("the run completes");
+
+    let predicted: Vec<_> = dry
+        .entries
+        .iter()
+        .map(|entry| entry.path.strip_prefix(dry_root.path()).unwrap().to_path_buf())
+        .collect();
+    let actual: Vec<_> = real
+        .entries
+        .iter()
+        .map(|entry| entry.path.strip_prefix(real_root.path()).unwrap().to_path_buf())
+        .collect();
+
+    assert_eq!(predicted, actual, "the dry run predicts the real one exactly");
+    assert!(!predicted.is_empty(), "and both actually found the included path");
 }
