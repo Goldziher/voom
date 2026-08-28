@@ -188,3 +188,49 @@ fn activity_at_any_depth_holds_the_artifact() {
         );
     }
 }
+
+/// The startup path, which the tracker fixtures above do not reach.
+///
+/// This one *is* wall-clock, deliberately. The defect it pins was invisible to a tracker-level
+/// test because the baseline pass ran before the tracker existed at all: `voom watch` started
+/// during a build removed that build's output immediately, whatever the quiet period said. The
+/// margin here is enormous — a 60 second quiet period against a one second observation — so the
+/// test is not timing-sensitive in the direction that matters. With the defect present the
+/// artifact is gone before the first assertion; without it, it cannot be removed for a minute.
+#[test]
+fn should_not_remove_anything_during_the_baseline_pass() {
+    let root = TempDir::new().expect("a temp dir");
+    fs::write(root.path().join("Cargo.toml"), b"[package]").unwrap();
+    fs::create_dir_all(root.path().join("target/debug")).unwrap();
+    fs::write(root.path().join("target/debug/app"), b"output").unwrap();
+
+    let watched = root.path().to_path_buf();
+    let options = RunOptions {
+        roots: vec![watched.clone()],
+        dry_run: false,
+        jobs: Some(1),
+        one_file_system: true,
+        caches: false,
+        verbose: false,
+        config: None,
+        flags: Flags::default(),
+        progress: false,
+    };
+    let watch_options = voom::watch::WatchOptions {
+        debounce: Duration::from_millis(200),
+        quiet_period: Duration::from_secs(60),
+    };
+
+    // Detached: `watch` runs until its channel disconnects and has no cancellation, so the
+    // thread ends with the test process. It holds only a watcher and a channel.
+    std::thread::spawn(move || {
+        let _ = voom::watch::watch(&options, &watch_options, |_| Ok(()));
+    });
+
+    std::thread::sleep(Duration::from_millis(1000));
+
+    assert!(
+        root.path().join("target/debug/app").exists(),
+        "the baseline pass must seed the quiet-period tracker, not remove"
+    );
+}

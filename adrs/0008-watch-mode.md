@@ -24,7 +24,8 @@ at that moment; a background loop has no such context.
 
 - **Event-driven, scoped re-classification.** Filesystem events identify which directories
   changed; only those subtrees are re-classified. A full scan happens once at startup to
-  establish the baseline, and never again.
+  establish the baseline, and never again. That scan *seeds the quiet-period tracker* rather
+  than removing anything — see the amendment below.
 - **Debounced.** Events are coalesced over a window (default 5 s, `--debounce`). Builds
   produce event storms, and reacting per-event would mean thousands of redundant
   classifications.
@@ -102,3 +103,30 @@ Negative / risks:
 - **Deleting immediately on the completion of a detectable build** (watching for the compiler
   process to exit): rejected — requires process inspection, is per-toolchain, and does not
   generalize across 23 ecosystems.
+
+## Amendment — 2026-08-28
+
+**The baseline scan seeds the quiet-period tracker; it does not remove.**
+
+As first implemented, the startup scan was an ordinary removing run, and the tracker was created
+after it. The quiet period therefore governed only the artifacts that appeared *after* the
+watcher started. Starting `voom watch` while a build was running removed that build's output
+immediately, whatever `--quiet-period` said — precisely the accident this ADR names the quiet
+period as the rail against.
+
+The reasoning that produced the original design does not survive contact with the startup case.
+At startup voom has no history for any subtree, so "already reclaimable" is not something it can
+actually know: an artifact being written to at this instant and one abandoned last week look
+identical. The baseline now records every artifact it finds as active as of startup, and the
+event loop removes each one once its subtree has been idle for the quiet period.
+
+The cost is that the first removal is delayed by one quiet period rather than happening at
+once. That is the right trade for a process intended to run for hours, and it is the reading of
+`safety-first` that this ADR already applies everywhere else.
+
+**Why the existing fixtures did not catch it.** They drive `QuietTracker` directly, which is the
+right way to test the rule and remains so. But the baseline pass ran before a tracker existed,
+so no tracker-level test could have reached it. `tests/watch.rs` now also carries one
+deliberately wall-clock test that drives the real `watch()` and asserts nothing is removed during
+the baseline. It compares a sixty-second quiet period against a one-second observation, so the
+margin is large enough that it is not timing-sensitive in the direction that matters.

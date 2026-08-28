@@ -151,13 +151,24 @@ pub fn watch(
     mut on_prune: impl FnMut(&RunResult) -> io::Result<()>,
 ) -> Result<()> {
     let roots = options.roots.clone();
+    let mut tracker = QuietTracker::new();
 
-    // The baseline sweep. Everything already reclaimable goes now, so the event loop only ever
-    // deals with what the machine produces from here on.
-    let baseline = run(options)?;
-    on_prune(&baseline).map_err(|error| Error::Watch {
-        reason: error.to_string(),
+    // The baseline pass *seeds* the tracker; it does not remove anything.
+    //
+    // At startup voom has no history for any subtree, so an artifact being written to right now
+    // is indistinguishable from one abandoned last week. A baseline that removed immediately
+    // would walk straight past the quiet period — which ADR 0008 makes the rail that stops
+    // watch mode deleting an in-progress build — and `voom watch` started during a build would
+    // take that build's output. Seeding costs one quiet period before the first removal, and
+    // buys the rail applying to every artifact rather than only to the ones that appear later.
+    let baseline = run(&RunOptions {
+        dry_run: true,
+        ..options.clone()
     })?;
+    let started = Instant::now();
+    for entry in &baseline.entries {
+        tracker.touch(&entry.path, started);
+    }
 
     let (sender, receiver) = std::sync::mpsc::channel();
     let mut debouncer = new_debouncer(watch_options.debounce, None, sender).map_err(|error| Error::Watch {
@@ -175,8 +186,6 @@ pub fn watch(
             reason: format!("could not watch {}", unwatched.join("; ")),
         });
     }
-
-    let mut tracker = QuietTracker::new();
 
     // The loop wakes on events *and* on a timer. A subtree that has gone quiet by definition
     // stops producing events, so without the timer the quiet period could never be observed to
