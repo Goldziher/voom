@@ -28,6 +28,27 @@ instead.
   uses, and followed by what would plausibly help (`re-run to finish`). The classification is by
   `io::ErrorKind`, never by the error number: ENOTEMPTY is 66 on macOS and 39 on Linux, and 39
   on macOS means something else entirely.
+- **An ordinary sweep now runs git's own local housekeeping** in every repository it walks
+  past: `git worktree prune`, and `git gc --auto`, which repacks only when git's own thresholds
+  say it is worth it. Discovery is free — the walker already meets `.git` on its way past — so
+  there is no second pass over the tree. Nothing is force-removed: voom never passes
+  `--prune=now`, `--aggressive`, or `git reflog expire`, and never contacts a network. A
+  repository with a rebase, merge, cherry-pick or bisect half finished is skipped and said so,
+  and a linked worktree is resolved to its object store and pruned once rather than once per
+  checkout. Off with `--no-git` or `[git] enabled = false` in a `voom.toml`; the flag wins.
+- **`voom git-prune`** runs the same housekeeping on its own, and is the only place the network
+  step lives — `--remotes` drops remote-tracking branches whose upstream is gone. It is
+  deliberately not part of a sweep: one round trip per remote per repository hangs without
+  connectivity and can block on a credential prompt.
+- **`--clean-dependencies`** removes dependency directories — `node_modules/`, composer's
+  `vendor/`, Go's `vendor/`, mix's `deps/` and Python's `.venv/`. [ADR 0001](adrs/0001-mission-and-scope.md)
+  said no flag would ever turn these on; that line is reversed by amendment, and only as far as
+  an explicit opt-in reaches. They are ordinary off-by-default catalog entries proved against
+  their own markers, no ordinary run takes one, and the footer names it when one is removed.
+- **The footer says where the run's time went**, not just how long it took:
+  `scan 2.61s · policy 645µs · size 2.28s · delete 1.42s`. One number cannot be acted on — a
+  sweep that spends its time walking wants a different fix from one that spends it sizing. JSON
+  carries the same in `timings_us`.
 - **`--force`** retries a failed removal, repairing permissions inside the artifact first —
   read-only bits, and on macOS the user-immutable flag. It answers the two failures voom can do
   something about: a concurrent writer, which is a question of time, and a mode that forbids an
@@ -40,6 +61,15 @@ instead.
   artifact held by a read-only parent is reported rather than forced. It also never widens a
   hard-linked file: a mode bit belongs to the inode, so relaxing one would change data voom is
   not deleting, possibly outside the scan root entirely. Watch mode never forces.
+
+### Performance
+
+- **Sizing is divided across cores inside each artifact, not just across artifacts.** The new
+  stage breakdown is what found this: on a 127 GB `~/workspace` dry run, sizing cost more than
+  the walk did. A sweep's artifacts are wildly uneven — one `target/` was 79 GB of that total —
+  so the largest tree was measured by a single thread while every other core idled. A whole dry
+  run of that tree went from **6.88 s to 4.63 s**, a 1.49× speedup measured with `hyperfine`
+  over 8 runs. Reported sizes are byte-identical to the serial walk.
 
 ### Fixed
 
@@ -73,7 +103,9 @@ instead.
   string, so a consumer can branch on the kind without matching on the operating system's prose.
 - `Guard::remove` takes the artifact's pre-removal size and a `Removal`, which replaces the bare
   `dry_run` flag.
-- `Totals` gains `partial` and `partial_bytes`, and is `#[non_exhaustive]`. **`Totals::bytes` now
+- `RunResult::elapsed` becomes `RunResult::timings.total`, and `RunResult` gains `git`.
+- `Totals` gains `dependencies` alongside `partial` and `partial_bytes`, and is
+  `#[non_exhaustive]`. **`Totals::bytes` now
   means every byte the run freed**, of which `partial_bytes` is a documented subset;
   `Totals::reclaimed` still counts only artifacts that are entirely gone.
 - **JSON `schema_version` is now `2`.** A failed artifact's `reason` is specific
