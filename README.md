@@ -139,6 +139,57 @@ Run `voom --help` for the full, grouped list of options.
 Exit codes: `0` clean, `1` some artifacts could not be removed, `2` usage or config error,
 `3` findings with `--dry-run --exit-code` (for hooks).
 
+### Using it safely the first time
+
+Three steps, in this order. They take about a minute.
+
+**1. Look before you sweep.** Start narrow and read what comes back:
+
+```bash
+voom --dry-run ~/projects
+```
+
+Every line names what proved the artifact. If the ecosystem column says `unanchored`, nothing
+proved it — your own `include` asked for it (see [Configuration](#configuration)).
+
+**2. Read the skips.** This is the step people miss, and it is the one that tells you whether
+voom understands your tree:
+
+```bash
+voom --dry-run --verbose ~/projects
+```
+
+A skip says *why*: no marker proved it, a keep policy held it, an exclusion matched. A
+directory you expected to be swept and that is missing from the list is a directory voom could
+not prove — usually the right answer, occasionally a missing marker worth reporting.
+
+**3. Run it.** Same command without `--dry-run`. The dry run is the same pipeline with the last
+step withheld, so it removes exactly what it showed you.
+
+Once you trust it on a project, widen to `~`. A worked example from the author's machine:
+`voom --dry-run /private/tmp` predicted 19 artifacts and 162 GiB across stale build directories;
+the real run removed those 19 and nothing else, and every source tree beside them was untouched.
+
+### Guidance worth knowing
+
+**Reach for `--min-age` on a schedule.** `voom --min-age 7d ~` in a weekly cron never touches
+today's build. Without it, a scheduled run can delete something you are about to use.
+
+**Lower `-j` on a spinning disk or a network filesystem.** voom defaults to every core, which is
+right on an SSD and wrong on anything with a seek penalty or a round trip. `-j` bounds the walk
+*and* the removal.
+
+**"Bytes reclaimed" is not the same number on every platform.** On unix voom counts allocated
+blocks, which is the space you actually get back. On Windows it counts apparent file size, which
+ignores cluster rounding, compression and sparse files. Neither is wrong; they answer slightly
+different questions, and on a filesystem that shares blocks between clones — APFS, for instance —
+freeing one copy may return less than the sum of its files.
+
+**When you are unsure, prefer the false negative.** That is the rule voom is built on: leaving an
+artifact costs you some gigabytes, and deleting something you wrote costs you work you cannot get
+back. If something is being kept that you want gone, name it in your config deliberately rather
+than reaching for a broader flag.
+
 ## Safety
 
 This is the part that matters, because voom deletes without asking.
