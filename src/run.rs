@@ -232,7 +232,7 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
     // do here — and says nothing in the report when it did nothing.
     prune_repositories(root, &scanned.repositories, &at_root, options, collected)?;
 
-    let to_remove = select(root, &resolver, scanned.findings, options, collected)?;
+    let selected = select(root, &resolver, scanned.findings, options, collected)?;
 
     // Removal is independent per artifact and embarrassingly parallel; a failure on one is
     // recorded and never aborts the run.
@@ -241,20 +241,31 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
         force: options.force,
     };
     let started = Instant::now();
-    let entries: Vec<Entry> = to_remove
-        .into_par_iter()
-        .map(|(finding, bytes)| {
-            let outcome = guard.remove(&finding.path, bytes, removal);
-            Entry {
-                path: finding.path.clone(),
-                finding,
-                bytes,
-                outcome,
-            }
-        })
+    let entries = remove_all(selected.to_remove, &guard, removal);
+
+    // A covered artifact is only *covered* if the removal that was supposed to take it actually
+    // happened. Deciding that before the rails run would let a refused `vendor/` leave its
+    // `vendor/bundle/` neither removed nor reported as removable, on every subsequent run —
+    // a skip line asserting something that never took place. Nesting is rare, so this second
+    // pass is almost always empty.
+    let reclaimed: std::collections::HashSet<&Path> = entries
+        .iter()
+        .filter(|entry| entry.outcome.is_reclaimed())
+        .map(|entry| entry.path.as_path())
         .collect();
+    let mut uncovered = Vec::new();
+    for (finding, bytes, by) in selected.covered {
+        if reclaimed.contains(by.as_path()) {
+            note(collected, options.verbose, finding.path, SkipReason::Covered { by });
+        } else {
+            uncovered.push((finding, bytes));
+        }
+    }
+    let retried = remove_all(uncovered, &guard, removal);
     collected.delete += started.elapsed();
+
     collected.entries.extend(entries);
+    collected.entries.extend(retried);
     Ok(())
 }
 
@@ -336,7 +347,7 @@ fn select(
     findings: Vec<Finding>,
     options: &RunOptions,
     collected: &mut Collected,
-) -> Result<Vec<(Finding, u64)>> {
+) -> Result<Selected> {
     let now = SystemTime::now();
     let started = Instant::now();
     let mut survivors: Vec<(Finding, Arc<Resolved>)> = Vec::with_capacity(findings.len());
@@ -399,10 +410,10 @@ fn select(
     // rather than quadratic on a sweep with thousands of artifacts.
     to_remove.sort_by(|(left, _), (right, _)| left.path.cmp(&right.path));
     let mut covering: Option<PathBuf> = None;
-    to_remove.retain(|(finding, _)| {
+    let mut covered = Vec::new();
+    to_remove.retain(|(finding, bytes)| {
         if let Some(outer) = covering.as_ref().filter(|outer| finding.path.starts_with(outer)) {
-            let reason = SkipReason::Covered { by: outer.clone() };
-            note(collected, options.verbose, finding.path.clone(), reason);
+            covered.push((finding.clone(), *bytes, outer.clone()));
             return false;
         }
         covering = Some(finding.path.clone());
@@ -410,7 +421,31 @@ fn select(
     });
     collected.policy += started.elapsed();
 
-    Ok(to_remove)
+    Ok(Selected { to_remove, covered })
+}
+
+/// What survived the policy stage: what to remove, and what something else is expected to take.
+struct Selected {
+    to_remove: Vec<(Finding, u64)>,
+    /// Each with the artifact expected to cover it. Held back rather than decided here, because
+    /// "already inside X" is only true once X has actually been removed.
+    covered: Vec<(Finding, u64, PathBuf)>,
+}
+
+/// Removes each artifact, in parallel, recording an outcome per artifact.
+fn remove_all(to_remove: Vec<(Finding, u64)>, guard: &Guard, removal: Removal) -> Vec<Entry> {
+    to_remove
+        .into_par_iter()
+        .map(|(finding, bytes)| {
+            let outcome = guard.remove(&finding.path, bytes, removal);
+            Entry {
+                path: finding.path.clone(),
+                finding,
+                bytes,
+                outcome,
+            }
+        })
+        .collect()
 }
 
 /// A spinner for the scan phase, or nothing when it would be noise.

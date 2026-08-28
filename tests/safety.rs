@@ -606,3 +606,149 @@ fn should_predict_an_unanchored_removal_in_a_dry_run() {
     assert_eq!(predicted, actual, "the dry run predicts the real one exactly");
     assert!(!predicted.is_empty(), "and both actually found the included path");
 }
+
+/// A covered artifact is only covered if the removal that was supposed to take it happened.
+///
+/// Deciding coverage before the rails run left the inner artifact neither removed nor reported:
+/// a skip line reading "already inside vendor" while `vendor/` was still sitting there, repeating
+/// identically on every subsequent run. Here `vendor/` is read-only, so its own removal fails —
+/// and `vendor/bundle/` must come back into the report rather than be written off.
+#[test]
+#[cfg(unix)]
+fn should_not_write_off_a_covered_artifact_whose_coverer_was_never_removed() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("Gemfile"), b"source 'https://rubygems.org'").unwrap();
+    fs::write(root.path().join("composer.json"), b"{}").unwrap();
+    fs::create_dir_all(root.path().join("vendor/bundle/gems")).unwrap();
+    fs::write(root.path().join("vendor/bundle/gems/rake.rb"), b"gem").unwrap();
+    let vendor = root.path().join("vendor");
+    fs::set_permissions(&vendor, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let mut settings = options(root.path());
+    settings.verbose = true;
+    settings.flags.enable.push("php.vendor".to_owned());
+    let result = run(&settings).expect("the run completes");
+
+    let named: Vec<String> = result
+        .entries
+        .iter()
+        .map(|entry| {
+            entry
+                .path
+                .strip_prefix(root.path())
+                .unwrap_or(&entry.path)
+                .display()
+                .to_string()
+        })
+        .collect();
+    fs::set_permissions(&vendor, fs::Permissions::from_mode(0o755)).unwrap();
+
+    if named.len() == 1 && result.entries[0].outcome.is_reclaimed() {
+        // Running as root defeats the permission bits, so `vendor/` really was removed and the
+        // coverage claim is true. Nothing left to assert.
+        return;
+    }
+    assert!(
+        named.iter().any(|path| path.ends_with("bundle")),
+        "the inner artifact is back in the report once its coverer was not removed, got {named:?}"
+    );
+    assert!(
+        !result
+            .skips
+            .iter()
+            .any(|skip| matches!(skip.reason, voom::classify::SkipReason::Covered { .. })),
+        "and nothing claims it was taken by something else"
+    );
+}
+
+/// A bare ecosystem id never widens to a dependency directory.
+///
+/// `--enable node` meant "turn on node's off-by-default build output", and before ADR 0001's
+/// amendment there was nothing else it could mean. A `voom.toml` written against 0.1.0 —
+/// `[ecosystems] enable = ["go"]`, to get `go.bin` — must not start deleting a checked-in
+/// `vendor/` on upgrade. Those five are reachable only by their own spec.
+#[test]
+fn should_not_let_a_bare_ecosystem_enable_reach_a_dependency_directory() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("package.json"), b"{}").unwrap();
+    fs::create_dir_all(root.path().join("node_modules/left-pad")).unwrap();
+    fs::write(root.path().join("node_modules/left-pad/index.js"), b"module").unwrap();
+    fs::create_dir_all(root.path().join("build")).unwrap();
+    fs::write(root.path().join("build/bundle.js"), b"output").unwrap();
+
+    let mut settings = options(root.path());
+    settings.flags.enable.push("node".to_owned());
+    let result = run(&settings).expect("the run completes");
+
+    assert!(
+        root.path().join("node_modules/left-pad/index.js").exists(),
+        "a bare ecosystem id must not reach node_modules/"
+    );
+    assert!(
+        !root.path().join("build").exists(),
+        "but must still reach the off-by-default build output it has always meant: {:?}",
+        result.entries
+    );
+}
+
+/// `--disable` beats `--enable`, so the flag that says "not this" wins.
+///
+/// `--clean-dependencies` expands to `--enable node.node_modules` and friends, so with the
+/// opposite order `voom --clean-dependencies --disable node` still removed `node_modules/`.
+/// For a tool that deletes, the narrowing instruction has to be the one that survives.
+#[test]
+fn should_let_disable_beat_a_group_enable_on_the_command_line() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("package.json"), b"{}").unwrap();
+    fs::create_dir_all(root.path().join("node_modules/left-pad")).unwrap();
+    fs::write(root.path().join("node_modules/left-pad/index.js"), b"module").unwrap();
+
+    let mut settings = options(root.path());
+    settings.flags.enable.push("node.node_modules".to_owned());
+    settings.flags.disable.push("node".to_owned());
+    run(&settings).expect("the run completes");
+
+    assert!(
+        root.path().join("node_modules/left-pad/index.js").exists(),
+        "--disable node must veto the group opt-in"
+    );
+}
+
+/// A file whose name merely starts with `bazel-` is not build output.
+///
+/// The catalog's pattern had no trailing slash, so it matched files: a hand-written
+/// `bazel-diff.sh` beside a `WORKSPACE` was classified and removed. The convenience symlinks the
+/// entry exists for are still found — the walker classifies a link as though it were a
+/// directory — and still refused.
+#[test]
+#[cfg(unix)]
+fn should_not_remove_a_file_merely_named_like_a_bazel_symlink() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("WORKSPACE"), b"workspace(name = 'x')").unwrap();
+    fs::write(root.path().join("bazel-diff.sh"), b"#!/bin/sh\necho hand written").unwrap();
+    fs::write(root.path().join("bazel-env"), b"CONFIG=1").unwrap();
+
+    let outside = TempDir::new().unwrap();
+    fs::create_dir_all(outside.path().join("bin")).unwrap();
+    fs::write(outside.path().join("bin/app"), b"output").unwrap();
+    std::os::unix::fs::symlink(outside.path().join("bin"), root.path().join("bazel-bin")).unwrap();
+
+    let result = run(&options(root.path())).expect("the run completes");
+
+    assert!(
+        root.path().join("bazel-diff.sh").exists(),
+        "a script is not an artifact"
+    );
+    assert!(root.path().join("bazel-env").exists(), "nor is a config file");
+    assert_eq!(
+        result
+            .entries
+            .iter()
+            .map(|entry| (entry.path.file_name().and_then(std::ffi::OsStr::to_str), &entry.outcome))
+            .collect::<Vec<_>>(),
+        vec![(Some("bazel-bin"), &Outcome::Refused(voom::delete::Refusal::Symlink))],
+        "and the convenience symlink is still found and refused"
+    );
+}

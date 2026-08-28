@@ -279,7 +279,7 @@ Full reasoning in [ADR 0002](adrs/0002-marker-anchored-classification.md) and
 | Nim | `*.nimble` | `nimcache/` |
 | Elm | `elm.json` | `elm-stuff/` |
 | Terraform | `*.tf` | `.terraform/` |
-| Bazel | `WORKSPACE`, `WORKSPACE.bazel`, `MODULE.bazel` | `bazel-*` |
+| Bazel | `WORKSPACE`, `WORKSPACE.bazel`, `MODULE.bazel` | `bazel-*/` |
 
 † Off by default — the name is also a plausible source directory in that ecosystem, or
 removal is expensive rather than cheap. Turn one on for a single run with

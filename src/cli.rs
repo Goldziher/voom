@@ -169,6 +169,9 @@ pub struct PruneArgs {
     /// held by a read-only parent is reported, not forced. Retries add up to about a second per
     /// artifact. No effect under `--dry-run`.
     ///
+    /// A repair that does not go on to succeed is not undone: an artifact voom could not remove
+    /// even with `--force` is left with the owner's write bit set on the directories inside it.
+    ///
     /// Filed under Behaviour rather than Safety deliberately — it is not one of the protections.
     #[arg(long, help_heading = "Behaviour")]
     pub force: bool,

@@ -311,6 +311,12 @@ fn resolved_protected_paths() -> Vec<PathBuf> {
     PROTECTED_PATHS
         .iter()
         .filter_map(|protected| Path::new(protected).canonicalize().ok())
+        // The home directory, as the deletion guard also does. A machine with dotfiles versioned
+        // at `$HOME` has a repository there, and `voom ~` would otherwise run housekeeping in it
+        // by default. Nothing here deletes anything, so this is a belt-and-braces rail rather
+        // than a load-bearing one — but the two lists are described as the same denylist, and a
+        // reader who checks one and not the other must not get two answers.
+        .chain(dirs::home_dir().and_then(|home| home.canonicalize().ok()))
         .collect()
 }
 

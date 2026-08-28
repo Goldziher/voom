@@ -119,10 +119,18 @@ impl QuietTracker {
     }
 }
 
-/// Whether a directory should be watched at all.
+/// Whether one filesystem *event* counts towards the quiet period.
 ///
-/// Dependency caches and `.git` are excluded: on Linux they would otherwise exhaust the
-/// `inotify` watch limit on a large tree, and nothing in them is ever removable anyway.
+/// The name is older than the behaviour: nothing here is given to the watcher, which registers
+/// the root recursively and watches everything. This filters events, and it matches on the
+/// event path's **final component** — so a write to `node_modules/left-pad/index.js` passes,
+/// and only an event on the dependency directory itself is dropped.
+///
+/// That is the behaviour to keep now that `--clean-dependencies` can remove `node_modules/`. A
+/// deep event marking its ancestors is what stops the quiet period expiring in the middle of an
+/// `npm install`, and `QuietTracker::is_quiet` treats a path it has never seen as quiet — so
+/// "correcting" this to ancestor matching would let a watch remove a dependency directory while
+/// a package manager was writing into it.
 #[must_use]
 pub fn should_watch(path: &Path) -> bool {
     let Some(name) = path.file_name() else { return true };
@@ -390,5 +398,33 @@ mod tests {
         let options = WatchOptions::default();
         assert_eq!(options.debounce, Duration::from_secs(5));
         assert_eq!(options.quiet_period, Duration::from_secs(60));
+    }
+
+    /// A write deep inside a dependency directory must keep its ancestors from going quiet.
+    ///
+    /// `--clean-dependencies` makes `node_modules/` removable, so an `npm install` in progress is
+    /// exactly the moment a watch must not fire. [`should_watch`] matches the event path's final
+    /// component, which is why a deep event passes; a version matching ancestors would drop it,
+    /// and an unseen path counts as quiet.
+    #[test]
+    fn should_let_a_write_inside_a_dependency_directory_hold_its_ancestors() {
+        let deep = Path::new("/projects/app/node_modules/left-pad/index.js");
+        assert!(
+            should_watch(deep),
+            "a write inside a dependency directory has to reach the tracker"
+        );
+        assert!(
+            !should_watch(Path::new("/projects/app/node_modules")),
+            "an event on the directory itself still does not"
+        );
+
+        let mut tracker = QuietTracker::default();
+        let now = Instant::now();
+        tracker.touch(deep, now);
+
+        assert!(
+            !tracker.is_quiet(Path::new("/projects/app/node_modules"), Duration::from_secs(5), now),
+            "and the dependency directory is held while the write is recent"
+        );
     }
 }

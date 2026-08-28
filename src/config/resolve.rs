@@ -261,14 +261,19 @@ impl Resolver {
         for (spec, enabled) in &accumulated.ops {
             selection.set(spec, *enabled);
         }
-        // Flags last, so no configuration file can override the invocation.
-        for spec in &self.flags.disable {
-            if !selection.set(spec, false) {
+        // Flags last, so no configuration file can override the invocation — and within them,
+        // `--disable` last, so the flag that says "not this" beats the flag that says "this".
+        // The order used to be the other way round, which meant
+        // `voom --clean-dependencies --disable node` still removed `node_modules/`: the group
+        // flag expands to `--enable node.node_modules`, and enabling ran afterwards. For a tool
+        // that deletes, the narrowing instruction has to be the one that wins.
+        for spec in &self.flags.enable {
+            if !selection.set(spec, true) {
                 return Err(Error::UnknownEcosystem { name: spec.clone() });
             }
         }
-        for spec in &self.flags.enable {
-            if !selection.set(spec, true) {
+        for spec in &self.flags.disable {
+            if !selection.set(spec, false) {
                 return Err(Error::UnknownEcosystem { name: spec.clone() });
             }
         }

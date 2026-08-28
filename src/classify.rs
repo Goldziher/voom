@@ -148,6 +148,17 @@ impl Selection {
     /// Overrides one artifact's participation, by `<ecosystem>.<artifact>` spec or by bare
     /// ecosystem id (which sets every artifact of that ecosystem). Returns `false` if nothing
     /// in the catalog answers to the spec.
+    ///
+    /// **A bare ecosystem id never widens to a dependency directory.** `--enable node` means
+    /// "turn on node's off-by-default build output", and before ADR 0001's amendment there was
+    /// nothing else it could mean. Letting it now also reach `node_modules/` would make a
+    /// `voom.toml` written against 0.1.0 — `[ecosystems] enable = ["go"]`, to get `go.bin` —
+    /// start deleting a checked-in `vendor/` on upgrade, silently and in the delete direction.
+    /// Those five artifacts are reachable only by their own `<ecosystem>.<artifact>` spec, or
+    /// by `--clean-dependencies`, which expands to exactly those specs.
+    ///
+    /// The restriction is on widening only. A bare id still turns an ecosystem *off* whole,
+    /// because narrowing is always safe.
     pub fn set(&mut self, spec: &str, enabled: bool) -> bool {
         let (ecosystem_id, artifact_slug) = match spec.split_once('.') {
             Some((ecosystem_id, artifact_slug)) => (ecosystem_id, Some(artifact_slug)),
@@ -160,6 +171,12 @@ impl Selection {
         let mut matched = false;
         for (offset, artifact) in ecosystem.artifacts.iter().enumerate() {
             if artifact_slug.is_some_and(|slug| artifact.slug() != slug) {
+                continue;
+            }
+            if artifact_slug.is_none()
+                && enabled
+                && crate::catalog::is_dependency_artifact(&format!("{ecosystem_id}.{}", artifact.slug()))
+            {
                 continue;
             }
             let Ok(ecosystem_index) = u8::try_from(index) else {
