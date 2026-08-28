@@ -8,35 +8,41 @@ expression: document_for_tests()
       "artifact": "target/",
       "bytes": 4200000000,
       "ecosystem": "rust",
+      "include_pattern": null,
       "marker_dir": "/projects/api",
       "outcome": {
         "status": "removed"
       },
-      "path": "/projects/api/target"
+      "path": "/projects/api/target",
+      "source": "marker"
     },
     {
       "artifact": "target/",
       "bytes": 0,
       "ecosystem": "rust",
+      "include_pattern": null,
       "marker_dir": "/projects/link",
       "outcome": {
         "detail": "is a symlink",
         "reason": "symlink",
         "status": "refused"
       },
-      "path": "/projects/link/target"
+      "path": "/projects/link/target",
+      "source": "marker"
     },
     {
       "artifact": "obj/",
       "bytes": 900,
       "ecosystem": "dotnet",
+      "include_pattern": null,
       "marker_dir": "/projects/locked",
       "outcome": {
         "detail": "removing `/projects/locked/obj`: Permission denied",
         "reason": "removal_failed",
         "status": "failed"
       },
-      "path": "/projects/locked/obj"
+      "path": "/projects/locked/obj",
+      "source": "marker"
     }
   ],
   "dry_run": false,

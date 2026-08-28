@@ -246,15 +246,56 @@ pub enum Verdict {
     NotACandidate,
 }
 
-/// A proven artifact.
+/// What entitles voom to remove a path.
+///
+/// An enum rather than an optional [`ArtifactId`] so that the two cases cannot be confused at a
+/// call site. Every reporter has to match on it, which means no output path can be added that
+/// forgets to say a deletion was never proved by a marker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Provenance {
+    /// A marker file proved the ecosystem at the declared anchor — ADR 0002's central rule, and
+    /// the only route voom ever takes on its own.
+    Anchored {
+        /// Which catalog declaration proved it.
+        artifact: ArtifactId,
+        /// The directory whose marker did the proving, for `--verbose` and for JSON.
+        marker_dir: PathBuf,
+    },
+    /// A configured `include` named it, so no marker was required.
+    ///
+    /// ADR 0004 makes this the only route to unanchored deletion and calls it a loaded foot-gun
+    /// by design: the user has said what they mean and owns the result. Reports label it, which
+    /// is why the pattern is carried here rather than discarded.
+    Included {
+        /// The `include` pattern that matched.
+        pattern: String,
+    },
+}
+
+/// An artifact voom is entitled to remove.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
     /// The path to remove.
     pub path: PathBuf,
-    /// Which catalog declaration proved it.
-    pub artifact: ArtifactId,
-    /// The directory whose marker did the proving, for `--verbose` and for JSON.
-    pub marker_dir: PathBuf,
+    /// What entitles voom to remove it.
+    pub provenance: Provenance,
+}
+
+impl Finding {
+    /// The catalog declaration that proved it, if a marker did.
+    #[must_use]
+    pub fn artifact(&self) -> Option<ArtifactId> {
+        match &self.provenance {
+            Provenance::Anchored { artifact, .. } => Some(*artifact),
+            Provenance::Included { .. } => None,
+        }
+    }
+
+    /// The ecosystem that claimed it, if one did.
+    #[must_use]
+    pub fn ecosystem(&self) -> Option<&'static str> {
+        self.artifact().map(|id| id.ecosystem().id)
+    }
 }
 
 /// Why a candidate was not removed.
@@ -506,8 +547,10 @@ impl Classifier {
                 (Proof::Found(marker_dir), true) => {
                     return Verdict::Artifact(Finding {
                         path: path.to_path_buf(),
-                        artifact: id,
-                        marker_dir,
+                        provenance: Provenance::Anchored {
+                            artifact: id,
+                            marker_dir,
+                        },
                     });
                 }
                 (Proof::Found(_), false) => {
@@ -659,8 +702,9 @@ mod tests {
     fn assert_artifact(verdict: &Verdict, ecosystem: &str, artifact: &str) {
         match verdict {
             Verdict::Artifact(finding) => {
-                assert_eq!(finding.artifact.ecosystem().id, ecosystem);
-                assert_eq!(finding.artifact.artifact().path, artifact);
+                let id = finding.artifact().expect("a marker proved it");
+                assert_eq!(id.ecosystem().id, ecosystem);
+                assert_eq!(id.artifact().path, artifact);
             }
             other => panic!("expected an artifact verdict, got {other:?}"),
         }
@@ -673,7 +717,9 @@ mod tests {
         let verdict = verdict(&classifier, fixture.path(), "target");
         assert_artifact(&verdict, "rust", "target/");
         match verdict {
-            Verdict::Artifact(finding) => assert_eq!(finding.marker_dir, fixture.path()),
+            Verdict::Artifact(finding) => assert!(
+                matches!(finding.provenance, Provenance::Anchored { marker_dir, .. } if marker_dir == fixture.path())
+            ),
             other => panic!("expected an artifact verdict, got {other:?}"),
         }
     }

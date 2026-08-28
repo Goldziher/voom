@@ -52,15 +52,17 @@ pub struct Entry {
 
 impl Entry {
     /// The ecosystem id, for grouping and for the report line.
+    ///
+    /// `None` for a path a configured `include` named, which no ecosystem claimed.
     #[must_use]
-    pub fn ecosystem(&self) -> &'static str {
-        self.finding.artifact.ecosystem().id
+    pub fn ecosystem(&self) -> Option<&'static str> {
+        self.finding.ecosystem()
     }
 
-    /// The declared artifact path this entry matched.
+    /// The declared artifact path this entry matched, when a marker proved one.
     #[must_use]
-    pub fn artifact(&self) -> &'static str {
-        self.finding.artifact.artifact().path
+    pub fn artifact(&self) -> Option<&'static str> {
+        self.finding.artifact().map(|id| id.artifact().path)
     }
 }
 
@@ -173,8 +175,23 @@ pub(crate) mod fixtures {
         Entry {
             finding: Finding {
                 path: path.clone(),
-                artifact,
-                marker_dir,
+                provenance: crate::classify::Provenance::Anchored { artifact, marker_dir },
+            },
+            path,
+            bytes,
+            outcome,
+        }
+    }
+
+    /// An entry for a path a configured `include` named, which no marker proved.
+    pub(crate) fn included(path: &str, pattern: &str, bytes: u64, outcome: Outcome) -> Entry {
+        let path = PathBuf::from(path);
+        Entry {
+            finding: Finding {
+                path: path.clone(),
+                provenance: crate::classify::Provenance::Included {
+                    pattern: pattern.to_owned(),
+                },
             },
             path,
             bytes,

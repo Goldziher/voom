@@ -23,7 +23,7 @@ use crate::config::{Resolved, Resolver, discover};
 use crate::delete::Guard;
 use crate::error::{Error, Result};
 use crate::report::{Entry, RunResult};
-use crate::scan::{ExcludeSet, ScanOptions, Skipped, scan};
+use crate::scan::{PatternSet, ScanOptions, Skipped, scan};
 use crate::size::measure_all;
 
 /// Everything one invocation needs.
@@ -204,7 +204,8 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
         jobs: options.jobs,
         one_file_system: options.one_file_system,
         collect_skips: options.verbose,
-        exclude: ExcludeSet::new(at_root.exclude.clone())?,
+        exclude: PatternSet::new(at_root.exclude.clone())?,
+        include: PatternSet::new(at_root.include.clone())?,
         caches: CacheRoots::for_root(root, options.caches),
     };
     // Progress goes to stderr so it never contaminates piped stdout, and only when stderr is a
@@ -227,15 +228,20 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
         let dir = finding.path.parent().unwrap_or(root);
         let config = resolver.for_dir(dir)?;
 
-        if !config.is_enabled(&finding.path, finding.artifact) {
-            let reason = not_enabled(finding.artifact);
+        // An `include` is the user naming a path outright, so ecosystem selection has nothing
+        // to say about it — there is no ecosystem. Keep policies still apply: they are about
+        // whether *now* is the moment to remove something, not about what it is.
+        if let Some(id) = finding.artifact()
+            && !config.is_enabled(&finding.path, id)
+        {
+            let reason = not_enabled(id);
             note(collected, options.verbose, finding.path, reason);
             continue;
         }
 
         // `min_age` is answered from the artifact's own timestamp, so an artifact held by age
         // costs one `stat` instead of a recursive size walk.
-        let keep = config.keep_for(&finding.path, finding.artifact.ecosystem().id);
+        let keep = config.keep_for(&finding.path, finding.ecosystem());
         let held = std::fs::symlink_metadata(&finding.path)
             .and_then(|metadata| metadata.modified())
             .ok()
@@ -251,7 +257,7 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
 
     let mut to_remove: Vec<(Finding, u64)> = Vec::with_capacity(survivors.len());
     for ((finding, config), bytes) in survivors.into_iter().zip(sizes) {
-        let keep = config.keep_for(&finding.path, finding.artifact.ecosystem().id);
+        let keep = config.keep_for(&finding.path, finding.ecosystem());
         match keep.holds_by_size(bytes) {
             Some(reason) => note(collected, options.verbose, finding.path, reason),
             None => to_remove.push((finding, bytes)),
@@ -621,7 +627,7 @@ mod tests {
             "py/.mypy_cache/x",
         ]);
         let result = run(&options(fixture.path())).expect("the run completes");
-        let mut ecosystems: Vec<_> = result.entries.iter().map(Entry::ecosystem).collect();
+        let mut ecosystems: Vec<_> = result.entries.iter().filter_map(Entry::ecosystem).collect();
         ecosystems.sort_unstable();
         assert_eq!(ecosystems, vec!["node", "python", "rust"]);
     }
@@ -765,6 +771,57 @@ mod config_tests {
             !fixture.path().join("play/target").exists(),
             "and only the matching tree"
         );
+    }
+
+    /// `include` is the only documented way to sweep something no marker anchors. It was
+    /// parsed, merged and printed by `config show` while doing nothing at all.
+    #[test]
+    fn should_sweep_a_path_named_by_include_that_no_marker_proves() {
+        let fixture = tree(&["junk/leftovers.o", "keep/leftovers.o", "voom.toml"]);
+        write(fixture.path(), "voom.toml", "include = [\"junk\"]\n");
+
+        let result = run(&options(fixture.path())).expect("the run completes");
+
+        assert!(!fixture.path().join("junk").exists(), "the user named it outright");
+        assert!(fixture.path().join("keep/leftovers.o").exists(), "and named only it");
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(
+            result.entries[0].ecosystem(),
+            None,
+            "nothing proved it, and the report must not imply otherwise"
+        );
+    }
+
+    /// The negative half: the same tree without the `include` line is left alone. This is the
+    /// test that would fail if `include` ever grew a default.
+    #[test]
+    fn should_leave_the_same_path_alone_without_the_include() {
+        let fixture = tree(&["junk/leftovers.o", "voom.toml"]);
+        write(fixture.path(), "voom.toml", "[keep]\nmin_age = \"0s\"\n");
+        let before = snapshot(fixture.path());
+
+        let result = run(&options(fixture.path())).expect("the run completes");
+
+        assert!(result.entries.is_empty());
+        assert_eq!(snapshot(fixture.path()), before);
+    }
+
+    /// An `include` naming a path outside the tree being swept is never walked, so it is never
+    /// removed. Containment holds without a special case (ADR 0006).
+    #[test]
+    fn should_not_reach_outside_the_scan_root_through_include() {
+        let outside = tree(&["precious.txt"]);
+        let fixture = tree(&["voom.toml"]);
+        write(
+            fixture.path(),
+            "voom.toml",
+            &format!("include = [\"{}\"]\n", outside.path().display()),
+        );
+
+        let result = run(&options(fixture.path())).expect("the run completes");
+
+        assert!(result.entries.is_empty());
+        assert!(outside.path().join("precious.txt").exists());
     }
 
     #[test]

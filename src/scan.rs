@@ -17,7 +17,7 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::{WalkBuilder, WalkState};
 
 use crate::caches::CacheRoots;
-use crate::classify::{Classifier, Finding, SkipReason, Verdict, is_dependency_dir};
+use crate::classify::{Classifier, Finding, Provenance, SkipReason, Verdict, is_dependency_dir};
 use crate::error::{Error, Result};
 
 /// Directories that are never descended into, whatever else is true of them.
@@ -27,19 +27,19 @@ use crate::error::{Error, Result};
 /// they are the deepest and widest subtrees on a typical disk.
 const NEVER_DESCEND: &[&str] = &[".git", ".hg", ".svn"];
 
-/// Paths the user asked never to scan (ADR 0004).
+/// A compiled set of configured path globs, and the pattern each match came from.
 ///
-/// `exclude` is evaluated before classification and prunes the subtree rather than filtering
-/// results, so an excluded directory costs nothing and cannot be reached by a more specific
-/// rule later.
+/// Used for both `exclude` and `include` (ADR 0004). Both are evaluated during the walk rather
+/// than against its results: an excluded directory is never descended into, and an included one
+/// is taken whole, so neither costs anything below itself.
 #[derive(Debug, Default)]
-pub struct ExcludeSet {
+pub struct PatternSet {
     patterns: Vec<String>,
     globs: Option<GlobSet>,
 }
 
-impl ExcludeSet {
-    /// Compiles exclusion globs once, at configuration load, never per candidate.
+impl PatternSet {
+    /// Compiles the globs once, at configuration load, never per candidate.
     ///
     /// # Errors
     ///
@@ -100,7 +100,9 @@ pub struct ScanOptions {
     /// number of near-misses, so the default view does not ask for it.
     pub collect_skips: bool,
     /// Paths never scanned.
-    pub exclude: ExcludeSet,
+    pub exclude: PatternSet,
+    /// Paths swept without a marker proving them — the user said so outright (ADR 0004).
+    pub include: PatternSet,
     /// Tool caches and installed toolchains never descended into (ADR 0001).
     pub caches: CacheRoots,
 }
@@ -111,7 +113,8 @@ impl Default for ScanOptions {
             jobs: None,
             one_file_system: true,
             collect_skips: false,
-            exclude: ExcludeSet::default(),
+            exclude: PatternSet::default(),
+            include: PatternSet::default(),
             caches: CacheRoots::default(),
         }
     }
@@ -294,6 +297,22 @@ impl Visitor<'_> {
             return WalkState::Skip;
         }
 
+        // `include` outranks every prune below but never `exclude`, which ADR 0004 makes
+        // absolute. That ordering is what lets an explicit include reach into a dependency
+        // directory — ADR 0001 keeps those out of the catalog, and says configuration is the
+        // one way to name them anyway. `.git` stays unreachable regardless: the deletion guard
+        // refuses a VCS directory by name whatever produced it.
+        if let Some(pattern) = self.options.include.matched(path) {
+            let finding = Finding {
+                path: path.to_path_buf(),
+                provenance: Provenance::Included {
+                    pattern: pattern.to_owned(),
+                },
+            };
+            let _ = sender.send(Message::Found(Box::new(finding)));
+            return WalkState::Skip;
+        }
+
         // After `exclude`, which ADR 0004 makes absolute, and before anything that could
         // classify: an installed toolchain is shaped exactly like a project, so the classifier
         // would prove it correctly and take it (ADR 0001).
@@ -418,6 +437,54 @@ mod tests {
         }
     }
 
+    /// ADR 0004 makes `include` the only route to unanchored deletion: no marker proves the
+    /// path, the user named it.
+    #[test]
+    fn should_take_an_included_path_that_no_marker_proves() {
+        let fixture = tree(&["junk/leftovers.o"]);
+        let options = PatternSet::new([format!("{}/junk", fixture.path().display())])
+            .map(|include| ScanOptions { include, ..verbose() })
+            .expect("the include compiles");
+
+        let scan = run(fixture.path(), &options);
+
+        assert_eq!(found(&scan, fixture.path()), vec!["junk"]);
+        assert!(
+            matches!(&scan.findings[0].provenance, Provenance::Included { pattern } if pattern.ends_with("junk")),
+            "the pattern is carried so the report can say what asked for this"
+        );
+    }
+
+    /// ADR 0004: `exclude` is absolute and cannot be overridden by a more specific `include`.
+    #[test]
+    fn should_let_exclude_beat_include_on_the_same_path() {
+        let fixture = tree(&["junk/leftovers.o"]);
+        let pattern = format!("{}/junk", fixture.path().display());
+        let options = ScanOptions {
+            exclude: PatternSet::new([pattern.clone()]).expect("it compiles"),
+            include: PatternSet::new([pattern]).expect("it compiles"),
+            ..verbose()
+        };
+
+        let scan = run(fixture.path(), &options);
+
+        assert!(scan.findings.is_empty(), "exclude wins, whatever else names the path");
+    }
+
+    /// Dependency directories are kept out of the catalog on purpose (ADR 0001), so naming one
+    /// explicitly is the only way to reach it — which means `include` has to outrank the prune.
+    #[test]
+    fn should_let_an_include_reach_into_a_dependency_directory() {
+        let fixture = tree(&["node_modules/left-pad/index.js"]);
+        let options = PatternSet::new([format!("{}/node_modules", fixture.path().display())])
+            .map(|include| ScanOptions { include, ..verbose() })
+            .expect("the include compiles");
+
+        let scan = run(fixture.path(), &options);
+
+        assert_eq!(found(&scan, fixture.path()), vec!["node_modules"]);
+    }
+
     /// An installed toolchain is shaped exactly like a project — `~/.cache/node/corepack` really
     /// does hold a `package.json` beside a `dist/` — so the classifier proves it and would take
     /// it. Only its location distinguishes an installed program from a built one.
@@ -531,7 +598,7 @@ mod tests {
     #[test]
     fn should_prune_an_excluded_subtree() {
         let fixture = tree(&["keep/Cargo.toml", "keep/target/", "drop/Cargo.toml", "drop/target/"]);
-        let exclude = ExcludeSet::new([format!("{}/drop/**", fixture.path().display())]).expect("a glob");
+        let exclude = PatternSet::new([format!("{}/drop/**", fixture.path().display())]).expect("a glob");
         let options = ScanOptions { exclude, ..verbose() };
         let scan = run(fixture.path(), &options);
         assert_eq!(found(&scan, fixture.path()), vec!["keep/target".to_owned()]);
@@ -628,14 +695,17 @@ mod tests {
         let fixture = tree(&["Cargo.toml", "target/"]);
         let scan = run(fixture.path(), &ScanOptions::default());
         let finding = &scan.findings[0];
-        let id: ArtifactId = finding.artifact;
+        let id: ArtifactId = finding.artifact().expect("a marker proved it");
         assert_eq!(id.ecosystem().id, "rust");
-        assert_eq!(finding.marker_dir, fixture.path());
+        assert!(matches!(
+            &finding.provenance,
+            Provenance::Anchored { marker_dir, .. } if marker_dir == fixture.path()
+        ));
     }
 
     #[test]
     fn an_empty_exclude_set_matches_nothing() {
-        let excludes = ExcludeSet::default();
+        let excludes = PatternSet::default();
         assert!(excludes.is_empty());
         assert_eq!(excludes.matched(Path::new("/anything")), None);
     }

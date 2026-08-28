@@ -179,7 +179,11 @@ fn should_resolve_an_ambiguous_name_by_which_marker_is_present() {
 
     let result = run(&options(root.path())).expect("the run completes");
 
-    let mut ecosystems: Vec<_> = result.entries.iter().map(voom::report::Entry::ecosystem).collect();
+    let mut ecosystems: Vec<_> = result
+        .entries
+        .iter()
+        .filter_map(voom::report::Entry::ecosystem)
+        .collect();
     ecosystems.sort_unstable();
     assert_eq!(ecosystems, vec!["maven", "rust"]);
     assert!(

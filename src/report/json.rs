@@ -13,6 +13,7 @@ use std::io;
 use serde_json::{Value, json};
 
 use super::{Entry, RunResult, SCHEMA_VERSION};
+use crate::classify::Provenance;
 use crate::delete::Outcome;
 
 fn outcome_value(outcome: &Outcome) -> Value {
@@ -38,7 +39,21 @@ fn entry_value(entry: &Entry) -> Value {
         "ecosystem": entry.ecosystem(),
         "artifact": entry.artifact(),
         "bytes": entry.bytes,
-        "marker_dir": entry.finding.marker_dir.display().to_string(),
+        // `source` is the field a consumer branches on. `ecosystem`, `artifact` and
+        // `marker_dir` are null for an unanchored removal, and a hook that treats a null
+        // ecosystem as "unknown" rather than "nothing proved this" would be reading it wrong.
+        "source": match &entry.finding.provenance {
+            Provenance::Anchored { .. } => "marker",
+            Provenance::Included { .. } => "config-include",
+        },
+        "marker_dir": match &entry.finding.provenance {
+            Provenance::Anchored { marker_dir, .. } => Some(marker_dir.display().to_string()),
+            Provenance::Included { .. } => None,
+        },
+        "include_pattern": match &entry.finding.provenance {
+            Provenance::Anchored { .. } => None,
+            Provenance::Included { pattern } => Some(pattern.as_str()),
+        },
         "outcome": outcome_value(&entry.outcome),
     })
 }
@@ -132,6 +147,29 @@ mod tests {
     #[test]
     fn should_render_the_documented_shape() {
         insta::assert_json_snapshot!(document_for_tests());
+    }
+
+    /// A hook reading this has to be able to tell a proven removal from one the user's config
+    /// asked for outright, so `source` is the field it branches on.
+    #[test]
+    fn should_mark_an_unanchored_removal_as_config_sourced() {
+        let result = crate::report::fixtures::result(
+            vec![crate::report::fixtures::included(
+                "/scratch/build-junk",
+                "~/scratch/build-junk",
+                1024,
+                Outcome::Removed,
+            )],
+            false,
+        );
+
+        let artifact = document(&result)["artifacts"][0].clone();
+
+        assert_eq!(artifact["source"], serde_json::json!("config-include"));
+        assert_eq!(artifact["ecosystem"], Value::Null);
+        assert_eq!(artifact["artifact"], Value::Null);
+        assert_eq!(artifact["marker_dir"], Value::Null);
+        assert_eq!(artifact["include_pattern"], serde_json::json!("~/scratch/build-junk"));
     }
 
     /// A machine consumer has no `--verbose` to reach for, so JSON always carries every walk

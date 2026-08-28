@@ -15,6 +15,7 @@ use humansize::{DECIMAL, format_size};
 use owo_colors::OwoColorize;
 
 use super::{Entry, RunResult};
+use crate::classify::Provenance;
 use crate::delete::Outcome;
 
 /// How much to show.
@@ -48,13 +49,22 @@ fn write_entry(entry: &Entry, out: &mut impl io::Write) -> io::Result<()> {
         Outcome::Failed(_) => write!(out, "  {:<12}", label.red())?,
     }
     write!(out, " {:>10}", size.dimmed())?;
-    write!(out, "  {:<10}", entry.ecosystem().cyan())?;
+    match entry.ecosystem() {
+        Some(ecosystem) => write!(out, "  {:<10}", ecosystem.cyan())?,
+        // ADR 0004 requires an unanchored removal to be visibly labelled as one. It occupies
+        // the column an ecosystem would, because that is the column a reader scans to answer
+        // "what said this was safe to delete".
+        None => write!(out, "  {:<10}", "unanchored".magenta())?,
+    }
     write!(out, " {path}")?;
 
     match &entry.outcome {
         Outcome::Refused(refusal) => writeln!(out, "  ({refusal})"),
         Outcome::Failed(message) => writeln!(out, "  ({message})"),
-        Outcome::Removed | Outcome::WouldRemove => writeln!(out),
+        Outcome::Removed | Outcome::WouldRemove => match &entry.finding.provenance {
+            Provenance::Included { pattern } => writeln!(out, "  (from config `{pattern}`)"),
+            Provenance::Anchored { .. } => writeln!(out),
+        },
     }
 }
 
@@ -201,6 +211,26 @@ mod tests {
             text.contains("interrupted"),
             "it is labelled as an interruption, not as a walk error: {text}"
         );
+    }
+
+    /// ADR 0004 requires an unanchored removal to be labelled as one. Nothing proved this path;
+    /// the report has to say so rather than leaving a blank where an ecosystem would be.
+    #[test]
+    fn should_label_an_unanchored_removal_as_unanchored() {
+        let result = result(
+            vec![crate::report::fixtures::included(
+                "/scratch/build-junk",
+                "/scratch/build-junk",
+                1024,
+                Outcome::Removed,
+            )],
+            false,
+        );
+
+        let text = render_to_string(&result, HumanOptions::default());
+
+        assert!(text.contains("unanchored"), "{text}");
+        assert!(text.contains("from config"), "{text}");
     }
 
     fn mixed() -> RunResult {

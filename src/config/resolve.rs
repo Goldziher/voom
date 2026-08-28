@@ -94,9 +94,9 @@ impl Resolved {
     /// The keep policy for one artifact: the base, narrowed by its ecosystem's override, then
     /// by every matching `[[paths]]` rule in order.
     #[must_use]
-    pub fn keep_for(&self, path: &Path, ecosystem: &str) -> KeepPolicy {
+    pub fn keep_for(&self, path: &Path, ecosystem: Option<&str>) -> KeepPolicy {
         let mut keep = self.keep;
-        if let Some(per_ecosystem) = self.keep_by_ecosystem.get(ecosystem) {
+        if let Some(per_ecosystem) = ecosystem.and_then(|id| self.keep_by_ecosystem.get(id)) {
             keep = keep.narrow(*per_ecosystem);
         }
         for rule in &self.rules {
@@ -421,7 +421,7 @@ fn as_glob(path: &Path) -> String {
 mod tests {
     use super::*;
     use crate::config::load::read_in;
-    use crate::scan::ExcludeSet;
+    use crate::scan::PatternSet;
     use crate::testing::tree;
 
     fn home() -> PathBuf {
@@ -484,7 +484,7 @@ mod tests {
         let mut accumulated = Accumulated::default();
         apply(&mut accumulated, &layer).expect("the layer applies");
 
-        let excludes = ExcludeSet::new(accumulated.exclude.clone()).expect("the exclude compiles");
+        let excludes = PatternSet::new(accumulated.exclude.clone()).expect("the exclude compiles");
         assert_eq!(
             excludes.matched(&dir.join("build").join("output.o")),
             Some(accumulated.exclude[0].as_str())
@@ -496,7 +496,7 @@ mod tests {
     #[test]
     fn should_produce_a_home_exclude_that_matches_the_path_it_names() {
         let pattern = expand("~/work/client-x/**", Path::new("/anywhere"));
-        let excludes = ExcludeSet::new([pattern]).expect("the exclude compiles");
+        let excludes = PatternSet::new([pattern]).expect("the exclude compiles");
         let candidate = home().join("work").join("client-x").join("target");
         assert!(excludes.matched(&candidate).is_some(), "{}", candidate.display());
     }
