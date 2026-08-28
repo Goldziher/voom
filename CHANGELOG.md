@@ -9,7 +9,35 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.1.1] - 2026-08-28
+The `uvx` and publish fixes below were prepared as `0.1.1` and never tagged, so they ship here
+instead.
+
+### Added
+
+- **A removal that only partly succeeded is now reported as one, and its bytes are counted.**
+  `remove_dir_all` unlinks a tree's contents before unlinking the tree itself, so a failure
+  part-way through leaves real space reclaimed and the artifact still on disk. voom used to
+  report that as a plain failure worth zero bytes — so a sweep that freed roughly 130 GB
+  printed a footer saying it had reclaimed 25. The report is the only record of a destructive
+  act, and it was wrong by an order of magnitude. Partial removals now show what was freed and
+  what is left, the headline counts every byte the run actually freed, and the footer says so
+  explicitly: `1 artifact partly removed: 130 GB freed and counted above, 500 MB left`.
+- **Failures say what went wrong in words.** `Directory not empty (os error 66)` became
+  *"a directory was not empty when voom unlinked it, most likely because something wrote into it
+  during the removal"* — hedged to exactly the strength the standard library's own documentation
+  uses, and followed by what would plausibly help (`re-run to finish`). The classification is by
+  `io::ErrorKind`, never by the error number: ENOTEMPTY is 66 on macOS and 39 on Linux, and 39
+  on macOS means something else entirely.
+- **`--force`** retries a failed removal, repairing permissions inside the artifact first —
+  read-only bits, and on macOS the user-immutable flag. It answers the two failures voom can do
+  something about: a concurrent writer, which is a question of time, and a mode that forbids an
+  unlink. A read-only mount and an I/O error are reported rather than retried, because neither
+  improves by waiting.
+
+  `--force` never relaxes a safety rail. Every part of it takes a path that has already passed
+  all six, and there is no way to obtain one otherwise. It never follows a symlink, and never
+  touches anything outside the artifact — **including the artifact's own parent**, so an
+  artifact held by a read-only parent is reported rather than forced. Watch mode never forces.
 
 ### Fixed
 
@@ -17,13 +45,32 @@ All notable changes to this project are documented here. The format follows
   distribution is `voom-cli` while the command it installs is `voom` — and `uvx` looks for a
   command matching the *package* name, finds none, and refuses. Both published hooks pinned
   `uvx voom-cli`, so that channel failed for every user on first run. It is
-  `uvx --from voom-cli voom` now, in the hooks and in both READMEs, with a test pinning the
-  form because the asymmetry is permanent (see
-  [ADR 0010](adrs/0010-distribution-and-naming.md)).
+  `uvx --from voom-cli voom` now, with a test pinning the form because the asymmetry is
+  permanent (see [ADR 0010](adrs/0010-distribution-and-naming.md)).
 - **The crates.io publish no longer fails on its own error log.** The release workflow
   redirected `cargo publish`'s stderr to a file inside the checkout; the shell creates that file
   before cargo runs, and `cargo publish` refuses a working directory with uncommitted changes.
   0.1.0 reached crates.io only on a re-run.
+- **Installed binaries are left alone.** `~/.cargo/bin`, `~/go/bin`, `~/Library/Developer/Toolchains`
+  and `~/.local/share/gh` join the cache list — around 5.6 GB of installed tools on the machine
+  this was found on, previously resting on the marker rule alone.
+
+### Changed
+
+**Breaking, for anyone using voom as a library or parsing its JSON.**
+
+- `Outcome` gains a `PartiallyRemoved` variant and is now `#[non_exhaustive]`, matching
+  `Refusal` and `Error`. `Outcome::Failed` carries a structured `RemovalFailure` instead of a
+  string, so a consumer can branch on the kind without matching on the operating system's prose.
+- `Guard::remove` takes the artifact's pre-removal size and a `Removal`, which replaces the bare
+  `dry_run` flag.
+- `Totals` gains `partial` and `partial_bytes`, and is `#[non_exhaustive]`. **`Totals::bytes` now
+  means every byte the run freed**, of which `partial_bytes` is a documented subset;
+  `Totals::reclaimed` still counts only artifacts that are entirely gone.
+- **JSON `schema_version` is now `2`.** A failed artifact's `reason` is specific
+  (`not_empty`, `permission_denied`, `read_only_filesystem`) rather than always
+  `removal_failed`, and carries `os_error` and `os_message`. Artifacts gain `reclaimed_bytes`
+  beside `bytes`, so `sum(artifacts[].reclaimed_bytes) == totals.bytes` holds for every run.
 
 ## [0.1.0] - 2026-08-28
 
@@ -103,6 +150,5 @@ nothing; this is the tool.
 - Size accounting sums allocated blocks, so on a copy-on-write filesystem such as APFS the bytes
   reported can exceed the space actually freed where files are shared between clones.
 
-[Unreleased]: https://github.com/Goldziher/voom/compare/v0.1.1...HEAD
-[0.1.1]: https://github.com/Goldziher/voom/releases/tag/v0.1.1
+[Unreleased]: https://github.com/Goldziher/voom/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/Goldziher/voom/releases/tag/v0.1.0
