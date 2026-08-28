@@ -71,12 +71,13 @@ pub fn run(options: &RunOptions) -> Result<RunResult> {
     let started = Instant::now();
     let mut collected = Collected::default();
 
-    for root in &options.roots {
+    let roots = normalize_roots(&options.roots)?;
+    for root in &roots {
         sweep(root, options, &mut collected)?;
     }
 
     let mut result = RunResult {
-        roots: options.roots.clone(),
+        roots,
         entries: collected.entries,
         skips: collected.skips,
         skipped_count: collected.skipped_count,
@@ -86,6 +87,55 @@ pub fn run(options: &RunOptions) -> Result<RunResult> {
     };
     result.sort();
     Ok(result)
+}
+
+/// Resolves the roots to their real locations, drops duplicates, and drops any root that sits
+/// inside another.
+///
+/// On macOS `/tmp` is a symlink to `/private/tmp`, so `voom /tmp /private/tmp` walks one tree
+/// twice and reports every artifact — and every byte — twice over. The same happens for
+/// `voom ~ ~/projects`. voom deletes without asking and the report is the only record of what
+/// it did, so a doubled total is a correctness bug rather than a cosmetic one.
+///
+/// # Errors
+///
+/// [`Error::ReadDir`] if a root cannot be resolved. A root that does not exist is a usage error
+/// and must stop the run before anything is removed.
+fn normalize_roots(roots: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    let mut resolved: Vec<(PathBuf, usize)> = Vec::with_capacity(roots.len());
+    for (index, root) in roots.iter().enumerate() {
+        let canonical = root.canonicalize().map_err(|source| Error::ReadDir {
+            path: root.clone(),
+            source,
+        })?;
+        resolved.push((canonical, index));
+    }
+
+    // Sorting on the canonical path puts an ancestor before everything nested inside it
+    // whatever order they were typed in, which is what makes one pass over `kept` sufficient.
+    // The index breaks ties, so when two spellings name the same tree the one the user typed
+    // first is the one that survives — see the note below on why the choice is visible.
+    resolved.sort();
+
+    let mut kept: Vec<(PathBuf, usize)> = Vec::with_capacity(resolved.len());
+    for (canonical, index) in resolved {
+        if kept.iter().any(|(existing, _)| canonical.starts_with(existing)) {
+            continue;
+        }
+        kept.push((canonical, index));
+    }
+
+    // The *original* spelling is what gets walked. Deduplication has to reason about where a
+    // root really is, but the walk must not: a user's `exclude = ["/tmp/build/**"]` is written
+    // against the path they typed, and silently rewriting it to `/private/tmp/...` would stop
+    // the glob matching — an exclusion that quietly stops working is the exact failure ADR 0004
+    // exists to prevent.
+    //
+    // Which is also why the tie-break above is not arbitrary. Exclusion globs are matched
+    // textually against the walked path, so of two spellings of one tree only the surviving
+    // one's globs keep working. Taking the first the user typed makes that choice predictable
+    // instead of alphabetical.
+    Ok(kept.into_iter().map(|(_, index)| roots[index].clone()).collect())
 }
 
 /// Resolves the configuration that governs one scan root.
@@ -362,6 +412,113 @@ mod tests {
         let mut options = options(std::path::Path::new("/"));
         options.roots = vec![PathBuf::from("/no/such/tree")];
         assert!(run(&options).is_err());
+    }
+
+    /// `/tmp` is a symlink to `/private/tmp` on macOS, so naming both walked one tree twice and
+    /// reported every byte twice. Found by running voom against a real machine.
+    #[test]
+    #[cfg(unix)]
+    fn should_not_count_one_tree_twice_when_two_roots_resolve_to_it() {
+        let fixture = tree(&["real/Cargo.toml", "real/target/app"]);
+        std::os::unix::fs::symlink(fixture.path().join("real"), fixture.path().join("link")).expect("a symlink");
+
+        let mut options = options(fixture.path());
+        options.dry_run = true;
+        options.roots = vec![fixture.path().join("real"), fixture.path().join("link")];
+
+        let result = run(&options).expect("the run completes");
+
+        assert_eq!(result.entries.len(), 1, "one artifact, however many names its root has");
+        assert_eq!(
+            result.roots,
+            vec![fixture.path().join("real")],
+            "the spelling typed first is the one kept"
+        );
+    }
+
+    /// Which spelling survives is not cosmetic: exclusion globs are matched textually against
+    /// the walked path, so only the surviving spelling's globs keep working.
+    #[test]
+    #[cfg(unix)]
+    fn should_keep_the_spelling_typed_first_when_two_roots_alias_one_tree() {
+        let fixture = tree(&["real/Cargo.toml", "real/target/app"]);
+        let real = fixture.path().join("real");
+        let link = fixture.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).expect("a symlink");
+
+        for typed in [vec![link.clone(), real.clone()], vec![real.clone(), link.clone()]] {
+            let first = typed[0].clone();
+            let mut options = options(fixture.path());
+            options.dry_run = true;
+            options.roots = typed;
+
+            let result = run(&options).expect("the run completes");
+            assert_eq!(
+                result.roots,
+                vec![first],
+                "the order the user typed decides, not the spelling"
+            );
+        }
+    }
+
+    /// Sorting is what lets a single pass over the survivors collapse a chain, so the order the
+    /// roots arrive in must not matter.
+    #[test]
+    fn should_collapse_a_chain_of_nested_roots_in_any_order() {
+        let fixture = tree(&["a/b/c/Cargo.toml"]);
+        let a = fixture.path().join("a");
+        let b = fixture.path().join("a/b");
+        let c = fixture.path().join("a/b/c");
+
+        for typed in [
+            vec![a.clone(), b.clone(), c.clone()],
+            vec![c.clone(), b.clone(), a.clone()],
+            vec![b.clone(), c.clone(), a.clone()],
+        ] {
+            assert_eq!(normalize_roots(&typed).expect("the roots resolve"), vec![a.clone()]);
+        }
+    }
+
+    /// Two roots that share a name prefix but not a parent are not duplicates. `Path::starts_with`
+    /// is component-wise, so `a/bc` is not inside `a/b` — this pins that it stays that way.
+    #[test]
+    fn should_keep_sibling_roots_that_share_a_name_prefix() {
+        let fixture = tree(&["b/Cargo.toml", "bc/Cargo.toml"]);
+        let roots = vec![fixture.path().join("b"), fixture.path().join("bc")];
+
+        assert_eq!(normalize_roots(&roots).expect("the roots resolve"), roots);
+    }
+
+    /// `voom ~ ~/projects` is the same problem without a symlink.
+    #[test]
+    fn should_drop_a_root_nested_inside_another_root() {
+        let fixture = tree(&["outer/inner/Cargo.toml", "outer/inner/target/app"]);
+        let mut options = options(fixture.path());
+        options.dry_run = true;
+        options.roots = vec![fixture.path().join("outer"), fixture.path().join("outer/inner")];
+
+        let result = run(&options).expect("the run completes");
+
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(
+            result.roots,
+            vec![fixture.path().join("outer")],
+            "the path as typed is kept"
+        );
+    }
+
+    /// The doc comment promises a bad root stops the run before anything is removed. With one
+    /// root that is vacuous; with two it is the property that matters.
+    #[test]
+    fn should_not_sweep_a_valid_root_when_another_root_does_not_exist() {
+        let fixture = tree(&["Cargo.toml", "target/debug/app"]);
+        let before = snapshot(fixture.path());
+
+        let mut options = options(fixture.path());
+        options.roots = vec![fixture.path().to_path_buf(), PathBuf::from("/no/such/tree")];
+
+        assert!(run(&options).is_err());
+        assert_eq!(snapshot(fixture.path()), before, "the good root is left untouched");
     }
 
     #[test]
