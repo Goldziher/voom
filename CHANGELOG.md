@@ -7,6 +7,21 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
+## [0.4.4] - 2026-08-29
+
+### Changed
+
+- **The reference material moved out of the README**, which is 414 lines instead of 742. The
+  options table, the JSON field tables and the full `voom.toml` schema are things a reader
+  consults rather than reads; they are in [`docs/reference.md`](docs/reference.md) and
+  [`docs/configuration.md`](docs/configuration.md) now, with a short version and a link in the
+  README. Nothing was dropped.
+
+  `tests/docs.rs` checks the documentation *set* rather than the front page: every flag,
+  subcommand and cache id must appear somewhere a reader is pointed at, and every `voom.toml`
+  example in any of the three files still loads through the real configuration pipeline.
+  Checking only `README.md` would have made moving a table look identical to deleting one.
+
 ## [0.4.3] - 2026-08-29
 
 ### Changed

@@ -1,6 +1,6 @@
 {
   "name": "@goldziher/voom",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Fast, safe, parallel build-artifact pruning across every major language ecosystem",
   "bin": {
     "voom": "bin/voom"
