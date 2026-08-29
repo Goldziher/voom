@@ -20,16 +20,25 @@ pub(super) const TERRAFORM: Ecosystem = Ecosystem {
 
 // NOTE: `bazel-bin` and friends are convenience *symlinks* into the output base. ADR 0006
 // refuses to delete through a symlink, so these are found, reported, and refused rather than
-// removed. That is the safe outcome; reclaiming the output base itself is out of v1 scope.
+// removed. That is the safe outcome; reclaiming the output base itself is out of scope.
 //
-// The trailing slash is load-bearing. Without it the pattern is a bare prefix, which matches
-// *files* as well — a hand-written `bazel-diff.sh` or `bazel-env` beside a `WORKSPACE` was
-// classified and removed. The symlinks are still found either way: the walker classifies a
-// link as though it were a directory, so `requires_dir` is satisfied and rail 1 refuses it.
+// The names are literal, not the `bazel-*/` glob this shipped with. Every genuine target here
+// is a symlink and is refused, so the glob's only *effective* removals were false positives:
+// a real `bazel-toolchains/` beside a WORKSPACE — the kind of thing people vendor or submodule
+// — was removed by default. The entry exists to make the symlinks visible, and it cannot do
+// that by matching things that are not them.
+//
+// `bazel-<workspace-name>` is the fourth convenience symlink and is deliberately absent: its
+// name depends on the WORKSPACE's declared name, so no literal covers it and a glob is what
+// caused the problem.
 pub(super) const BAZEL: Ecosystem = Ecosystem {
     id: "bazel",
     name: "Bazel",
     markers: &["WORKSPACE", "WORKSPACE.bazel", "MODULE.bazel"],
     anchor: Anchor::Sibling,
-    artifacts: &[Artifact::on("bazel-*/")],
+    artifacts: &[
+        Artifact::on("bazel-bin/"),
+        Artifact::on("bazel-out/"),
+        Artifact::on("bazel-testlogs/"),
+    ],
 };

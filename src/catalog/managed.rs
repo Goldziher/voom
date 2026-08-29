@@ -27,7 +27,18 @@ pub(super) const DOTNET: Ecosystem = Ecosystem {
     name: ".NET",
     markers: &["*.csproj", "*.fsproj", "*.vbproj", "*.sln"],
     anchor: Anchor::Ancestor(3),
-    artifacts: &[Artifact::on("bin/"), Artifact::on("obj/")],
+    artifacts: &[
+        // `bin/` anchors `Sibling`, not on the ecosystem's climb. A three-level climb let one
+        // solution file license every `bin/` beneath it: `src/bin/` is Cargo's standard
+        // multi-binary *source* layout, and `tools/scripts/bin/` is hand-written — both were
+        // removed by default in a repository that also held a `.sln`. ADR 0003 records that a
+        // sweep of a real machine found all 55 .NET artifacts at depth 0, so the climb never
+        // bought recall here; it only widened what a single marker could reach.
+        Artifact::on("bin/").at(Anchor::Sibling),
+        // `obj/` keeps the climb. Nothing but MSBuild writes a directory of that name, so the
+        // wider reach costs nothing.
+        Artifact::on("obj/"),
+    ],
 };
 
 pub(super) const SCALA: Ecosystem = Ecosystem {

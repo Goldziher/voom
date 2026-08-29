@@ -16,11 +16,19 @@ pub(super) const PYTHON: Ecosystem = Ecosystem {
         Artifact::on(".pytest_cache/"),
         Artifact::on(".mypy_cache/"),
         Artifact::on(".ruff_cache/"),
-        Artifact::on(".tox/"),
+        Artifact::off(
+            ".tox/",
+            "Each `.tox/<env>/` is a virtualenv: removing it costs a full reinstall rather than \
+             a rebuild, exactly as for `.venv/`.",
+        ),
         Artifact::on("*.egg-info/"),
         Artifact::on("htmlcov/"),
         Artifact::on(".coverage"),
-        Artifact::on("build/"),
+        Artifact::off(
+            "build/",
+            "`build/` beside a Python manifest is as often a hand-written build-script \
+             directory as output, the same reason node's is off.",
+        ),
         Artifact::on("dist/"),
         Artifact::off(
             ".venv/",

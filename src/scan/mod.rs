@@ -385,6 +385,62 @@ mod tests {
         );
     }
 
+    /// A directory carrying an `Inside`-anchored artifact's name but not its marker is pruned
+    /// rather than descended into.
+    ///
+    /// A deliberate recall trade, and the only skip reason that prunes. The directory is either
+    /// an older cache of that tool or somebody else's directory of the same name; either way
+    /// voom has already declined to remove it, and walking it can only surface *other* projects
+    /// nested inside a cache. Measured over one home directory: zero artifacts found that way,
+    /// 181 of 2305 skips generated, and the scan five times slower.
+    ///
+    /// Only reaches artifacts that are on by default. An off-by-default one reports
+    /// `NotEnabled` before the marker is consulted, and `NotEnabled` must never prune — it
+    /// fires for `build/` and `bin/` too, where descending is the whole point.
+    #[test]
+    fn should_not_walk_inside_an_unproven_inside_anchored_candidate() {
+        let fixture = tree(&[
+            // No `CACHEDIR.TAG`, so nothing proves it is alef's.
+            ".alef/blob",
+            ".alef/nested/Cargo.toml",
+            ".alef/nested/target/build.o",
+        ]);
+
+        let scan = run(fixture.path(), &verbose());
+
+        assert!(
+            scan.findings.is_empty(),
+            "the interior of an unproven cache is not walked: {:?}",
+            found(&scan, fixture.path())
+        );
+        assert!(
+            scan.skips
+                .iter()
+                .any(|skipped| matches!(skipped.reason, SkipReason::NoInnerMarker { .. })),
+            "and the directory itself is reported, so the reader knows why: {:?}",
+            scan.skips
+        );
+    }
+
+    /// The other half: a *proven* one is not walked either, because a matched artifact is an
+    /// indivisible unit. Same outcome, different reason, and both must hold.
+    #[test]
+    fn should_not_walk_inside_a_proven_inside_anchored_artifact() {
+        let fixture = tree(&[
+            ".alef/CACHEDIR.TAG",
+            ".alef/nested/Cargo.toml",
+            ".alef/nested/target/build.o",
+        ]);
+
+        let scan = run(fixture.path(), &verbose());
+
+        assert_eq!(
+            found(&scan, fixture.path()),
+            vec![".alef".to_owned()],
+            "the artifact itself, and nothing from inside it"
+        );
+    }
+
     /// Naming a cache reaches it through the ancestor that would otherwise prune it — without
     /// opening that ancestor up, which is what `CACHE_DIRS` exists to prevent.
     #[test]
@@ -584,7 +640,16 @@ mod tests {
     #[test]
     fn should_reach_an_artifact_declared_inside_a_pruned_dependency_directory() {
         let fixture = tree(&["Gemfile", "vendor/bundle/gems/rake.rb", "vendor/other/keep.rb"]);
-        let scan = run(fixture.path(), &ScanOptions::default());
+        // Opt-in since it is an installed-gem directory, so the run has to name it.
+        let mut selection = Selection::all();
+        assert!(selection.set("ruby.vendor-bundle", true), "the spec exists");
+
+        let scan = scan(
+            &[fixture.path().to_path_buf()],
+            &Classifier::new(selection).expect("the catalog compiles"),
+            &ScanOptions::default(),
+        );
+
         assert_eq!(found(&scan, fixture.path()), vec!["vendor/bundle".to_owned()]);
     }
 

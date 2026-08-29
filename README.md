@@ -267,7 +267,7 @@ key, for when you already know the name.
 | --- | --- | --- |
 | Rust | `Cargo.toml` | `target/`, `vendor/`† |
 | Node / TypeScript | `package.json` | `dist/`, `.next/`, `.nuxt/`, `.svelte-kit/`, `.astro/`, `.turbo/`, `.parcel-cache/`, `.vite/`, `.nyc_output/`, `*.tsbuildinfo`, `build/`†, `node_modules/`† |
-| Python | `pyproject.toml`, `setup.py`, `setup.cfg` | `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `.tox/`, `*.egg-info/`, `htmlcov/`, `.coverage`, `build/`, `dist/`, `.venv/`† |
+| Python | `pyproject.toml`, `setup.py`, `setup.cfg` | `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `*.egg-info/`, `htmlcov/`, `.coverage`, `dist/`, `.tox/`†, `build/`†, `.venv/`† |
 | Go | `go.mod` | `bin/`†, `vendor/`† |
 | Zig | `build.zig` | `.zig-cache/`, `zig-cache/`, `zig-out/` |
 | Swift | `Package.swift` | `.build/` |
@@ -275,10 +275,10 @@ key, for when you already know the name.
 | Maven | `pom.xml` | `target/` |
 | Gradle / Kotlin | `build.gradle`, `build.gradle.kts`, `settings.gradle*` | `build/`, `.gradle/` |
 | .NET | `*.csproj`, `*.fsproj`, `*.vbproj`, `*.sln` | `bin/`, `obj/` |
-| CMake / C++ | `CMakeLists.txt` | `build/`, `cmake-build-*/`, `CMakeFiles/` |
+| CMake / C++ | `CMakeLists.txt` | `cmake-build-*/`, `CMakeFiles/`, `build/`† |
 | Dart / Flutter | `pubspec.yaml` | `.dart_tool/`, `build/` |
 | Elixir | `mix.exs` | `_build/`, `.elixir_ls/`, `deps/`† |
-| Ruby | `Gemfile`, `*.gemspec` | `.bundle/`, `vendor/bundle/`, `coverage/`, `pkg/`†, `tmp/`† |
+| Ruby | `Gemfile`, `*.gemspec` | `coverage/`, `vendor/bundle/`†, `pkg/`†, `tmp/`† |
 | PHP | `composer.json` | `.phpunit.cache/`, `.phpunit.result.cache`, `vendor/`† |
 | Scala / sbt | `build.sbt` | `target/`, `project/target/`, `.bloop/`, `.metals/` |
 | Haskell | `*.cabal`, `stack.yaml` | `dist-newstyle/`, `.stack-work/` |
@@ -288,7 +288,7 @@ key, for when you already know the name.
 | Nim | `*.nimble` | `nimcache/` |
 | Elm | `elm.json` | `elm-stuff/` |
 | Terraform | `*.tf` | `.terraform/` |
-| Bazel | `WORKSPACE`, `WORKSPACE.bazel`, `MODULE.bazel` | `bazel-*/` |
+| Bazel | `WORKSPACE`, `WORKSPACE.bazel`, `MODULE.bazel` | `bazel-bin/`, `bazel-out/`, `bazel-testlogs/` |
 | alef | `CACHEDIR.TAG` | `.alef/`‡ |
 | basemind | `agent-id` | `.basemind/`†‡ |
 
@@ -467,7 +467,7 @@ The reporting hook is the one to start with — it fails the commit on findings 
 ```yaml
 repos:
   - repo: https://github.com/Goldziher/voom
-    rev: v0.4.0
+    rev: v0.4.1
     hooks:
       - id: voom-report      # reports, deletes nothing
       # - id: voom-prune     # actually deletes — opt in deliberately
@@ -479,7 +479,7 @@ repos:
 [[hooks.sources]]
 id = "voom"
 git = "https://github.com/Goldziher/voom.git"
-revision = "v0.4.0"
+revision = "v0.4.1"
 hooks = ["voom-report"]
 ```
 

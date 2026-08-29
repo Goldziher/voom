@@ -55,7 +55,15 @@ pub(super) const CMAKE: Ecosystem = Ecosystem {
     markers: &["CMakeLists.txt"],
     anchor: Anchor::Sibling,
     artifacts: &[
-        Artifact::on("build/"),
+        // `CMakeLists.txt` proves CMake; it does not prove a sibling `build/` is the binary
+        // directory rather than a source subdirectory of CMake modules and toolchain files,
+        // which is an established layout. `cmake-build-*/` and `CMakeFiles/` are unambiguous
+        // and stay on, so default recall barely moves.
+        Artifact::off(
+            "build/",
+            "A top-level `build/` beside a CMakeLists.txt is as often CMake modules and \
+             toolchain files as a binary directory.",
+        ),
         Artifact::on("cmake-build-*/"),
         Artifact::on("CMakeFiles/"),
     ],

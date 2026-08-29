@@ -99,8 +99,8 @@ fn should_not_follow_a_symlink_out_of_the_scan_root() {
 
 /// Ruby declares build output *inside* a dependency directory (`vendor/bundle/`), and the
 /// walker reaches it by constructing that one path rather than walking the cache. A tree that
-/// is both Ruby and PHP has one `vendor/` with two claims on it, and the PHP claim is off by
-/// default — so the Ruby artifact must still be found.
+/// is both Ruby and PHP has one `vendor/` with two claims on it — so the Ruby artifact must
+/// still be found when it is asked for, without the PHP claim on `vendor/` itself firing.
 ///
 /// This is a regression test with a date: the first `--clean-dependencies` implementation
 /// classified the dependency directory and, on an artifact verdict, skipped the inside-check.
@@ -115,7 +115,7 @@ fn should_still_find_build_output_inside_a_dependency_directory_another_ecosyste
     fs::write(root.path().join("vendor/bundle/gems/rake.rb"), b"gem").unwrap();
     fs::write(root.path().join("vendor/autoload.php"), b"<?php").unwrap();
 
-    let result = run(&options(root.path())).expect("the run completes");
+    let result = run(&options_enabling(root.path(), vec!["ruby.vendor-bundle".to_owned()])).expect("the run completes");
 
     assert_eq!(
         result
@@ -145,6 +145,8 @@ fn should_not_remove_an_artifact_another_removal_already_covers() {
 
     let mut settings = options(root.path());
     settings.flags.enable.push("php.vendor".to_owned());
+    // `vendor/bundle/` is opt-in too, and it is the inner artifact this test is about.
+    settings.flags.enable.push("ruby.vendor-bundle".to_owned());
     let result = run(&settings).expect("the run completes");
 
     assert_eq!(
@@ -304,9 +306,9 @@ fn should_remove_the_whole_dependency_group_when_the_flag_asks_for_it() {
     );
 }
 
-/// Ruby's `vendor/bundle/` is build output declared *inside* a dependency directory, and it is
-/// on by default. Making `vendor/` itself an opt-in artifact must not have broken the targeted
-/// check that reaches through the prune to find it.
+/// Ruby's `vendor/bundle/` is build output declared *inside* a dependency directory. It is
+/// opt-in — installed gems cost a `bundle install` to restore — but the targeted check that
+/// reaches through the prune to find it must still work when it is asked for.
 #[test]
 fn should_still_reach_build_output_inside_a_dependency_directory() {
     let root = TempDir::new().unwrap();
@@ -316,7 +318,7 @@ fn should_still_reach_build_output_inside_a_dependency_directory() {
     fs::create_dir_all(root.path().join("vendor/hand-written")).unwrap();
     fs::write(root.path().join("vendor/hand-written/keep.rb"), b"# mine").unwrap();
 
-    let result = run(&options(root.path())).expect("the run completes");
+    let result = run(&options_enabling(root.path(), vec!["ruby.vendor-bundle".to_owned()])).expect("the run completes");
 
     assert_eq!(result.entries.len(), 1);
     assert!(!root.path().join("vendor/bundle").exists(), "the gems go");
@@ -484,6 +486,76 @@ fn should_prove_an_alef_cache_at_any_depth_from_the_tag_inside_it() {
     assert!(
         untagged.join("mine.txt").exists(),
         "a .alef with no tag inside it is not proven — this would be data loss"
+    );
+}
+
+/// The data-loss regression test for .NET's anchor. `src/bin/` is Cargo's standard multi-binary
+/// *source* layout, and a three-level climb let one `.sln` license it — in a polyglot repository
+/// that is not a hypothetical shape, it is the normal one.
+#[test]
+fn should_never_remove_a_source_bin_directory_because_a_solution_file_is_above_it() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("App.sln"), b"<Solution />").unwrap();
+    fs::write(root.path().join("Cargo.toml"), b"[package]\nname = \"x\"\n").unwrap();
+
+    let source = root.path().join("src/bin");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("tool.rs"), b"fn main() {}").unwrap();
+
+    let scripts = root.path().join("tools/scripts/bin");
+    fs::create_dir_all(&scripts).unwrap();
+    fs::write(scripts.join("deploy.sh"), b"#!/bin/sh\n").unwrap();
+
+    // And the genuine article, directly beside a project file, which must still go.
+    let real = root.path().join("Api/bin");
+    fs::create_dir_all(&real).unwrap();
+    fs::write(root.path().join("Api/Api.csproj"), b"<Project />").unwrap();
+    fs::write(real.join("Api.dll"), b"output").unwrap();
+
+    run(&options(root.path())).expect("the run completes");
+
+    assert!(
+        source.join("tool.rs").exists(),
+        "src/bin/ is Rust source — this is data loss"
+    );
+    assert!(scripts.join("deploy.sh").exists(), "tools/scripts/bin/ is hand-written");
+    assert!(!real.exists(), "bin/ beside its own .csproj is still .NET's output");
+}
+
+/// `.bundle/` holds `bundle config set --local` output — committed settings, and credentials for
+/// private gem sources. A `Gemfile` proves Ruby; it does not prove this directory is derived.
+#[test]
+fn should_never_remove_a_ruby_dot_bundle_directory() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("Gemfile"), b"source 'https://rubygems.org'\n").unwrap();
+    let config = root.path().join(".bundle");
+    fs::create_dir_all(&config).unwrap();
+    fs::write(config.join("config"), b"BUNDLE_PATH: \"vendor/bundle\"\n").unwrap();
+
+    run(&options_enabling(root.path(), vec!["ruby".to_owned()])).expect("the run completes");
+
+    assert!(
+        config.join("config").exists(),
+        "committed bundler configuration and private-source credentials are not build output"
+    );
+}
+
+/// Bazel's convenience symlinks are matched by name, so a real directory that merely starts with
+/// `bazel-` is not. Every true positive is a symlink the rail refuses anyway, so a glob could
+/// only ever have removed false positives.
+#[test]
+fn should_not_remove_a_real_directory_that_merely_starts_with_bazel() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("WORKSPACE"), b"").unwrap();
+    let vendored = root.path().join("bazel-toolchains");
+    fs::create_dir_all(&vendored).unwrap();
+    fs::write(vendored.join("def.bzl"), b"def x(): pass").unwrap();
+
+    run(&options(root.path())).expect("the run completes");
+
+    assert!(
+        vendored.join("def.bzl").exists(),
+        "a vendored bazel-* directory is not output"
     );
 }
 
@@ -720,6 +792,8 @@ fn should_not_write_off_a_covered_artifact_whose_coverer_was_never_removed() {
     let mut settings = options(root.path());
     settings.verbose = true;
     settings.flags.enable.push("php.vendor".to_owned());
+    // The inner artifact this test is about is opt-in too.
+    settings.flags.enable.push("ruby.vendor-bundle".to_owned());
     let result = run(&settings).expect("the run completes");
 
     let named: Vec<String> = result

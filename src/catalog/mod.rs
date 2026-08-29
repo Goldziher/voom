@@ -273,6 +273,7 @@ pub const DEPENDENCY_ARTIFACTS: &[&str] = &[
     "rust.vendor",
     "php.vendor",
     "go.vendor",
+    "ruby.vendor-bundle",
     "elixir.deps",
     "python.venv",
 ];

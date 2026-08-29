@@ -553,7 +553,11 @@ mod tests {
     #[test]
     fn should_verify_leading_segments_of_a_multi_segment_artifact() {
         let matching = tree(&["Gemfile", "vendor/bundle/"]);
-        let classifier = classifier();
+        // `vendor/bundle/` is opt-in — installed gems cost a `bundle install` to restore — so
+        // the multi-segment path has to be asked for before it can be classified.
+        let mut selection = Selection::all();
+        assert!(selection.set("ruby.vendor-bundle", true), "the spec exists");
+        let classifier = Classifier::new(selection).expect("the catalog compiles");
         assert_artifact(
             &verdict(&classifier, matching.path(), "vendor/bundle"),
             "ruby",
