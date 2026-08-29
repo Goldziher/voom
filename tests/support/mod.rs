@@ -121,8 +121,15 @@ pub fn fixture(ecosystem: &Ecosystem, artifact: &Artifact, with_marker: bool) ->
     if with_marker {
         // The anchor is the artifact path with all of its own segments stripped off, which for
         // a fixture rooted at the artifact is always the root itself. That is where a `Sibling`
-        // marker must sit, and the nearest place an `Ancestor` one may.
-        fs::write(root.path().join(marker_name(ecosystem)), b"marker").expect("the marker file");
+        // marker must sit, and the nearest place an `Ancestor` one may — but an `Inside` marker
+        // must go *in* the artifact, and putting it at the root instead would make the positive
+        // fixture silently assert the negative case.
+        let marker_dir = if artifact.anchor_in(ecosystem).is_inside() {
+            target.clone()
+        } else {
+            root.path().to_path_buf()
+        };
+        fs::write(marker_dir.join(marker_name(ecosystem)), b"marker").expect("the marker file");
     }
 
     (root, target)

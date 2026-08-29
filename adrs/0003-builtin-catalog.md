@@ -177,3 +177,28 @@ asserted end to end as well, in `tests/safety.rs`.
 `bower_components/` remains in `DEPENDENCY_DIRS` and out of the catalog: it is pruned like the
 others, but no marker distinguishes a Bower install from any other directory of that name, so
 there is no entry that ADR 0002 would let us write.
+
+## Amendment — first-party tooling entries — 2026-08-29
+
+`alef` and `basemind` join the table. Both are our own tools, which is the whole justification:
+we know what the directories hold, that nothing in them is authored by hand, and that the tool
+rebuilds them on its next run. The same evidence from a third party earns the same treatment;
+absent it, `Artifact::off` and a note remain the answer.
+
+The measurement that prompted it: 69 `.alef/` directories holding **42.7 GB** and 13
+`.basemind/` directories holding **3.0 GB** on one workstation, none of it reachable by any
+flag, because neither had a catalog entry and `include` had no command-line spelling.
+
+Both anchors are measured rather than guessed:
+
+- **`alef`** is `Ancestor(6)`. `alef.toml` sits at the repository root while `.alef/` is written
+  wherever alef runs. Observed climb distances: 0 (7 directories), 2 (58), 3 (3), 6 (1). Six is
+  that measurement and nothing more, and the table's existing 8-level ceiling bounds how wrong
+  it can be.
+- **`basemind`** is `Inside` (ADR 0002's amendment), keyed on `agent-id`. The obvious sibling
+  marker, `basemind.toml`, is optional and was present beside only 3 of the 13 directories —
+  and the largest was among the other 10. `agent-id` is written whenever an index is created
+  and was present in 13 of 13.
+
+Both are `Artifact::on`. The "prefer a false negative" tie-breaker exists for entries whose name
+is also a plausible source directory or whose removal costs a re-download; neither applies here.

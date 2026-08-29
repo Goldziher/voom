@@ -51,7 +51,7 @@ real pipeline · hierarchical TOML · watch mode · git hooks
 
 | Capability | What it does |
 | --- | --- |
-| **Every major ecosystem** | Rust, Node, Python, Go, Zig, Swift, Xcode, Maven, Gradle, .NET, CMake, Dart, Elixir, Ruby, PHP, Scala, Haskell, OCaml, Julia, R, Nim, Elm, Terraform, Bazel — [the table below](#supported-ecosystems), or `voom catalog` for the live one |
+| **Every major ecosystem** | Rust, Node, Python, Go, Zig, Swift, Xcode, Maven, Gradle, .NET, CMake, Dart, Elixir, Ruby, PHP, Scala, Haskell, OCaml, Julia, R, Nim, Elm, Terraform, Bazel, alef, basemind — [the table below](#supported-ecosystems), or `voom catalog` for the live one |
 | **Proof before deletion** | Never a directory name alone: a marker file has to prove the ecosystem at the artifact's declared anchor, or voom walks past |
 | **Six deletion rails** | No symlink following, no filesystem crossing, canonicalization, an append-only protected-path denylist, containment below a scan root, and per-artifact failure isolation |
 | **One pass** | Parallel traversal that prunes whole subtrees — matched artifacts, `.git/`, dependency directories, tool caches — rather than descending and filtering |
@@ -299,6 +299,14 @@ Full reasoning in [ADR 0002](adrs/0002-marker-anchored-classification.md) and
 | Elm | `elm.json` | `elm-stuff/` |
 | Terraform | `*.tf` | `.terraform/` |
 | Bazel | `WORKSPACE`, `WORKSPACE.bazel`, `MODULE.bazel` | `bazel-*/` |
+| alef | `alef.toml` | `.alef/`, `.alef-cache/` |
+| basemind | `agent-id` | `.basemind/`‡ |
+
+‡ Proven from *inside*: `agent-id` is the file basemind writes into `.basemind/` when it
+creates the index, so the directory declares itself rather than relying on a sibling config
+that is usually absent. Every other row looks for its marker beside or above the artifact.
+A tool that wants its caches swept can do the same with the cross-tool
+[`CACHEDIR.TAG`](https://bford.info/cachedir/).
 
 † Off by default — the name is also a plausible source directory in that ecosystem, or removal is
 expensive rather than cheap. Turn one on for a single run with `--enable python.venv`, or per

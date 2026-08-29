@@ -399,6 +399,64 @@ fn should_sweep_a_nested_dotnet_artifact_and_stop_at_the_ancestor_bound() {
     );
 }
 
+/// `Inside` proves a directory from its own contents, so the two ways it can be wrong are
+/// symmetrical: taking one whose marker is only *beside* it, and passing over one whose marker
+/// really is within. The second half is the data-loss case — a `.basemind` somebody wrote by
+/// hand, next to a stray `agent-id` file, must survive.
+#[test]
+fn should_prove_a_basemind_index_only_from_a_marker_inside_it() {
+    let root = TempDir::new().unwrap();
+
+    let proven = root.path().join("indexed/.basemind");
+    fs::create_dir_all(&proven).unwrap();
+    fs::write(proven.join("agent-id"), b"01").unwrap();
+    fs::write(proven.join("blob"), b"index").unwrap();
+
+    // The same marker name, one level out. This is the shape the generated fixtures cannot
+    // produce, and the one a Sibling implementation would take.
+    let beside = root.path().join("handwritten/.basemind");
+    fs::create_dir_all(&beside).unwrap();
+    fs::write(beside.join("notes.md"), b"mine").unwrap();
+    fs::write(root.path().join("handwritten/agent-id"), b"01").unwrap();
+
+    run(&options(root.path())).expect("the run completes");
+
+    assert!(
+        !proven.exists(),
+        "a .basemind holding its own agent-id is proven and must be swept"
+    );
+    assert!(
+        beside.join("notes.md").exists(),
+        "a .basemind proven only by a file beside it is not proven — this would be data loss"
+    );
+}
+
+/// The `Ancestor(6)` climb alef needs, at the bound and one past it.
+#[test]
+fn should_sweep_an_alef_cache_within_its_ancestor_bound_and_stop_past_it() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("alef.toml"), b"[alef]").unwrap();
+
+    for nesting in ["", "a/", "a/b/c/", "a/b/c/d/e/f/", "a/b/c/d/e/f/g/"] {
+        let cache = root.path().join(format!("{nesting}.alef"));
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("snippet.bin"), b"output").unwrap();
+    }
+
+    run(&options(root.path())).expect("the run completes");
+
+    for nesting in ["", "a/", "a/b/c/", "a/b/c/d/e/f/"] {
+        assert!(
+            !root.path().join(format!("{nesting}.alef")).exists(),
+            ".alef/ at `{nesting}` is within Ancestor(6) and must be swept"
+        );
+    }
+    assert!(
+        root.path().join("a/b/c/d/e/f/g/.alef/snippet.bin").exists(),
+        "seven levels down is beyond Ancestor(6) and nothing proves it"
+    );
+}
+
 #[test]
 fn should_resolve_an_ambiguous_name_by_which_marker_is_present() {
     let root = TempDir::new().unwrap();

@@ -211,7 +211,7 @@ impl Classifier {
                 continue;
             }
 
-            match (self.prove(root, anchor_dir, id), self.selection.is_enabled(id)) {
+            match (self.prove(root, path, anchor_dir, id), self.selection.is_enabled(id)) {
                 (Proof::Found(marker_dir), true) => {
                     return Verdict::Artifact(Finding {
                         path: path.to_path_buf(),
@@ -230,13 +230,7 @@ impl Classifier {
                         },
                     );
                 }
-                (Proof::Missing, true) => record(
-                    RANK_NO_MARKER,
-                    SkipReason::NoMarker {
-                        ecosystem: id.ecosystem().id,
-                        markers: id.ecosystem().markers,
-                    },
-                ),
+                (Proof::Missing, true) => record(RANK_NO_MARKER, unproven(id)),
                 (Proof::Missing, false) => record(
                     RANK_UNPROVEN_OPT_IN,
                     SkipReason::NotEnabled {
@@ -252,9 +246,26 @@ impl Classifier {
     }
 
     /// Looks for a marker at the artifact's declared anchor position.
-    fn prove(&self, root: &Path, anchor_dir: &Path, id: ArtifactId) -> Proof {
+    fn prove(&self, root: &Path, candidate: &Path, anchor_dir: &Path, id: ArtifactId) -> Proof {
         let bit = 1_u32 << id.ecosystem;
-        let levels = id.artifact().anchor_in(id.ecosystem()).levels();
+        let anchor = id.artifact().anchor_in(id.ecosystem());
+
+        // `Inside` looks down rather than up: the directory that would prove the candidate is
+        // the candidate. There is no climb and no ancestor to fall back on, so one probe
+        // settles it — of a directory the walker prunes and never enumerates, which is why
+        // this is affordable at all.
+        if anchor.is_inside() {
+            let facts = self.facts(candidate);
+            return if facts.markers & bit != 0 {
+                Proof::Found(candidate.to_path_buf())
+            } else if facts.readable {
+                Proof::Missing
+            } else {
+                Proof::Unreadable
+            };
+        }
+
+        let levels = anchor.levels();
         let mut dir = anchor_dir;
         let mut unreadable = false;
 
@@ -321,6 +332,20 @@ enum Proof {
     Found(PathBuf),
     Missing,
     Unreadable,
+}
+
+/// The reason to report when a selected artifact's marker was looked for and not found.
+///
+/// Which sentence is right depends on *where* the search happened, so it is decided here rather
+/// than at the two call sites that would otherwise both have to remember.
+fn unproven(id: ArtifactId) -> SkipReason {
+    let ecosystem = id.ecosystem().id;
+    let markers = id.ecosystem().markers;
+    if id.artifact().anchor_in(id.ecosystem()).is_inside() {
+        SkipReason::NoInnerMarker { ecosystem, markers }
+    } else {
+        SkipReason::NoMarker { ecosystem, markers }
+    }
 }
 
 /// The directory an artifact anchors against: the candidate path with the artifact's own

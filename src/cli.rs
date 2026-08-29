@@ -475,6 +475,7 @@ pub fn render_catalog(out: &mut impl io::Write) -> io::Result<()> {
         let anchor = match ecosystem.anchor {
             crate::catalog::Anchor::Sibling => "sibling".to_owned(),
             crate::catalog::Anchor::Ancestor(levels) => format!("ancestor({levels})"),
+            crate::catalog::Anchor::Inside => "inside".to_owned(),
         };
         writeln!(out, "  anchor:  {anchor}")?;
         for artifact in ecosystem.artifacts {

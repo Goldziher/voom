@@ -105,3 +105,48 @@ Negative / risks:
 - **Requiring the user to confirm each ambiguous directory:** rejected — an interactive prompt
   cannot run from a hook or CI (ADR 0001), and prompt fatigue converts into reflexive
   approval, which is worse than not asking.
+
+## Amendment — `Anchor::Inside` — 2026-08-29
+
+The first real sweeps after 0.2.0 measured how little of a developer machine this rule can
+reach. On one workstation, `--caches` — the flag whose help text promises to "also sweep
+machine-global tool caches and installed toolchains" — found **252 MB** across `~/.cache`
+(55 GB), **0 B** across `~/Library/Caches` (24 GB), and **41 kB** across `~/.cargo` plus
+`~/.rustup` (24 GB). 103 GB in, a quarter of a percent out.
+
+That is not a tuning failure. The flag re-enables *walking* those locations; this ADR then
+still demands a marker, and a tool cache has nothing beside it. `~/.cargo/registry` sits under
+`~/.cargo`, whose other children are unrelated; `~/.cache/uv` sits beside `poly`, `zig` and
+`huggingface`. There is no sibling that could prove any of them, and there never will be.
+
+The proof exists — it is *inside*. `CACHEDIR.TAG`, whose [specification](https://bford.info/cachedir/)
+says the directory holds data the application can regenerate, was found already present in
+`~/.cargo/registry`, `~/.cargo/git`, `~/.cache/uv` and `~/.gradle/caches` — 17.7 GB declared
+regenerable by the tools' own authors. Go's build cache carries a `README` that says to run
+`go clean -cache`. basemind writes an `agent-id` into every index it creates.
+
+So `Anchor` gains a third position: `Inside`, where the marker is looked for in the candidate
+directory itself.
+
+**This does not weaken the rule; it applies it somewhere new.** A marker the tool wrote into
+its own cache is *stronger* evidence than a file beside the directory, because it is a
+first-party declaration rather than a circumstantial one. Everything else is unchanged — the
+candidate is still rejected by name first, an `Inside` entry with no marker is still left
+alone, and the deletion rails still apply in full.
+
+The cost is one `read_dir` of the candidate, memoized in the same per-directory cache the other
+two positions use, on a directory the walker prunes and never enumerates anyway. It is paid only
+for candidates whose name matches an entry that anchors `Inside`.
+
+Two consequences worth recording:
+
+- A missing inside-marker reports as `no_inner_marker`, not `no_marker`. The reader's next move
+  differs — beside the directory for a project file, or within it for the tool's own
+  declaration — and ADR 0007's principle is that a state read differently gets its own label.
+- **The generated fixtures cannot police the anchor.** `tests/catalog_fixtures.rs` builds its
+  tree from `anchor_in`, so it and the classifier agree even when both are wrong: with `Inside`
+  disabled entirely, all four generated suites still pass. An entry that anchors anywhere but
+  `Sibling` therefore owes a hand-written test, and
+  `should_prove_a_basemind_index_only_from_a_marker_inside_it` is the one that carries this
+  amendment — it asserts both halves, that a marker within proves the directory and that the
+  same marker *beside* it does not.

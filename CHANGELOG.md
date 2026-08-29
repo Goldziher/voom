@@ -7,6 +7,29 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
+## [Unreleased]
+
+### Added
+
+- **`Anchor::Inside` — a marker looked for inside the candidate rather than around it.** Some
+  directories carry no proof beside them and never will: nothing next to `~/.cargo/registry`
+  says what it is, and `~/.cache/uv` sits beside unrelated caches. The proof is *within* —
+  `CACHEDIR.TAG`, whose spec declares the directory regenerable, is already present in cargo's
+  registry and git caches, uv's cache and gradle's. A first-party declaration is stronger
+  evidence than a sibling file, not weaker, so this extends ADR 0002 rather than bending it.
+  A candidate anchored `Inside` with no marker is left alone exactly as before, and reports
+  `no_inner_marker` so the reader knows where to look.
+- **`alef` and `basemind` catalog entries.** Both on by default: they are our own tools, we
+  know nothing in those directories is authored, and the tool rebuilds them. `alef` anchors
+  `Ancestor(6)` on `alef.toml`, `basemind` anchors `Inside` on the `agent-id` file it writes
+  into every index — measured, not guessed: `basemind.toml` was beside only 3 of 13 real
+  directories and `agent-id` was in all 13. On one workstation this reaches 69 `.alef/`
+  directories and 13 `.basemind/` ones that no flag could previously touch.
+
+### Changed
+
+- `Anchor` is now `#[non_exhaustive]`, matching every other public enum in the crate.
+
 ## [0.2.0] - 2026-08-28
 
 The `uvx` and publish fixes below were prepared as `0.1.1` and never tagged, so they ship here

@@ -17,6 +17,7 @@ mod native;
 mod python;
 mod scientific;
 mod scripting;
+mod tooling;
 mod web;
 
 /// Where a marker file may sit relative to an artifact's anchor directory.
@@ -29,22 +30,42 @@ mod web;
 ///
 /// `n` is a bound, not a suggestion: too small misses artifacts, too large risks proving one
 /// project's artifact with an unrelated project's marker.
+///
+/// [`Inside`](Anchor::Inside) looks in the candidate directory itself rather than around it,
+/// which is what a tool cache needs: nothing beside `~/.cargo/registry` says what it is, but
+/// the `CACHEDIR.TAG` cargo wrote *into* it does. That is stronger proof than a sibling, not
+/// weaker — the tool declared the directory regenerable itself — and it costs one `read_dir`
+/// of a directory the walker prunes and never enumerates anyway.
+///
+/// `#[non_exhaustive]` because a fourth position is plausible and adding one to a bare enum
+/// would break every downstream `match` without a wildcard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Anchor {
     /// The marker sits in the anchor directory itself.
     Sibling,
     /// The marker sits in the anchor directory or up to `n` levels above it.
     Ancestor(u8),
+    /// The marker sits inside the candidate directory.
+    Inside,
 }
 
 impl Anchor {
     /// How many levels above the anchor directory the marker search may climb.
+    ///
+    /// Zero for [`Inside`](Anchor::Inside), which does not climb at all — it looks down.
     #[must_use]
     pub const fn levels(self) -> u8 {
         match self {
-            Self::Sibling => 0,
+            Self::Sibling | Self::Inside => 0,
             Self::Ancestor(n) => n,
         }
+    }
+
+    /// Whether the marker is looked for inside the candidate rather than around it.
+    #[must_use]
+    pub const fn is_inside(self) -> bool {
+        matches!(self, Self::Inside)
     }
 }
 
@@ -215,6 +236,8 @@ pub static CATALOG: &[Ecosystem] = &[
     web::ELM,
     infra::TERRAFORM,
     infra::BAZEL,
+    tooling::ALEF,
+    tooling::BASEMIND,
 ];
 
 /// The classifier packs "which ecosystems have a marker here" into a `u32` bitmask, one bit
@@ -465,6 +488,25 @@ mod tests {
                     assert!(
                         crate::names::is_literal(segment),
                         "`{}`: artifact `{}` has the non-literal leading segment `{segment}`",
+                        ecosystem.id,
+                        artifact.path
+                    );
+                }
+            }
+        }
+    }
+
+    /// A marker cannot live inside a file, so an `Inside` artifact has to be a directory. An
+    /// entry that forgot the trailing slash would silently never prove anything.
+    #[test]
+    fn every_inside_anchored_artifact_requires_a_directory() {
+        for ecosystem in CATALOG {
+            for artifact in ecosystem.artifacts {
+                if artifact.anchor_in(ecosystem).is_inside() {
+                    assert!(
+                        artifact.requires_dir(),
+                        "`{}`: artifact `{}` anchors Inside but does not require a directory — \
+                         it needs a trailing `/`",
                         ecosystem.id,
                         artifact.path
                     );

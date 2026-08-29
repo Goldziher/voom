@@ -98,6 +98,19 @@ pub enum SkipReason {
         /// The markers that would have proved it.
         markers: &'static [&'static str],
     },
+    /// Nothing inside the candidate proved it — the [`Inside`](crate::catalog::Anchor::Inside)
+    /// counterpart of [`NoMarker`](SkipReason::NoMarker).
+    ///
+    /// Separate because the reader's next move is different: for `NoMarker` they look beside
+    /// the directory for a project file, and here they look within it for the tool's own
+    /// declaration. A tool that wants its cache swept writes one — `CACHEDIR.TAG` is the
+    /// cross-tool spelling.
+    NoInnerMarker {
+        /// The ecosystem that would have claimed it.
+        ecosystem: &'static str,
+        /// The markers that would have proved it, looked for inside the candidate.
+        markers: &'static [&'static str],
+    },
     /// The artifact is off by default, or the ecosystem was not selected.
     NotEnabled {
         /// The `<ecosystem>.<artifact>` spec that would enable it.
@@ -143,6 +156,7 @@ impl SkipReason {
     pub fn code(&self) -> &'static str {
         match self {
             Self::NoMarker { .. } => "no_marker",
+            Self::NoInnerMarker { .. } => "no_inner_marker",
             Self::NotEnabled { .. } => "not_enabled",
             Self::ToolCache => "tool_cache",
             Self::Excluded { .. } => "excluded",
@@ -160,6 +174,9 @@ impl fmt::Display for SkipReason {
         match self {
             Self::NoMarker { ecosystem, markers } => {
                 write!(f, "no {ecosystem} marker ({}) proves it", markers.join(", "))
+            }
+            Self::NoInnerMarker { ecosystem, markers } => {
+                write!(f, "nothing inside it ({}) proves it is {ecosystem}", markers.join(", "))
             }
             // Deliberately not "off by default": this fires both for a catalog default and
             // for an artifact configuration turned off, and claiming the former when it was
