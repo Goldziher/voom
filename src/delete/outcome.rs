@@ -332,14 +332,19 @@ mod tests {
         }
     }
 
-    /// And nothing else is swept up with it: a neighbouring errno must stay `Other`.
+    /// And nothing else is swept up with it. Stated as "not `Exhausted`" rather than "is
+    /// `Other`", because which *other* kind a given number lands in is platform-specific — the
+    /// first version of this test asserted `Other` for Windows error 5, which is
+    /// `ERROR_ACCESS_DENIED` and correctly classifies as `Denied`.
     #[test]
     fn should_not_mistake_another_error_for_descriptor_exhaustion() {
-        let neighbour = if cfg!(windows) { 5 } else { 25 };
-        assert_eq!(
-            RemovalFailure::from_io(&std::io::Error::from_raw_os_error(neighbour)).kind(),
-            FailureKind::Other
-        );
+        for raw in [1, 5, 13, 22] {
+            assert_ne!(
+                RemovalFailure::from_io(&std::io::Error::from_raw_os_error(raw)).kind(),
+                FailureKind::Exhausted,
+                "os error {raw} is not descriptor exhaustion on any platform"
+            );
+        }
     }
 
     const fn exhaustion_errnos() -> &'static [i32] {
