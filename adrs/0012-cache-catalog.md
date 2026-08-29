@@ -137,3 +137,34 @@ Negative / risks:
   not accepted for the same reason.
 - **Extend `--caches` to remove rather than adding a flag.** Rejected: `--caches` is shipped and
   its meaning — where a walk may go — is worth keeping distinct from what a run may remove.
+
+## Amendment — poly, and the upstream path working — 2026-08-29
+
+`~/.cache/poly` was in the "not shipped" table above, 21 GB behind hex-named directories that no
+marker could distinguish from anything else. The ADR's answer was that the fix belonged upstream:
+
+> Any of these becomes a shippable entry the day its tool writes a `CACHEDIR.TAG`, and the entry
+> then needs no special case.
+
+poly 0.21.12 writes one, at the root of its cache home and only when poly owns that directory —
+a `POLY_CACHE_HOME` the user pointed somewhere of their own is deliberately left untagged, since
+a tag there would tell every backup tool on the machine to skip whatever else is in it. voom
+gained a `poly` entry the same day, proven by `CACHEDIR.TAG` and needing no special case, exactly
+as predicted. Measured immediately afterwards on the machine that motivated all of this: **22.56
+GB**, reachable and opt-in.
+
+alef followed the same path independently: `CACHEDIR.TAG` across sixteen creation sites behind
+one helper, which retires the `Ancestor(6)` climb for `.alef/` altogether in favour of an `Inside`
+anchor that no repository layout can defeat.
+
+Two things worth keeping from how that went:
+
+- **The tag is worth more to the tool than to voom.** Both authors took it for `tar
+  --exclude-caching`, `rsync --exclude-tag`, Borg and restic, which honour the tag without
+  knowing anything about the tool. voom's use of it is a consequence, not the reason.
+- **Three tools converged on the same rule for an existing tag: never rewrite it, warn and move
+  on.** The specification does not say, and voom, poly and alef each arrived there separately —
+  a file whose purpose is to be read by tools nobody enumerated is not one to overwrite.
+
+The bar in the section above is unchanged. sccache, zig, NuGet and Maven stay out until their
+authors say the same thing in the same place.

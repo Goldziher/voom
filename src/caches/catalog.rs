@@ -150,6 +150,14 @@ pub static CACHES: &[Cache] = &[
         note: "Fetched modules and analysis caches. Refetched on the next run; needs network.",
     },
     Cache {
+        id: "poly",
+        name: "poly cache",
+        locations: &[".cache/poly", "Library/Caches/poly", "AppData/Local/poly"],
+        markers: &["CACHEDIR.TAG"],
+        note: "Lint and format results, hook staged snapshots and fetched remote sources. \
+               Rebuilt on the next run.",
+    },
+    Cache {
         id: "alef-global",
         name: "alef global cache",
         locations: &[".cache/alef"],
