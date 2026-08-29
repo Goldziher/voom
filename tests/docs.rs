@@ -159,12 +159,16 @@ fn every_marker_the_readme_advertises_is_a_real_marker() {
     }
 }
 
-/// Every `voom.toml` example in the README, parsed by the real loader.
+/// Every `voom.toml` example in the documentation, parsed by the real loader.
+///
+/// Reads the whole set, not just the README: most of the schema lives in
+/// `docs/configuration.md` now, and an example that stopped being checked the moment it moved
+/// would be the worst possible outcome of tidying the front page.
 ///
 /// The blocks are identified by what they are *not*: the git-hooks section carries a
 /// `[[hooks.sources]]` example, which is poly's schema rather than voom's.
 fn readme_config_examples() -> Vec<String> {
-    let readme = include_str!("../README.md");
+    let readme = documentation();
     let mut blocks = Vec::new();
     let mut current: Option<String> = None;
     for line in readme.lines() {
@@ -386,7 +390,19 @@ fn no_surface_hard_codes_an_ecosystem_count() {
     );
 }
 
-/// Every long flag the CLI accepts must appear in the README.
+/// The documentation set: the README plus everything under `docs/`.
+///
+/// Reference material lives in `docs/` so the README can stay a README, but "documented" means
+/// documented *somewhere a reader is pointed at* — checking only the front page would have made
+/// moving a table into `docs/` look like deleting it.
+fn documentation() -> String {
+    let mut all = include_str!("../README.md").to_owned();
+    all.push_str(include_str!("../docs/reference.md"));
+    all.push_str(include_str!("../docs/configuration.md"));
+    all
+}
+
+/// Every long flag the CLI accepts must appear in the documentation.
 ///
 /// The README drifted a full version silently: `--summary`, `--color`, `--disable`, `--config`,
 /// `--exclude` as a flag and `git-prune --timeout` were all undocumented while the ecosystem
@@ -399,15 +415,15 @@ fn no_surface_hard_codes_an_ecosystem_count() {
 fn every_flag_the_cli_accepts_is_documented() {
     use clap::CommandFactory;
 
-    let readme = include_str!("../README.md");
+    let readme = documentation();
     let command = voom::cli::Cli::command();
     let mut missing = Vec::new();
 
-    collect_undocumented_flags(&command, readme, &mut missing);
+    collect_undocumented_flags(&command, &readme, &mut missing);
 
     assert!(
         missing.is_empty(),
-        "the CLI accepts these and the README never mentions them:\n  {}",
+        "the CLI accepts these and nothing in the README or docs/ mentions them:\n  {}",
         missing.join("\n  ")
     );
 }
@@ -418,7 +434,7 @@ fn every_flag_the_cli_accepts_is_documented() {
 fn every_subcommand_is_documented() {
     use clap::CommandFactory;
 
-    let readme = include_str!("../README.md");
+    let readme = documentation();
     let missing: Vec<String> = voom::cli::Cli::command()
         .get_subcommands()
         .map(clap::Command::get_name)
@@ -455,7 +471,7 @@ fn collect_undocumented_flags(command: &clap::Command, readme: &str, missing: &m
 /// error, and prose naming the tools does not tell them that.
 #[test]
 fn every_cache_id_is_documented() {
-    let readme = include_str!("../README.md");
+    let readme = documentation();
     let missing: Vec<&str> = voom::caches::CACHES
         .iter()
         .map(|cache| cache.id)
