@@ -205,11 +205,14 @@ fn artifact_line(entry: &Entry, base: Option<&Path>, forced: bool) -> Line {
             // Shortened against the same base as the path. An `include` pattern is usually
             // the path it matched, so printing it in full puts the longest string on the line
             // twice and undoes the width this layout exists for.
+            // "included by name" rather than "from config": the same provenance now also
+            // comes from `--include`, and telling a reader to go looking in a `voom.toml`
+            // that has nothing to do with it is worse than saying less.
             Provenance::Included { pattern } => {
                 let shown = shorten(Path::new(pattern), base);
                 (shown != shorten(&entry.path, base))
-                    .then(|| format!("from config `{shown}`"))
-                    .or_else(|| Some("from config".to_owned()))
+                    .then(|| format!("included by `{shown}`"))
+                    .or_else(|| Some("included by name".to_owned()))
             }
             Provenance::Anchored { .. } => None,
         },
@@ -438,7 +441,7 @@ mod tests {
         let text = render_to_string(&result, HumanOptions::default());
 
         assert!(text.contains("unanchored"), "{text}");
-        assert!(text.contains("from config"), "{text}");
+        assert!(text.contains("included by"), "{text}");
     }
 
     fn mixed() -> RunResult {

@@ -19,17 +19,35 @@ All notable changes to this project are documented here. The format follows
   evidence than a sibling file, not weaker, so this extends ADR 0002 rather than bending it.
   A candidate anchored `Inside` with no marker is left alone exactly as before, and reports
   `no_inner_marker` so the reader knows where to look.
-- **`alef` and `basemind` catalog entries.** Both on by default: they are our own tools, we
-  know nothing in those directories is authored, and the tool rebuilds them. `alef` anchors
-  `Ancestor(6)` on `alef.toml`, `basemind` anchors `Inside` on the `agent-id` file it writes
-  into every index — measured, not guessed: `basemind.toml` was beside only 3 of 13 real
-  directories and `agent-id` was in all 13. On one workstation this reaches 69 `.alef/`
-  directories and 13 `.basemind/` ones that no flag could previously touch.
+- **`alef` and `basemind` catalog entries.** `alef` anchors `Ancestor(6)` on `alef.toml` and
+  is on by default — it holds snippet build output that alef rebuilds in seconds. `basemind`
+  anchors `Inside` on the `agent-id` file it writes into every index, and is **off by default**:
+  the proof is good, but rebuilding an index means re-reading and re-embedding a whole
+  repository, so it comes out only when you name `basemind.basemind`. Both anchors are
+  measured, not guessed — `basemind.toml` sat beside only 3 of 13 real indexes while `agent-id`
+  was inside all 13. On one workstation this reaches 69 `.alef/` directories that no flag could
+  previously touch.
 - **`rust.vendor`.** `vendor/` is pruned by the walker as a dependency directory, and the
   dependency-artifact list had entries for Go and PHP but none for Rust — so a `cargo vendor`
   tree was unreachable by any flag, not merely off by default. 1.41 GB of one on the machine
   this was found on. Off by default with a note, like every other dependency directory, and
   reached by `--clean-dependencies` or `--enable rust.vendor`.
+- **`--include <GLOB>`**, the command-line spelling of the `voom.toml` key. `include` was
+  config-only while `--exclude` had a flag, so build output the catalog does not know about —
+  a tool's per-project cache, an unconventional target directory — could not be reached from
+  the command line at all. Same precedence as the config key: it outranks every prune, cannot
+  reach inside one, and `--exclude` still beats it.
+
+### Fixed
+
+- **A relative `--exclude` pattern silently did nothing.** `--exclude build` compiled to a glob
+  that could never match a path the walker produces, so voom reported success and swept the
+  directory anyway. Only absolute patterns worked, and nothing said so. Relative flag patterns
+  are now anchored to the tree being swept, the same rule ADR 0004 already states for
+  `voom.toml`. This is a silent failure on the flag whose only job is to protect a path, so
+  check any `--exclude` you rely on: it may not have been doing anything.
+- An artifact taken by `include` said it came "from config" even when a flag named it. It now
+  says `included by \`<pattern>\``.
 
 ### Changed
 

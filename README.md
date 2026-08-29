@@ -300,7 +300,7 @@ Full reasoning in [ADR 0002](adrs/0002-marker-anchored-classification.md) and
 | Terraform | `*.tf` | `.terraform/` |
 | Bazel | `WORKSPACE`, `WORKSPACE.bazel`, `MODULE.bazel` | `bazel-*/` |
 | alef | `alef.toml` | `.alef/`, `.alef-cache/` |
-| basemind | `agent-id` | `.basemind/`‡ |
+| basemind | `agent-id` | `.basemind/`†‡ |
 
 ‡ Proven from *inside*: `agent-id` is the file basemind writes into `.basemind/` when it
 creates the index, so the directory declares itself rather than relying on a sibling config

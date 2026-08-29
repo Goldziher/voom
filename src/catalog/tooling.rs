@@ -26,10 +26,20 @@ pub(super) const ALEF: Ecosystem = Ecosystem {
 // creates the index. A file of that name inside a directory of this name is the tool's own
 // declaration, and it is the only thing that reliably distinguishes the index from a directory
 // somebody else called `.basemind`.
+//
+// Off by default, unlike alef. The proof is just as good; the cost of being right is not. An
+// index is rebuilt by re-reading and re-embedding the whole repository rather than by
+// recompiling it, which is minutes rather than seconds, and `agent-id` and the telemetry log
+// beside it are identity and history rather than derived output — the new index is not the old
+// one. That is the shape `Artifact::off` exists for.
 pub(super) const BASEMIND: Ecosystem = Ecosystem {
     id: "basemind",
     name: "basemind",
     markers: &["agent-id"],
     anchor: Anchor::Inside,
-    artifacts: &[Artifact::on(".basemind/")],
+    artifacts: &[Artifact::off(
+        ".basemind/",
+        "Rebuilding the index means re-reading and re-embedding the whole repository, and the \
+         agent identity and telemetry beside it do not come back.",
+    )],
 };

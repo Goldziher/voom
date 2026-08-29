@@ -200,5 +200,11 @@ Both anchors are measured rather than guessed:
   and the largest was among the other 10. `agent-id` is written whenever an index is created
   and was present in 13 of 13.
 
-Both are `Artifact::on`. The "prefer a false negative" tie-breaker exists for entries whose name
-is also a plausible source directory or whose removal costs a re-download; neither applies here.
+They differ on `default_on`, and the difference is the whole point of that field. `.alef/` is
+`on`: it holds compiled snippet output that alef rebuilds in seconds. `.basemind/` is **`off`**,
+reached only by naming `basemind.basemind`. The proof is just as good — better, since it comes
+from inside — but the cost of acting on it is not: an index is rebuilt by re-reading and
+re-embedding an entire repository, and the `agent-id` and telemetry log beside it are identity
+and history rather than derived output, so the rebuilt index is not the removed one. "Prefer a
+false negative" is not only about whether a directory is *provable*; it is also about what being
+right costs the user, and this is the second kind.

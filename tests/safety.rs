@@ -12,7 +12,7 @@ mod support;
 
 use std::fs;
 
-use support::{options, snapshot};
+use support::{options, options_enabling, snapshot};
 use tempfile::TempDir;
 use voom::delete::Outcome;
 use voom::run::{RunOptions, run};
@@ -402,7 +402,7 @@ fn should_sweep_a_nested_dotnet_artifact_and_stop_at_the_ancestor_bound() {
 /// `Inside` proves a directory from its own contents, so the two ways it can be wrong are
 /// symmetrical: taking one whose marker is only *beside* it, and passing over one whose marker
 /// really is within. The second half is the data-loss case — a `.basemind` somebody wrote by
-/// hand, next to a stray `agent-id` file, must survive.
+/// hand, next to a stray `agent-id` file, must survive even when the spec was asked for.
 #[test]
 fn should_prove_a_basemind_index_only_from_a_marker_inside_it() {
     let root = TempDir::new().unwrap();
@@ -419,16 +419,36 @@ fn should_prove_a_basemind_index_only_from_a_marker_inside_it() {
     fs::write(beside.join("notes.md"), b"mine").unwrap();
     fs::write(root.path().join("handwritten/agent-id"), b"01").unwrap();
 
-    run(&options(root.path())).expect("the run completes");
+    let asked = options_enabling(root.path(), vec!["basemind.basemind".to_owned()]);
+    run(&asked).expect("the run completes");
 
     assert!(
         !proven.exists(),
-        "a .basemind holding its own agent-id is proven and must be swept"
+        "a .basemind holding its own agent-id is proven, and this run asked for it"
     );
     assert!(
         beside.join("notes.md").exists(),
         "a .basemind proven only by a file beside it is not proven — this would be data loss"
     );
+}
+
+/// An index is rebuilt by re-reading and re-embedding a whole repository, so it comes out only
+/// when someone says so. The `Inside` marker being present is not saying so.
+#[test]
+fn should_never_remove_a_basemind_index_without_being_asked() {
+    let root = TempDir::new().unwrap();
+    let index = root.path().join("indexed/.basemind");
+    fs::create_dir_all(&index).unwrap();
+    fs::write(index.join("agent-id"), b"01").unwrap();
+    fs::write(index.join("blob"), b"index").unwrap();
+
+    let result = run(&options(root.path())).expect("the run completes");
+
+    assert!(
+        index.join("blob").exists(),
+        "a proven .basemind is still off by default — only an explicit spec reaches it"
+    );
+    assert!(result.entries.is_empty(), "and a default run must not report it either");
 }
 
 /// The `Ancestor(6)` climb alef needs, at the bound and one past it.

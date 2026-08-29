@@ -202,6 +202,62 @@ fn should_leave_the_same_path_alone_without_the_include() {
     assert_eq!(snapshot(fixture.path()), before);
 }
 
+/// `--include` is the one-shot spelling of the config key, and it has to mean the same thing.
+/// The flag exists because it did not: `include` was `voom.toml`-only while `--exclude` had a
+/// flag, so a directory the catalog does not know about could not be reached from the command
+/// line at all.
+#[test]
+fn should_sweep_the_same_path_whether_include_came_from_a_flag_or_a_file() {
+    let from_file = tree(&["junk/leftovers.o", "keep/leftovers.o", "voom.toml"]);
+    write(from_file.path(), "voom.toml", "include = [\"junk\"]\n");
+    let file_result = run(&options(from_file.path())).expect("the run completes");
+
+    // Absolute, because a flag's relative pattern is resolved against the working directory
+    // the user typed it in — which for a test is the crate root, not the fixture.
+    let from_flag = tree(&["junk/leftovers.o", "keep/leftovers.o"]);
+    let flag_result = run(&RunOptions {
+        flags: Flags {
+            include: vec![from_flag.path().join("junk").display().to_string()],
+            ..Flags::default()
+        },
+        ..options(from_flag.path())
+    })
+    .expect("the run completes");
+
+    assert!(!from_flag.path().join("junk").exists(), "--include names it outright");
+    assert!(from_flag.path().join("keep/leftovers.o").exists(), "and names only it");
+    assert_eq!(
+        flag_result.entries.len(),
+        file_result.entries.len(),
+        "the flag and the config key must find the same thing"
+    );
+    assert_eq!(flag_result.entries[0].ecosystem(), None, "nothing proved it either way");
+}
+
+/// The flag does not get its own precedence: `exclude` outranks `include` wherever each came
+/// from, so a config file's exclusion still holds against a flag that names the same path.
+#[test]
+fn should_let_a_configured_exclude_beat_an_include_flag() {
+    let fixture = tree(&["junk/leftovers.o", "voom.toml"]);
+    write(fixture.path(), "voom.toml", "exclude = [\"junk\"]\n");
+    let before = snapshot(fixture.path());
+
+    let result = run(&RunOptions {
+        flags: Flags {
+            include: vec![fixture.path().join("junk").display().to_string()],
+            ..Flags::default()
+        },
+        ..options(fixture.path())
+    })
+    .expect("the run completes");
+
+    assert!(
+        result.entries.is_empty(),
+        "exclude wins, and the flag does not change that"
+    );
+    assert_eq!(snapshot(fixture.path()), before);
+}
+
 /// An `include` naming a path outside the tree being swept is never walked, so it is never
 /// removed. Containment holds without a special case (ADR 0006).
 #[test]

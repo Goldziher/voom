@@ -35,6 +35,8 @@ pub struct Flags {
     pub keep: KeepPolicy,
     /// `--exclude` globs.
     pub exclude: Vec<String>,
+    /// `--include` globs.
+    pub include: Vec<String>,
     /// `--no-git`, as `Some(false)`. `None` leaves the decision to configuration.
     pub git: Option<bool>,
 }
@@ -278,8 +280,14 @@ impl Resolver {
             }
         }
 
+        // Appended, not layered above: `include` and `exclude` are sets whose members are
+        // independent, and a flag naming one more directory does not contradict a config file
+        // naming another. Precedence between the two lists is settled in the walker, where
+        // `exclude` wins, and is unchanged by where either pattern came from.
         let mut exclude = accumulated.exclude.clone();
-        exclude.extend(self.flags.exclude.iter().cloned());
+        exclude.extend(expand_flag_patterns(&self.flags.exclude, &self.root));
+        let mut include = accumulated.include.clone();
+        include.extend(expand_flag_patterns(&self.flags.include, &self.root));
 
         Ok(Resolved {
             selection,
@@ -288,7 +296,7 @@ impl Resolver {
             keep_by_ecosystem: accumulated.keep_by_ecosystem.clone(),
             rules: accumulated.rules.clone(),
             exclude,
-            include: accumulated.include.clone(),
+            include,
             // Flags last, on the same principle as the selection above: no `voom.toml` below a
             // scan root may turn housekeeping back on for a run that was invoked with
             // `--no-git`. On by default, which is what makes it ordinary behaviour.
@@ -419,6 +427,23 @@ fn keep_from(table: &KeepTable, source: &Path) -> Result<KeepPolicy> {
     })
 }
 
+/// Expands a flag's patterns against the scan root, exactly as a file's are expanded against
+/// the directory that declared it.
+///
+/// Without this a relative `--exclude build` matched nothing at all. The walker offers the paths
+/// it produces in the root's own spelling and `globset` compares against the whole of one, so a
+/// bare `build` could only ever have matched a path that was literally `build`. The flag
+/// reported success and swept the directory anyway — a silent failure on the flag whose entire
+/// job is to protect a path, which is why this is a fix and not a documentation note.
+///
+/// The root rather than the working directory, for two reasons: it is the same rule ADR 0004
+/// already states for config files, so there is one thing to learn; and it is the spelling the
+/// walker will actually produce, so `voom --exclude proj .` and `voom --exclude proj /abs/path`
+/// both work instead of only the second.
+fn expand_flag_patterns(patterns: &[String], root: &Path) -> Vec<String> {
+    patterns.iter().map(|pattern| expand(pattern, root)).collect()
+}
+
 /// Expands `~` and makes a relative pattern relative to the file that declared it.
 ///
 /// ADR 0004 says paths are "relative to this file or absolute", which is what makes a committed
@@ -534,6 +559,44 @@ mod tests {
         let excludes = PatternSet::new([pattern]).expect("the exclude compiles");
         let candidate = home().join("work").join("client-x").join("target");
         assert!(excludes.matched(&candidate).is_some(), "{}", candidate.display());
+    }
+
+    /// The regression test for a flag that reported success and did nothing. The walker offers
+    /// paths in the root's own spelling, so a bare `--exclude build` compiled to a glob that
+    /// could never match one — a silent failure on the flag whose job is to protect a path.
+    #[test]
+    fn should_anchor_a_relative_flag_pattern_to_the_scan_root() {
+        assert_eq!(
+            expand_flag_patterns(&["build".to_owned()], Path::new("/srv/tree")),
+            vec!["/srv/tree/build".to_owned()],
+            "a bare pattern must be anchored, or it matches nothing the walker produces"
+        );
+    }
+
+    /// And anchored in the root's *spelling*, not its canonical form: the walker deliberately
+    /// keeps whatever the user typed, so `voom --exclude proj .` has to work too.
+    #[test]
+    fn should_keep_the_roots_spelling_when_anchoring_a_flag_pattern() {
+        assert_eq!(
+            expand_flag_patterns(&["proj".to_owned()], Path::new(".")),
+            vec!["./proj".to_owned()]
+        );
+    }
+
+    /// An absolute pattern is already anchored and must survive untouched, or every documented
+    /// `--exclude /abs/path` invocation changes meaning.
+    #[test]
+    fn should_leave_an_absolute_flag_pattern_alone() {
+        let absolute = if cfg!(windows) {
+            r"C:\builds\**"
+        } else {
+            "/var/builds/**"
+        };
+
+        assert_eq!(
+            expand_flag_patterns(&[absolute.to_owned()], Path::new("/srv/tree")),
+            vec![absolute.to_owned()]
+        );
     }
 
     /// A `[[paths]]` rule compiles its pattern the same way, and must match the same path.

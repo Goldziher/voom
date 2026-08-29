@@ -257,8 +257,26 @@ pub struct PruneArgs {
     pub clean_dependencies: bool,
 
     /// Never scan these paths. Repeatable.
+    ///
+    /// A relative pattern is relative to the tree being swept, the same rule a `voom.toml`
+    /// follows for its own directory. `~` expands, and a pattern starting `**` is left alone.
     #[arg(long, value_name = "GLOB", help_heading = "Selection")]
     pub exclude: Vec<String>,
+
+    /// Remove these paths whether or not a marker proves them. Repeatable.
+    ///
+    /// The escape hatch for build output the catalog does not know about — a tool's per-project
+    /// cache, an unconventional target directory. A matched path is taken whole and never
+    /// descended into, and it outranks every prune, so an `--include` can name a directory the
+    /// walker would otherwise skip. It cannot reach *inside* one, and `--exclude` still beats
+    /// it.
+    ///
+    /// Relative patterns follow the same rule as `--exclude`: relative to the tree being
+    /// swept. This is the one way to remove a directory nothing proved, so it is worth being
+    /// exact about — the same list can live in `voom.toml` as `include = [...]` once you are
+    /// sure.
+    #[arg(long, value_name = "GLOB", help_heading = "Selection")]
+    pub include: Vec<String>,
 
     /// Also sweep machine-global tool caches and installed toolchains.
     ///
@@ -375,6 +393,7 @@ impl PruneArgs {
             disable: self.disable.clone(),
             keep: self.keep()?,
             exclude: self.exclude.clone(),
+            include: self.include.clone(),
             // Only ever `Some(false)`: the flag can turn housekeeping off, and nothing turns it
             // on, because it is already on.
             git: self.no_git.then_some(false),
