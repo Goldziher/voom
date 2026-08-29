@@ -19,6 +19,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **`--clean-dependencies` did not mention Rust.** Its help text listed composer and Go
+  `vendor/` but not Rust's, which 0.3.0 added to the group — so the flag removed a `cargo
+  vendor` tree that nothing in the interface said it would.
 - **An `Ancestor(n)` climb that ran out of bound is no longer reported as a missing marker.** The
   two are opposite statements and were indistinguishable: "no marker proves it" is a fact about
   the tree, while a climb that stopped short of the scan root is a fact about voom — the
@@ -30,6 +33,16 @@ All notable changes to this project are documented here. The format follows
   0.3.0 catalog entry: alef resolves `.alef/` against the *invoking* directory rather than
   against the config that governs it, so the distance is a property of the consumer's repository
   layout and no value of `n` is universally correct. A loud ceiling beats a larger silent one.
+
+### Changed
+
+- **The README is a README again.** It had accumulated a version-history section, tutorial
+  hand-holding and a version-over-version benchmark table — 742 lines, of which the interface
+  was the smaller part. Cut to 533: history belongs in this file, rationale in `adrs/`, and
+  neither belongs in a README. Nothing documented was lost — every flag, subcommand,
+  configuration key, JSON field and cache id is still there, and the cache table now lists the
+  ids `--clean-caches` actually takes rather than naming the tools in prose. Badges match the
+  accent the sibling repositories use.
 
 ## [0.3.0] - 2026-08-29
 
