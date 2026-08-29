@@ -7,6 +7,21 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
+## [0.4.3] - 2026-08-29
+
+### Changed
+
+- **The demo is a current recording, and a reproducible one.** The GIF in the README had shipped
+  through seven releases showing 0.2.0 output — it predated the cache catalog, `voom suggest`,
+  `--include` and the `alef` and `basemind` entries. The new one is three beats over a real
+  550 MB tree: a `--dry-run`, the same sweep for real reclaiming an identical 493.77 MB, and then
+  `ls` on the `target/` that no `Cargo.toml` proved, still sitting there. A symlinked `target/`
+  is refused rather than followed in both runs.
+
+  `assets/demo.tape` and `scripts/demo-fixture.sh` are committed alongside it. The previous
+  recording was made ad hoc and could not be regenerated, which is most of why it went stale —
+  and it meant the README's central claim could not be checked by anyone but its author.
+
 ## [0.4.2] - 2026-08-29
 
 ### Fixed
