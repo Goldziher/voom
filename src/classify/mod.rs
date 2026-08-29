@@ -231,7 +231,15 @@ impl Classifier {
                     );
                 }
                 (Proof::Missing, true) => record(RANK_NO_MARKER, unproven(id)),
-                (Proof::Missing, false) => record(
+                (Proof::BoundReached(levels), true) => record(
+                    RANK_NO_MARKER,
+                    SkipReason::MarkerOutOfReach {
+                        ecosystem: id.ecosystem().id,
+                        markers: id.ecosystem().markers,
+                        levels,
+                    },
+                ),
+                (Proof::BoundReached(_) | Proof::Missing, false) => record(
                     RANK_UNPROVEN_OPT_IN,
                     SkipReason::NotEnabled {
                         spec: id.spec(),
@@ -268,6 +276,10 @@ impl Classifier {
         let levels = anchor.levels();
         let mut dir = anchor_dir;
         let mut unreadable = false;
+        // Whether the climb ran out of *tree* rather than out of *permission to climb*. The
+        // difference is the whole point: one means nothing above proves it, the other means
+        // voom stopped looking while there was still tree left.
+        let mut exhausted_tree = false;
 
         for _ in 0..=levels {
             let facts = self.facts(dir);
@@ -276,15 +288,27 @@ impl Classifier {
             }
             unreadable |= !facts.readable;
             if dir == root {
+                exhausted_tree = true;
                 break;
             }
-            match dir.parent() {
-                Some(parent) => dir = parent,
-                None => break,
-            }
+            let Some(parent) = dir.parent() else {
+                exhausted_tree = true;
+                break;
+            };
+            dir = parent;
         }
 
-        if unreadable { Proof::Unreadable } else { Proof::Missing }
+        if unreadable {
+            Proof::Unreadable
+        } else if exhausted_tree || levels == 0 {
+            Proof::Missing
+        } else {
+            // Climbed the full bound with the scan root still above. Reported apart from a
+            // plain missing marker because the reader's situation is different and, until now,
+            // indistinguishable: an artifact past the bound is not merely unswept, it looks
+            // exactly like a directory that was never this ecosystem's at all.
+            Proof::BoundReached(levels)
+        }
     }
 
     /// Everything we know about a directory, listing it exactly once per run.
@@ -331,6 +355,8 @@ const RANK_UNREADABLE: u8 = 4;
 enum Proof {
     Found(PathBuf),
     Missing,
+    /// The `Ancestor(n)` climb used all `n` levels and the scan root was still above it.
+    BoundReached(u8),
     Unreadable,
 }
 
@@ -465,8 +491,38 @@ mod tests {
         let fixture = tree(&["App.csproj", "a/b/c/d/obj/"]);
         let classifier = classifier();
         match verdict(&classifier, fixture.path(), "a/b/c/d/obj") {
+            Verdict::Skip(SkipReason::MarkerOutOfReach { ecosystem, levels, .. }) => {
+                assert_eq!(ecosystem, "dotnet");
+                assert_eq!(levels, 3, "and it names the bound it stopped at");
+            }
+            other => panic!("expected an out-of-reach skip four levels down, got {other:?}"),
+        }
+    }
+
+    /// The distinction the previous test rests on: a climb that ran out of *tree* is a plain
+    /// missing marker, and only one that ran out of *bound* is out of reach. Reporting both the
+    /// same way is what made an artifact past the bound indistinguishable from a directory that
+    /// was never this ecosystem's.
+    #[test]
+    fn should_report_a_plain_missing_marker_when_the_climb_reached_the_scan_root() {
+        let fixture = tree(&["a/obj/"]);
+        let classifier = classifier();
+
+        match verdict(&classifier, fixture.path(), "a/obj") {
             Verdict::Skip(SkipReason::NoMarker { ecosystem, .. }) => assert_eq!(ecosystem, "dotnet"),
-            other => panic!("expected a no-marker skip four levels down, got {other:?}"),
+            other => panic!("the root was reached, so nothing above proves it: got {other:?}"),
+        }
+    }
+
+    /// A `Sibling` anchor has no bound to reach — the marker is beside it or it is not.
+    #[test]
+    fn should_never_report_a_sibling_anchor_as_out_of_reach() {
+        let fixture = tree(&["a/b/target/"]);
+        let classifier = classifier();
+
+        match verdict(&classifier, fixture.path(), "a/b/target") {
+            Verdict::Skip(SkipReason::NoMarker { .. }) => {}
+            other => panic!("expected a plain missing marker for a sibling anchor, got {other:?}"),
         }
     }
 

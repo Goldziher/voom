@@ -129,6 +129,25 @@ pub enum SkipReason {
         /// The markers that would have proved it, looked for inside the candidate.
         markers: &'static [&'static str],
     },
+    /// The `Ancestor(n)` climb used its whole bound with the scan root still above it.
+    ///
+    /// Separate from [`NoMarker`](SkipReason::NoMarker) because the two are otherwise
+    /// indistinguishable and mean opposite things. "No marker proves it" is a statement about
+    /// the tree; this is a statement about voom — it stopped looking while there was still tree
+    /// left, so the directory may well be an artifact whose project sits one level further up.
+    ///
+    /// It matters because the failure is silent and safe-directional: an artifact past the
+    /// bound is not merely unswept, it reads exactly like a directory that was never this
+    /// ecosystem's. And no bound is universally right — a cache placed relative to the *invoking*
+    /// directory rather than to its own config can sit arbitrarily far below it.
+    MarkerOutOfReach {
+        /// The ecosystem that would have claimed it.
+        ecosystem: &'static str,
+        /// The markers that would have proved it.
+        markers: &'static [&'static str],
+        /// How many levels the climb was allowed.
+        levels: u8,
+    },
     /// The artifact is off by default, or the ecosystem was not selected.
     NotEnabled {
         /// The `<ecosystem>.<artifact>` spec that would enable it.
@@ -175,6 +194,7 @@ impl SkipReason {
         match self {
             Self::NoMarker { .. } => "no_marker",
             Self::NoInnerMarker { .. } => "no_inner_marker",
+            Self::MarkerOutOfReach { .. } => "marker_out_of_reach",
             Self::NotEnabled { .. } => "not_enabled",
             Self::ToolCache => "tool_cache",
             Self::Excluded { .. } => "excluded",
@@ -193,6 +213,16 @@ impl fmt::Display for SkipReason {
             Self::NoMarker { ecosystem, markers } => {
                 write!(f, "no {ecosystem} marker ({}) proves it", markers.join(", "))
             }
+            Self::MarkerOutOfReach {
+                ecosystem,
+                markers,
+                levels,
+            } => write!(
+                f,
+                "searched {levels} levels above it for a {ecosystem} marker ({}) and stopped \
+                 short of the scan root, so one further up was never looked for",
+                markers.join(", ")
+            ),
             Self::NoInnerMarker { ecosystem, markers } => {
                 write!(f, "nothing inside it ({}) proves it is {ecosystem}", markers.join(", "))
             }
