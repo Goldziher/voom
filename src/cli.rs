@@ -50,6 +50,13 @@ pub enum Command {
         #[command(subcommand)]
         action: ConfigAction,
     },
+    /// Report repeated directories the catalog does not know about.
+    ///
+    /// Ranks by what a `.gitignore` in the tree already names, since somebody has written down
+    /// that those are not source — and prints the `include` line that would sweep each. It
+    /// removes nothing, and it is slower than a sweep: it traverses twice and measures what it
+    /// finds.
+    Suggest(SuggestArgs),
     /// Keep a tree pruned continuously as you work.
     Watch(WatchArgs),
     /// Run git's own housekeeping over every repository in a tree.
@@ -57,6 +64,22 @@ pub enum Command {
     /// An ordinary sweep already does the local half of this; the subcommand is for running it
     /// alone, and for the network step a sweep will not do (`--remotes`).
     GitPrune(GitPruneArgs),
+}
+
+/// `voom suggest` arguments.
+#[derive(Debug, Args)]
+pub struct SuggestArgs {
+    /// Trees to inspect.
+    #[arg(default_value = ".")]
+    pub paths: Vec<PathBuf>,
+
+    /// Do not cross filesystem boundaries.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub one_file_system: bool,
+
+    /// Worker threads.
+    #[arg(short, long, value_name = "N")]
+    pub jobs: Option<usize>,
 }
 
 /// `voom git-prune` arguments.
@@ -489,6 +512,47 @@ pub fn render(result: &RunResult, args: &PruneArgs, out: &mut impl io::Write) ->
         }
         Format::Json => json::render(result, out),
     }
+}
+
+/// Prints what a tree keeps repeating that the catalog does not claim.
+///
+/// # Errors
+///
+/// Propagates write failures.
+pub fn render_suggestions(suggestions: &[crate::suggest::Suggestion], out: &mut impl io::Write) -> io::Result<()> {
+    use owo_colors::OwoColorize;
+
+    if suggestions.is_empty() {
+        return writeln!(
+            out,
+            "Nothing repeated that a `.gitignore` here names and the catalog does not already handle."
+        );
+    }
+
+    for suggestion in suggestions {
+        writeln!(
+            out,
+            "  {:>10}  {}  {}",
+            humansize::format_size(suggestion.bytes, humansize::DECIMAL).bold(),
+            Path::new(&suggestion.name).display(),
+            format_args!("across {} directories", suggestion.paths.len()).dimmed()
+        )?;
+    }
+
+    writeln!(out)?;
+    writeln!(out, "Add to voom.toml what you recognise:")?;
+    writeln!(out)?;
+    for suggestion in suggestions {
+        writeln!(out, "  {}", suggestion.include_line())?;
+    }
+    writeln!(out)?;
+    writeln!(
+        out,
+        "{}",
+        "Read the list before pasting it. A `.gitignore` also lists local configuration and \
+         scratch data, which is why voom suggests rather than sweeps."
+            .dimmed()
+    )
 }
 
 /// Prints the cache table, resolved against this machine.

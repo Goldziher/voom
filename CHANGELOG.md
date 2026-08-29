@@ -44,6 +44,12 @@ All notable changes to this project are documented here. The format follows
   contents are only shard directories (sccache, zig, NuGet, Maven) are deliberately absent:
   see [ADR 0012](adrs/0012-cache-catalog.md), and the fix is for those tools to write a
   `CACHEDIR.TAG`.
+- **`voom suggest`.** Reports the repeated directories in a tree that git already ignores where
+  they sit, ranked by size, with the `voom.toml` `include` line that would sweep each. It
+  removes nothing. The signal is ADR 0005's own premise read backwards: the walker disables
+  every ignore mechanism *because* build artifacts are exactly what `.gitignore` lists, which
+  is what makes the same file the right thing to rank a suggestion by — and never good enough
+  to delete on, since a `.gitignore` also lists local configuration and scratch data.
 - **`--include <GLOB>`**, the command-line spelling of the `voom.toml` key. `include` was
   config-only while `--exclude` had a flag, so build output the catalog does not know about —
   a tool's per-project cache, an unconventional target directory — could not be reached from

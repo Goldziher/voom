@@ -178,6 +178,9 @@ voom --dry-run --clean-caches cargo-registry,uv,go-build ~
 # Sweep something the catalog does not know about
 voom --dry-run --include .mytool-cache ~/projects
 
+# Find out what that something is called
+voom suggest ~/projects
+
 # Also remove dependency directories -- node_modules/, vendor/, deps/, .venv/
 voom --dry-run --clean-dependencies ~
 
@@ -281,6 +284,30 @@ A cache whose contents are only shard directories — sccache, zig, NuGet, Maven
 absent: the marker would prove nothing the path had not already said. [ADR
 0012](adrs/0012-cache-catalog.md) says which those are and how much they hold; the fix is for
 those tools to write a `CACHEDIR.TAG`, not for voom to guess.
+
+### Finding what the catalog does not cover
+
+The catalog covers ecosystems, not the cache your own tooling writes into every package
+directory. `include` has always been the answer to that ([ADR 0004](adrs/0004-configuration.md)) —
+the problem is that you have to know the directory's name to write the line, and nobody looks at
+a tool cache. `voom suggest` walks a tree and reports the repeated directories **git already
+ignores where they sit**, ranked by size, with the line that would sweep each:
+
+```console
+$ voom suggest ~/projects
+     42.70 GB  .alef  across 69 directories
+      3.00 GB  .basemind  across 13 directories
+
+Add to voom.toml what you recognise:
+
+  include = [".alef"]
+  include = [".basemind"]
+```
+
+It removes nothing. The signal is that somebody committed the statement that these are not
+source — which is the same fact that makes voom *disable* `.gitignore` when it sweeps, since a
+`.gitignore` also lists `.env`, editor state and local scratch data. Good enough to rank a
+suggestion, never good enough to delete on.
 
 **4. Six rails you cannot switch off.** Symlinks and Windows reparse points are refused rather than
 followed. Every target is canonicalized. An append-only denylist protects `/`, `$HOME` itself,

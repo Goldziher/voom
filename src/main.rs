@@ -46,6 +46,12 @@ fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
             voom::cli::render_config(path, &cli.prune, &mut out).context("resolving configuration")?;
             Ok(exit::SUCCESS)
         }
+        Some(Command::Suggest(args)) => {
+            let suggestions = voom::suggest::suggest(&args.paths, args.one_file_system, args.jobs);
+            let mut out = anstream::stdout().lock();
+            voom::cli::render_suggestions(&suggestions, &mut out).context("writing suggestions")?;
+            Ok(exit::SUCCESS)
+        }
         Some(Command::Watch(args)) => watch(cli, args),
         Some(Command::GitPrune(args)) => git_prune(cli, args),
         None => prune(cli),
