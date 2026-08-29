@@ -40,8 +40,8 @@ real pipeline · hierarchical TOML · a named tool-cache catalog · watch mode �
 ---
 
 <!-- markdownlint-disable MD013 -->
-<p align="center"><img src="assets/demo.gif" alt="voom previewing a tree with --dry-run, running the same sweep for real, then summarising a whole home directory" width="820"></p>
-<p align="center"><em>A <code>--dry-run</code>, then the same sweep for real — it removes exactly what it showed, because the dry run is the same pipeline with the last step withheld. Then a summary of a whole home directory.</em></p>
+<p align="center"><img src="assets/demo.gif" alt="voom previewing a tree with --dry-run, running the same sweep for real with identical results, and leaving a target directory that no Cargo.toml proved" width="820"></p>
+<p align="center"><em>A <code>--dry-run</code>, then the same sweep for real: identical to the byte, because the dry run is the same pipeline with the last step withheld. A symlinked <code>target/</code> is refused rather than followed — and the <code>target/</code> that no <code>Cargo.toml</code> proved is still there afterwards.</em></p>
 <!-- markdownlint-enable MD013 -->
 
 ---
