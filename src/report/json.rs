@@ -60,19 +60,24 @@ fn entry_value(entry: &Entry) -> Value {
         // What the removal actually freed, which for a partial removal is not `bytes`.
         // `sum(artifacts[].reclaimed_bytes) == totals.bytes` holds for every run.
         "reclaimed_bytes": entry.reclaimed_bytes(),
-        // `source` is the field a consumer branches on. `ecosystem`, `artifact` and
-        // `marker_dir` are null for an unanchored removal, and a hook that treats a null
-        // ecosystem as "unknown" rather than "nothing proved this" would be reading it wrong.
+        // `source` is the field a consumer branches on, and schema 3 added a third value to
+        // it. `ecosystem`, `artifact` and `marker_dir` are null for an unanchored removal, and
+        // a hook that treats a null ecosystem as "unknown" rather than "nothing proved this"
+        // would be reading it wrong. For a cache, `ecosystem` carries the cache id and
+        // `artifact` is null, because no catalog declaration was involved.
         "source": match &entry.finding.provenance {
             Provenance::Anchored { .. } => "marker",
             Provenance::Included { .. } => "config-include",
+            Provenance::Cache { .. } => "cache",
         },
         "marker_dir": match &entry.finding.provenance {
+            // A cache is proven from inside itself, so the marker directory is the artifact —
+            // repeating `path` here would say nothing, and null says "look at the path".
             Provenance::Anchored { marker_dir, .. } => Some(marker_dir.display().to_string()),
-            Provenance::Included { .. } => None,
+            Provenance::Included { .. } | Provenance::Cache { .. } => None,
         },
         "include_pattern": match &entry.finding.provenance {
-            Provenance::Anchored { .. } => None,
+            Provenance::Anchored { .. } | Provenance::Cache { .. } => None,
             Provenance::Included { pattern } => Some(pattern.as_str()),
         },
         "outcome": outcome_value(&entry.outcome),

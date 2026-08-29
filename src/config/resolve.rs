@@ -37,6 +37,8 @@ pub struct Flags {
     pub exclude: Vec<String>,
     /// `--include` globs.
     pub include: Vec<String>,
+    /// `--clean-caches` ids.
+    pub clean_caches: Vec<String>,
     /// `--no-git`, as `Some(false)`. `None` leaves the decision to configuration.
     pub git: Option<bool>,
 }
@@ -60,6 +62,7 @@ struct Accumulated {
     rules: Vec<Rule>,
     exclude: Vec<String>,
     include: Vec<String>,
+    clean_caches: Vec<String>,
     git: Option<bool>,
     sources: Vec<PathBuf>,
 }
@@ -81,6 +84,8 @@ pub struct Resolved {
     pub exclude: Vec<String>,
     /// Paths swept without a marker — explicit user intent (ADR 0002).
     pub include: Vec<String>,
+    /// Machine-global caches this run may remove, by id (ADR 0012). Empty unless asked.
+    pub clean_caches: Vec<String>,
     /// Whether an ordinary sweep runs git housekeeping here (ADR 0011). On unless something
     /// turned it off.
     pub git: bool,
@@ -289,6 +294,15 @@ impl Resolver {
         let mut include = accumulated.include.clone();
         include.extend(expand_flag_patterns(&self.flags.include, &self.root));
 
+        let mut clean_caches = accumulated.clean_caches.clone();
+        clean_caches.extend(self.flags.clean_caches.iter().cloned());
+        clean_caches.sort_unstable();
+        clean_caches.dedup();
+        let unknown = crate::caches::unknown_ids(&clean_caches);
+        if let Some(id) = unknown.first() {
+            return Err(Error::UnknownCache { id: id.clone() });
+        }
+
         Ok(Resolved {
             selection,
             keep: accumulated.keep.narrow(self.flags.keep),
@@ -297,6 +311,7 @@ impl Resolver {
             rules: accumulated.rules.clone(),
             exclude,
             include,
+            clean_caches,
             // Flags last, on the same principle as the selection above: no `voom.toml` below a
             // scan root may turn housekeeping back on for a run that was invoked with
             // `--no-git`. On by default, which is what makes it ordinary behaviour.
@@ -344,6 +359,11 @@ fn apply(accumulated: &mut Accumulated, layer: &Layer) -> Result<()> {
     }
     for pattern in &layer.file.include {
         accumulated.include.push(expand(pattern, dir));
+    }
+    // Ids rather than paths, so nothing is expanded and nothing is per-directory: a cache is
+    // machine-global and its location comes from the table, not from where the file sits.
+    for id in &layer.file.caches.enable {
+        accumulated.clean_caches.push(id.clone());
     }
 
     for rule in &layer.file.paths {

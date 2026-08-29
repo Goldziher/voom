@@ -59,7 +59,7 @@ expression: document_for_tests()
   "roots": [
     "/projects"
   ],
-  "schema_version": 2,
+  "schema_version": 3,
   "skipped": [
     {
       "detail": "no rust marker (Cargo.toml) proves it",

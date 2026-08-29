@@ -34,6 +34,11 @@ fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
             voom::cli::render_catalog(&mut out).context("writing the catalog")?;
             Ok(exit::SUCCESS)
         }
+        Some(Command::Caches) => {
+            let mut out = anstream::stdout().lock();
+            voom::cli::render_caches(&mut out).context("writing the cache table")?;
+            Ok(exit::SUCCESS)
+        }
         Some(Command::Config {
             action: ConfigAction::Show { path },
         }) => {

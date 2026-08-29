@@ -98,10 +98,27 @@ impl Visitor<'_> {
             return WalkState::Skip;
         }
 
+        // A named cache is checked before the blanket skip below, so `--clean-caches uv`
+        // reaches `~/.cache/uv` without `--caches` having to open every cache location at
+        // once. The marker still has to prove it (ADR 0012): the id says which directory to
+        // look at, never that it may go.
+        if is_dir && let Some(cache) = self.options.caches.removable(path) {
+            self.visit_named_cache(path, cache, sender);
+            // Skipped either way: a cache is an indivisible unit like any other artifact, and
+            // one that failed its marker check is still somewhere a walk must not wander.
+            return WalkState::Skip;
+        }
+
         // After `exclude`, which ADR 0004 makes absolute, and before anything that could
         // classify: an installed toolchain is shaped exactly like a project, so the classifier
         // would prove it correctly and take it (ADR 0001).
         if is_dir && self.options.caches.contains(path) {
+            // A named cache underneath is still reached, by naming rather than by walking.
+            // The prune below is unchanged, so nothing else in here is enumerated or
+            // classified — see `CacheRoots::removable_inside`.
+            for (cache_path, cache) in self.options.caches.removable_inside(path) {
+                self.visit_named_cache(cache_path, cache, sender);
+            }
             self.note_skip(sender, path, SkipReason::ToolCache);
             return WalkState::Skip;
         }
@@ -212,6 +229,33 @@ impl Visitor<'_> {
     }
 
     /// Records a passed-over candidate, keeping only the count unless detail was asked for.
+    /// Emits one named cache as a finding, or as the reason it was not one.
+    ///
+    /// The id says which directory to look at; the marker says whether it may go (ADR 0012). A
+    /// location that does not exist on this machine says nothing at all — the table is written
+    /// for every machine, and most entries are absent on any given one.
+    fn visit_named_cache(&self, path: &Path, cache: &'static crate::caches::Cache, sender: &mpsc::Sender<Message>) {
+        if !path.is_dir() {
+            return;
+        }
+        if cache.proven_in(path) {
+            let finding = Finding {
+                path: path.to_path_buf(),
+                provenance: Provenance::Cache { cache },
+            };
+            let _ = sender.send(Message::Found(Box::new(finding)));
+        } else {
+            self.note_skip(
+                sender,
+                path,
+                SkipReason::NoInnerMarker {
+                    ecosystem: cache.id,
+                    markers: cache.markers,
+                },
+            );
+        }
+    }
+
     fn note_skip(&self, sender: &mpsc::Sender<Message>, path: &Path, reason: SkipReason) {
         let message = if self.options.collect_skips {
             Message::Skipped(Box::new(Skipped {

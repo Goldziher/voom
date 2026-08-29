@@ -20,8 +20,12 @@
 //! See `adrs/0001-mission-and-scope.md`, which put these out of scope for v1 and floated the
 //! opt-in flag that now exists.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+
+mod catalog;
+
+pub use catalog::{CACHES, Cache};
 
 /// Directories, relative to the user's home, that a walk never descends into.
 ///
@@ -31,7 +35,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Entries are matched as whole directories, not prefixes, and each is checked against the real
 /// filesystem when a scan starts — a name that does not exist on this machine costs nothing.
-const CACHE_DIRS: &[&str] = &[
+pub(crate) const CACHE_DIRS: &[&str] = &[
     // Rust
     ".cargo/bin",
     ".cargo/git",
@@ -111,6 +115,9 @@ const CACHE_DIRS: &[&str] = &[
 #[derive(Debug, Default)]
 pub struct CacheRoots {
     paths: HashSet<PathBuf>,
+    /// The removable caches among them, and which entry each is. Only populated for entries
+    /// the run actually enabled, so a default sweep builds nothing extra.
+    removable: HashMap<PathBuf, &'static Cache>,
 }
 
 impl CacheRoots {
@@ -120,18 +127,28 @@ impl CacheRoots {
     /// determined, or when the root cannot be canonicalized — the caller has already reported a
     /// root it cannot resolve, and an empty set means "skip nothing", never "skip everything".
     #[must_use]
-    pub fn for_root(root: &Path, enabled: bool) -> Self {
-        if enabled {
-            return Self::default();
-        }
+    pub fn for_root(root: &Path, enabled: bool, clean: &[String]) -> Self {
         let Some(home) = dirs::home_dir() else {
             return Self::default();
         };
-        Self::under(&home, root)
+        let mut resolved = if enabled {
+            Self::default()
+        } else {
+            Self::under(&home, root)
+        };
+        resolved.removable = removable_under(&home, root, clean);
+        resolved
     }
 
     /// The resolution itself, with the home directory passed in so tests can build one under a
     /// `TempDir` rather than reaching for the real `$HOME`.
+    #[cfg(test)]
+    pub(crate) fn under_with(home: &Path, root: &Path, clean: &[String]) -> Self {
+        let mut resolved = Self::under(home, root);
+        resolved.removable = removable_under(home, root, clean);
+        resolved
+    }
+
     pub(crate) fn under(home: &Path, root: &Path) -> Self {
         // Both sides are canonicalized before they are compared. Mixing the two forms silently
         // answers "no" to every question on any machine where the home directory or the root is
@@ -155,7 +172,10 @@ impl CacheRoots {
             .map(|relative| root.join(relative))
             .collect();
 
-        Self { paths }
+        Self {
+            paths,
+            removable: HashMap::new(),
+        }
     }
 
     /// Whether `path` is one of the cache directories to skip.
@@ -164,11 +184,91 @@ impl CacheRoots {
         !self.paths.is_empty() && self.paths.contains(path)
     }
 
+    /// The cache entry this path is, if the run enabled one that lives here.
+    ///
+    /// Checked before [`contains`](Self::contains) in the walker, so naming a cache reaches it
+    /// without `--caches` having to open the location up wholesale.
+    #[must_use]
+    pub fn removable(&self, path: &Path) -> Option<&'static Cache> {
+        if self.removable.is_empty() {
+            return None;
+        }
+        self.removable.get(path).copied()
+    }
+
+    /// The enabled caches that live strictly *inside* a directory the walk is about to prune.
+    ///
+    /// Most cache locations sit under a broader skip — `~/.cache/uv` under `~/.cache`,
+    /// `~/.npm/_cacache` under `~/.npm`, everything in `~/Library/Caches` — so the prune fires
+    /// at the ancestor and the walk never arrives. Opening the ancestor up instead would let
+    /// the classifier loose inside it, which is the whole thing [`CACHE_DIRS`] exists to
+    /// prevent: an installed pnpm really does sit beside a real `package.json`.
+    ///
+    /// So the walker does here what it already does for an artifact declared inside a pruned
+    /// dependency directory — constructs the one path it was told about, and still prunes
+    /// everything else. No traversal, one `read_dir` of the cache itself, and only when the run
+    /// named it.
+    #[must_use]
+    pub fn removable_inside(&self, dir: &Path) -> Vec<(&Path, &'static Cache)> {
+        if self.removable.is_empty() {
+            return Vec::new();
+        }
+        self.removable
+            .iter()
+            .filter(|(path, _)| path.as_path() != dir && path.starts_with(dir))
+            .map(|(path, cache)| (path.as_path(), *cache))
+            .collect()
+    }
+
     /// Whether there is anything to skip at all.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.paths.is_empty()
     }
+}
+
+/// Resolves the enabled caches' locations under `root`, in the root's own spelling.
+///
+/// The same re-spelling `under` does and for the same reason: the walker compares against the
+/// path it produced, not a canonical one. A location that does not exist on this machine, or
+/// lies outside this root, simply does not appear.
+fn removable_under(home: &Path, root: &Path, clean: &[String]) -> HashMap<PathBuf, &'static Cache> {
+    if clean.is_empty() {
+        return HashMap::new();
+    }
+    let (Ok(home), Ok(canonical_root)) = (home.canonicalize(), root.canonicalize()) else {
+        return HashMap::new();
+    };
+
+    let mut resolved = HashMap::new();
+    for cache in CACHES {
+        if !clean.iter().any(|id| id == cache.id) {
+            continue;
+        }
+        for location in cache.locations {
+            let Ok(absolute) = home.join(location).canonicalize() else {
+                continue;
+            };
+            let Ok(relative) = absolute.strip_prefix(&canonical_root) else {
+                continue;
+            };
+            if relative.components().next().is_none() {
+                continue;
+            }
+            resolved.insert(root.join(relative), cache);
+        }
+    }
+    resolved
+}
+
+/// The ids in `clean` that no entry declares, so a typo is an error rather than a silent no-op.
+#[must_use]
+pub fn unknown_ids(clean: &[String]) -> Vec<String> {
+    clean
+        .iter()
+        .filter(|id| !CACHES.iter().any(|cache| cache.id == **id))
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
@@ -237,7 +337,7 @@ mod tests {
     #[test]
     fn should_skip_nothing_when_caches_are_enabled() {
         let home = home(&[".cargo/registry"]);
-        assert!(CacheRoots::for_root(home.path(), true).is_empty());
+        assert!(CacheRoots::for_root(home.path(), true, &[]).is_empty());
     }
 
     /// A cache root that does not exist on this machine must cost nothing and skip nothing.

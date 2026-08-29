@@ -32,6 +32,18 @@ All notable changes to this project are documented here. The format follows
   tree was unreachable by any flag, not merely off by default. 1.41 GB of one on the machine
   this was found on. Off by default with a note, like every other dependency directory, and
   reached by `--clean-dependencies` or `--enable rust.vendor`.
+- **A cache catalog: `voom caches` and `--clean-caches <ids>`.** `--caches` promised to sweep
+  machine-global tool caches and reached 0.25% of them — 252 MB out of 103 GB across
+  `~/.cache`, `~/Library/Caches`, `~/.cargo` and `~/.rustup` — because it only re-opens the
+  *walk* and the classifier then still wants a marker a cache does not have beside it. Fifteen
+  named locations can now be removed outright: cargo's registry and git checkouts, uv, Gradle,
+  the Go build and module caches, npm, pnpm, pub, deno and alef's global cache. Each is proven
+  by a marker the tool wrote *inside* it — most often the cross-tool `CACHEDIR.TAG` — never by
+  its path. None is on by default, none is reachable without naming its id, and every deletion
+  rail applies unchanged. 41.6 GB reachable on the machine this came from. Caches whose
+  contents are only shard directories (sccache, zig, NuGet, Maven) are deliberately absent:
+  see [ADR 0012](adrs/0012-cache-catalog.md), and the fix is for those tools to write a
+  `CACHEDIR.TAG`.
 - **`--include <GLOB>`**, the command-line spelling of the `voom.toml` key. `include` was
   config-only while `--exclude` had a flag, so build output the catalog does not know about —
   a tool's per-project cache, an unconventional target directory — could not be reached from
@@ -52,6 +64,9 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 
 - `Anchor` is now `#[non_exhaustive]`, matching every other public enum in the crate.
+- **JSON `schema_version` is 3.** The `source` field gained the value `"cache"`, which no
+  version-2 consumer handles. For a cache entry `ecosystem` carries the cache id and `artifact`
+  is null, since no catalog declaration was involved.
 
 ## [0.2.0] - 2026-08-28
 

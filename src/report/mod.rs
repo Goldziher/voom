@@ -28,7 +28,7 @@ use crate::scan::{Skipped, WalkFailure};
 /// `totals.bytes` now answers a different question for the same tree: every byte the run freed,
 /// rather than only the bytes of artifacts that are entirely gone. Since the break was being
 /// spent, `reason` also became specific on a failure instead of always `removal_failed`.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Process exit codes (ADR 0007). Distinct codes let a hook branch without parsing text.
 pub mod exit {

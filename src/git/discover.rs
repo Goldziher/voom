@@ -71,7 +71,7 @@ pub(super) fn repositories(options: &GitPruneOptions) -> Vec<PathBuf> {
 }
 
 fn walk(root: &Path, options: &GitPruneOptions, into: &mut Vec<PathBuf>) {
-    let caches = CacheRoots::for_root(root, options.caches);
+    let caches = CacheRoots::for_root(root, options.caches, &[]);
     // Shared by reference: every worker asks the same set, and `&CacheRoots` is `Copy`, which is
     // what lets the per-thread visitor be a `move` closure without cloning the set per thread.
     let caches = &caches;

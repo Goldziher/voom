@@ -39,6 +39,11 @@ pub enum Command {
     /// This is generated from the same table the classifier reads, so it cannot drift from
     /// what voom will actually do.
     Catalog,
+    /// Print the machine-global tool caches `--clean-caches` can remove.
+    ///
+    /// Generated from the same table the walker reads, and annotated with whether each
+    /// location exists on this machine and whether its marker is there to prove it.
+    Caches,
     /// Inspect configuration.
     Config {
         /// What to show.
@@ -278,6 +283,16 @@ pub struct PruneArgs {
     #[arg(long, value_name = "GLOB", help_heading = "Selection")]
     pub include: Vec<String>,
 
+    /// Remove these named machine-global tool caches. Repeatable, or comma-separated.
+    ///
+    /// Each is proven the way everything else is — by a marker the tool wrote inside the
+    /// directory, at a location that names the tool — and none is ever on by default. Run
+    /// `voom caches` for the table, what each one costs to lose, and whether it exists here.
+    ///
+    /// Naming a cache reaches it on its own: `--caches` is not also needed.
+    #[arg(long, value_name = "IDS", value_delimiter = ',', help_heading = "Selection")]
+    pub clean_caches: Vec<String>,
+
     /// Also sweep machine-global tool caches and installed toolchains.
     ///
     /// Skipped by default: `~/.cargo/registry`, `~/.pyenv`, `~/google-cloud-sdk` and friends are
@@ -394,6 +409,7 @@ impl PruneArgs {
             keep: self.keep()?,
             exclude: self.exclude.clone(),
             include: self.include.clone(),
+            clean_caches: self.clean_caches.clone(),
             // Only ever `Some(false)`: the flag can turn housekeeping off, and nothing turns it
             // on, because it is already on.
             git: self.no_git.then_some(false),
@@ -473,6 +489,50 @@ pub fn render(result: &RunResult, args: &PruneArgs, out: &mut impl io::Write) ->
         }
         Format::Json => json::render(result, out),
     }
+}
+
+/// Prints the cache table, resolved against this machine.
+///
+/// # Errors
+///
+/// Propagates write failures.
+pub fn render_caches(out: &mut impl io::Write) -> io::Result<()> {
+    use owo_colors::OwoColorize;
+
+    let home = dirs::home_dir();
+    for cache in crate::caches::CACHES {
+        writeln!(out, "{} {}", cache.name.bold(), format_args!("({})", cache.id).dimmed())?;
+        for location in cache.locations {
+            // The state is resolved against this machine rather than described in the
+            // abstract, because the question a reader actually has is whether the entry is
+            // worth naming *here* — and "present but unproven" is a real answer that a table
+            // of paths alone could not give.
+            let resolved = home.as_ref().map(|home| home.join(location));
+            let state = match resolved.as_deref() {
+                Some(path) if !path.is_dir() => "not on this machine".dimmed().to_string(),
+                Some(path) if cache.proven_in(path) => "present".green().to_string(),
+                Some(_) => "present, but no marker proves it".yellow().to_string(),
+                None => "home directory unknown".dimmed().to_string(),
+            };
+            writeln!(out, "  ~/{location}  {state}")?;
+        }
+        writeln!(out, "  markers: {} (inside)", cache.markers.join(", "))?;
+        writeln!(out, "  {}", cache.note.dimmed())?;
+        writeln!(out)?;
+    }
+    writeln!(
+        out,
+        "None of these is ever removed by default. Name one to remove it: `--clean-caches <id>`,"
+    )?;
+    writeln!(
+        out,
+        "or `[caches] enable = [\"<id>\"]` in voom.toml. A marker still has to prove it."
+    )?;
+    writeln!(
+        out,
+        "{}",
+        "A cache is only reachable when it lies under the tree being swept.".dimmed()
+    )
 }
 
 /// Prints the built-in catalog.

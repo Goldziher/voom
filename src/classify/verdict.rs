@@ -56,6 +56,16 @@ pub enum Provenance {
         /// The `include` pattern that matched.
         pattern: String,
     },
+    /// A named machine-global tool cache, proved by a marker the tool wrote inside it.
+    ///
+    /// ADR 0012's route. Distinct from `Anchored` because nothing in the ecosystem catalog is
+    /// involved — the evidence is a location that names the tool plus its own declaration —
+    /// and distinct from `Included` because the user named a *cache*, not a path, and voom
+    /// still had to prove it before removing anything.
+    Cache {
+        /// The entry that claimed it.
+        cache: &'static crate::caches::Cache,
+    },
 }
 
 /// An artifact voom is entitled to remove.
@@ -73,14 +83,22 @@ impl Finding {
     pub fn artifact(&self) -> Option<ArtifactId> {
         match &self.provenance {
             Provenance::Anchored { artifact, .. } => Some(*artifact),
-            Provenance::Included { .. } => None,
+            Provenance::Cache { .. } | Provenance::Included { .. } => None,
         }
     }
 
-    /// The ecosystem that claimed it, if one did.
+    /// The ecosystem that claimed it, or the cache entry that did.
+    ///
+    /// A cache reports its own id (`cargo-registry`, `uv`) in the same column, because to a
+    /// reader scanning the report the question is the same one — what kind of thing was this —
+    /// and the answer is equally definite.
     #[must_use]
     pub fn ecosystem(&self) -> Option<&'static str> {
-        self.artifact().map(|id| id.ecosystem().id)
+        match &self.provenance {
+            Provenance::Anchored { artifact, .. } => Some(artifact.ecosystem().id),
+            Provenance::Cache { cache } => Some(cache.id),
+            Provenance::Included { .. } => None,
+        }
     }
 }
 

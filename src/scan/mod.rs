@@ -347,6 +347,89 @@ mod tests {
     }
 
     /// The same tree with `--caches`, which is the whole point of the flag.
+    /// A named cache is proven the way everything else is. The location says which directory
+    /// to look at; the marker inside says whether it may go. Without the marker it stays, and
+    /// this is the data-loss regression test for the whole cache table.
+    #[test]
+    fn should_take_a_named_cache_only_when_its_marker_is_inside_it() {
+        let fixture = tree(&[
+            ".npm/_cacache/content-v2/blob",
+            ".npm/_cacache/index-v5/entry",
+            ".cargo/registry/src/crate.rs",
+        ]);
+
+        let scan = scan(
+            &[fixture.path().to_path_buf()],
+            &classifier(),
+            &ScanOptions {
+                // `.npm/_cacache` has both its markers; `.cargo/registry` has no CACHEDIR.TAG.
+                caches: CacheRoots::under_with(
+                    fixture.path(),
+                    fixture.path(),
+                    &["npm".to_owned(), "cargo-registry".to_owned()],
+                ),
+                ..verbose()
+            },
+        );
+
+        assert_eq!(
+            found(&scan, fixture.path()),
+            vec![".npm/_cacache".to_owned()],
+            "the proven cache is taken and the unproven one is not"
+        );
+        assert!(
+            scan.skips.iter().any(|skipped| skipped.path.ends_with("registry")
+                && matches!(skipped.reason, SkipReason::NoInnerMarker { .. })),
+            "and the unproven one says why: {:?}",
+            scan.skips
+        );
+    }
+
+    /// Naming a cache reaches it through the ancestor that would otherwise prune it — without
+    /// opening that ancestor up, which is what `CACHE_DIRS` exists to prevent.
+    #[test]
+    fn should_reach_a_named_cache_inside_a_pruned_ancestor() {
+        let fixture = tree(&[
+            ".npm/_cacache/content-v2/blob",
+            // A project shape elsewhere under the same pruned ancestor. Reaching the cache must
+            // not also let the classifier loose on this.
+            ".npm/_npx/installed/package.json",
+            ".npm/_npx/installed/dist/bundle.js",
+        ]);
+
+        let scan = scan(
+            &[fixture.path().to_path_buf()],
+            &classifier(),
+            &ScanOptions {
+                caches: CacheRoots::under_with(fixture.path(), fixture.path(), &["npm".to_owned()]),
+                ..verbose()
+            },
+        );
+
+        assert_eq!(
+            found(&scan, fixture.path()),
+            vec![".npm/_cacache".to_owned()],
+            "the named cache, and nothing else inside the pruned ancestor"
+        );
+    }
+
+    /// The negative: the same tree with nothing named leaves every cache alone.
+    #[test]
+    fn should_leave_every_cache_alone_when_none_is_named() {
+        let fixture = tree(&[".npm/_cacache/content-v2/blob", ".npm/_cacache/index-v5/entry"]);
+
+        let scan = scan(
+            &[fixture.path().to_path_buf()],
+            &classifier(),
+            &ScanOptions {
+                caches: CacheRoots::under_with(fixture.path(), fixture.path(), &[]),
+                ..verbose()
+            },
+        );
+
+        assert!(scan.findings.is_empty(), "{:?}", found(&scan, fixture.path()));
+    }
+
     #[test]
     fn should_descend_into_a_tool_cache_when_asked_to() {
         let fixture = tree(&[
@@ -356,7 +439,7 @@ mod tests {
             "project/dist/bundle.js",
         ]);
         let options = ScanOptions {
-            caches: CacheRoots::for_root(fixture.path(), true),
+            caches: CacheRoots::for_root(fixture.path(), true, &[]),
             ..verbose()
         };
 

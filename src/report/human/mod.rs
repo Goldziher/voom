@@ -214,7 +214,10 @@ fn artifact_line(entry: &Entry, base: Option<&Path>, forced: bool) -> Line {
                     .then(|| format!("included by `{shown}`"))
                     .or_else(|| Some("included by name".to_owned()))
             }
-            Provenance::Anchored { .. } => None,
+            // A cache says nothing here either: the ecosystem column already carries its id,
+            // and the note about what removing it costs belongs to `voom caches` rather than
+            // to every line of every report.
+            Provenance::Anchored { .. } | Provenance::Cache { .. } => None,
         },
     };
     let ecosystem = entry.ecosystem();

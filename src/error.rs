@@ -55,6 +55,16 @@ pub enum Error {
         name: String,
     },
 
+    /// A name given to `--clean-caches` that the cache table does not answer to.
+    ///
+    /// Rejected for the same reason as an unknown ecosystem: a mistyped id would otherwise
+    /// remove nothing and report success, which is indistinguishable from an empty cache.
+    #[error("`{id}` is not a known cache — run `voom caches` to see the table")]
+    UnknownCache {
+        /// What was asked for.
+        id: String,
+    },
+
     /// A duration string in configuration or on the command line would not parse.
     ///
     /// Never silently defaulted: a keep policy is a safety guard, and one the user thought they

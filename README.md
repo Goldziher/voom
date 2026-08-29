@@ -172,6 +172,12 @@ voom --force ~
 # Include tool caches and installed toolchains, which are skipped by default
 voom --dry-run --caches ~
 
+# Remove named machine-global tool caches -- `voom caches` lists them
+voom --dry-run --clean-caches cargo-registry,uv,go-build ~
+
+# Sweep something the catalog does not know about
+voom --dry-run --include .mytool-cache ~/projects
+
 # Also remove dependency directories -- node_modules/, vendor/, deps/, .venv/
 voom --dry-run --clean-dependencies ~
 
@@ -258,6 +264,23 @@ this tree's build output. An installed pnpm under `~/.cache/node/corepack` sits 
 location draws the line a marker cannot. On the author's machine this is the difference between 174
 artifacts and 475. `--caches` opts back in, and naming one of those paths as a scan root sweeps it
 without the flag.
+
+Fifteen of those locations can also be *emptied*, by name. `voom caches` lists them — cargo's
+registry and git checkouts, uv, Gradle, the Go build and module caches, npm, pnpm, pub, deno,
+alef — with what losing each one costs and whether it exists on this machine. Each is proven the
+same way everything else is: not by its path, but by a marker the tool wrote inside it, most
+often the cross-tool [`CACHEDIR.TAG`](https://bford.info/cachedir/). None is on by default and
+none is reachable without naming it:
+
+```bash
+voom caches                                  # the table, resolved against this machine
+voom --dry-run --clean-caches uv,go-build ~  # then remove the ones you named
+```
+
+A cache whose contents are only shard directories — sccache, zig, NuGet, Maven — is deliberately
+absent: the marker would prove nothing the path had not already said. [ADR
+0012](adrs/0012-cache-catalog.md) says which those are and how much they hold; the fix is for
+those tools to write a `CACHEDIR.TAG`, not for voom to guess.
 
 **4. Six rails you cannot switch off.** Symlinks and Windows reparse points are refused rather than
 followed. Every target is canonicalized. An append-only denylist protects `/`, `$HOME` itself,

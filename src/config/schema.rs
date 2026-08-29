@@ -31,6 +31,22 @@ pub struct ConfigFile {
     /// Git housekeeping (ADR 0011), which an ordinary sweep runs.
     #[serde(default)]
     pub git: GitSection,
+    /// Named machine-global tool caches to remove (ADR 0012). Empty unless asked.
+    #[serde(default)]
+    pub caches: CachesSection,
+}
+
+/// `[caches]`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CachesSection {
+    /// Cache ids this configuration enables, as `voom caches` lists them.
+    ///
+    /// Additive across the hierarchy, like `include`: a repository config may add one, and
+    /// nothing removes one, because a cache is machine-global and a per-repository file has no
+    /// business deciding for the machine.
+    #[serde(default)]
+    pub enable: Vec<String>,
 }
 
 /// `[git]`.
