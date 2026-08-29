@@ -7,6 +7,26 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
+## [0.4.2] - 2026-08-29
+
+### Fixed
+
+- **Git housekeeping did not protect everything the deletion guard protects.** Both are described
+  in the code as one denylist — ADR 0006's append-only `PROTECTED_PATHS` — and the git module's
+  comment said it was "reused here rather than restated". It was restated. The deletion guard
+  additionally resolves Windows locations from `SystemRoot`, `ProgramFiles` and `SystemDrive`,
+  precisely because the literals assume the system drive is `C:`; the git copy did not. On a
+  machine where Windows lives on `D:`, `C:\Windows` fails to canonicalize and contributes
+  nothing, so a repository under `D:\Windows` or `D:\Program Files` was protected from deletion
+  and not from `git worktree prune` / `git gc --auto`.
+
+  There is now one implementation and the git module calls it. Path comparison there is also
+  case-insensitive on Windows now, matching the guard — both sides are canonicalized in the
+  normal flow, so this was consistency rather than a hole.
+
+  Nothing in the git path deletes anything, so the stakes were low. It is fixed because a reader
+  who checks one list and not the other must not get two answers.
+
 ## [0.4.1] - 2026-08-29
 
 ### Fixed
