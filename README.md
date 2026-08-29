@@ -275,7 +275,7 @@ Full reasoning in [ADR 0002](adrs/0002-marker-anchored-classification.md) and
 
 | Ecosystem | Marker | Artifacts |
 | --- | --- | --- |
-| Rust | `Cargo.toml` | `target/` |
+| Rust | `Cargo.toml` | `target/`, `vendor/`† |
 | Node / TypeScript | `package.json` | `dist/`, `.next/`, `.nuxt/`, `.svelte-kit/`, `.astro/`, `.turbo/`, `.parcel-cache/`, `.vite/`, `.nyc_output/`, `*.tsbuildinfo`, `build/`†, `node_modules/`† |
 | Python | `pyproject.toml`, `setup.py`, `setup.cfg` | `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `.tox/`, `*.egg-info/`, `htmlcov/`, `.coverage`, `build/`, `dist/`, `.venv/`† |
 | Go | `go.mod` | `bin/`†, `vendor/`† |

@@ -270,6 +270,7 @@ pub const DEPENDENCY_DIRS: &[&str] = &["node_modules", "vendor", "deps", "bower_
 /// directory names in [`DEPENDENCY_DIRS`].
 pub const DEPENDENCY_ARTIFACTS: &[&str] = &[
     "node.node_modules",
+    "rust.vendor",
     "php.vendor",
     "go.vendor",
     "elixir.deps",

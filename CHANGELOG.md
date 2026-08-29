@@ -25,6 +25,11 @@ All notable changes to this project are documented here. The format follows
   into every index — measured, not guessed: `basemind.toml` was beside only 3 of 13 real
   directories and `agent-id` was in all 13. On one workstation this reaches 69 `.alef/`
   directories and 13 `.basemind/` ones that no flag could previously touch.
+- **`rust.vendor`.** `vendor/` is pruned by the walker as a dependency directory, and the
+  dependency-artifact list had entries for Go and PHP but none for Rust — so a `cargo vendor`
+  tree was unreachable by any flag, not merely off by default. 1.41 GB of one on the machine
+  this was found on. Off by default with a note, like every other dependency directory, and
+  reached by `--clean-dependencies` or `--enable rust.vendor`.
 
 ### Changed
 

@@ -7,7 +7,14 @@ pub(super) const RUST: Ecosystem = Ecosystem {
     name: "Rust",
     markers: &["Cargo.toml"],
     anchor: Anchor::Sibling,
-    artifacts: &[Artifact::on("target/")],
+    artifacts: &[
+        Artifact::on("target/"),
+        Artifact::off(
+            "vendor/",
+            "A network-fetched dependency cache, not build output: removing it costs a full \
+             `cargo vendor` and breaks offline builds.",
+        ),
+    ],
 };
 
 pub(super) const GO: Ecosystem = Ecosystem {
