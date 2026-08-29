@@ -274,8 +274,8 @@ pub struct PruneArgs {
     #[arg(long, value_name = "SPEC", help_heading = "Selection")]
     pub disable: Vec<String>,
 
-    /// Also remove dependency directories: `node_modules/`, composer and Go `vendor/`, mix
-    /// `deps/`, and Python virtualenvs.
+    /// Also remove dependency directories: `node_modules/`, Rust, composer and Go `vendor/`,
+    /// mix `deps/`, and Python virtualenvs.
     ///
     /// These are network-fetched caches rather than build output, so removing one costs a
     /// re-download and can break offline work — which is why voom leaves them alone unless you
