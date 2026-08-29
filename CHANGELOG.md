@@ -7,6 +7,30 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
+## [Unreleased]
+
+### Added
+
+- **`poly` cache entry.** poly 0.21.12 writes a `CACHEDIR.TAG` into its cache home, so
+  `~/.cache/poly` is now provable and `--clean-caches poly` reaches it — 22.56 GB on the machine
+  this was measured on. ADR 0012 said the fix for a cache whose contents are only hex-named
+  directories belonged upstream rather than in a special case here; this is that path working,
+  same day, with no special case.
+
+### Fixed
+
+- **An `Ancestor(n)` climb that ran out of bound is no longer reported as a missing marker.** The
+  two are opposite statements and were indistinguishable: "no marker proves it" is a fact about
+  the tree, while a climb that stopped short of the scan root is a fact about voom — the
+  directory may well be an artifact whose project sits one level further up. An artifact past the
+  bound was therefore not merely unswept, it read exactly like a directory that was never that
+  ecosystem's. Reported as `marker_out_of_reach` now, naming the bound it stopped at.
+
+  This matters more than a bigger bound would. Raised by alef's maintainer while reviewing the
+  0.3.0 catalog entry: alef resolves `.alef/` against the *invoking* directory rather than
+  against the config that governs it, so the distance is a property of the consumer's repository
+  layout and no value of `n` is universally correct. A loud ceiling beats a larger silent one.
+
 ## [0.3.0] - 2026-08-29
 
 ### Added
