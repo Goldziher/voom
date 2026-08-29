@@ -7,6 +7,66 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
+## [0.4.1] - 2026-08-29
+
+### Fixed
+
+Six catalog entries removed things their marker did not prove. Every fix narrows what voom
+deletes. Found by auditing each entry against the tool that supposedly writes it — the same
+check that found `.alef-cache/` in 0.3.2, and the one no test can perform, because the generated
+fixtures assert each entry against itself.
+
+- **`.NET`'s `bin/` deleted source code.** The ecosystem anchors `Ancestor(3)`, so a single
+  `App.sln` licensed every `bin/` up to three directories beneath it. In a repository that is
+  both .NET and Rust — the normal shape of a polyglot repo — that removed `src/bin/`, which is
+  Cargo's standard multi-binary **source** layout, and `tools/scripts/bin/`, which is
+  hand-written. `bin/` now anchors `Sibling`. ADR 0003 records that a sweep of a real machine
+  found all 55 .NET artifacts at depth 0, so the climb never bought recall; it only widened
+  what one marker could reach. `obj/` keeps the climb — nothing but MSBuild writes that name.
+- **Ruby's `.bundle/` is gone from the catalog.** It holds `.bundle/config` — written by
+  `bundle config set --local`, routinely committed, and the store for **private gem source
+  credentials**. Nothing regenerates it. A `Gemfile` proves Ruby; it does not prove that
+  directory is derived.
+- **Ruby's `vendor/bundle/` is now opt-in.** It is where `bundle install --path` puts installed
+  gems: restoring it costs a `bundle install` and a network, which is the cost that makes every
+  other dependency install off by default. Added to `--clean-dependencies`.
+- **Python's `.tox/` is now opt-in.** Each `.tox/<env>/` is a virtualenv, the same reinstall
+  cost that already made `.venv/` opt-in two lines below it.
+- **Python's and CMake's `build/` are now opt-in.** `build/` beside a `pyproject.toml` or a
+  `CMakeLists.txt` is as often hand-written build scripts, CMake modules or toolchain files as
+  it is output — the reason node's `build/` has been opt-in all along. CMake's
+  `cmake-build-*/` and `CMakeFiles/` are unambiguous and stay on.
+- **Bazel matches its three convenience symlinks by name, not `bazel-*/`.** Every genuine
+  target is a symlink that the rails refuse anyway, so the glob's only *effective* removals
+  were false positives — a vendored `bazel-toolchains/` beside a `WORKSPACE` was removed by
+  default.
+
+### Fixed (performance)
+
+- **A sweep got roughly five times slower after 0.4.0, and found nothing extra for it.** Moving
+  `.alef/` to an `Inside` anchor meant an *untagged* one stopped being a matched artifact — so
+  the walker stopped pruning it and descended into tens of gigabytes of cache instead. Measured
+  over one home directory: `scan` 1.3 s → 7.7 s, 181 extra skips, and **zero** artifacts found
+  by any of that walking.
+
+  A directory carrying an `Inside`-anchored artifact's name but not its marker is now pruned.
+  It is either an older cache of that tool or somebody else's directory of the same name, and
+  either way voom has already declined to remove it, so walking it can only surface other
+  projects nested inside a cache. That is a recall trade rather than a safety one, and it was
+  measured at zero cost before it was made.
+
+  Only reaches artifacts that are on by default: an off-by-default one reports `not_enabled`
+  before its marker is consulted, and that must never prune — it fires for `build/` and `bin/`
+  too, where descending is the point.
+
+### Added
+
+- **The README's interface documentation is now tested.** `tests/docs.rs` checked the ecosystem
+  table and nothing else, which is how six flags, two configuration keys and the whole JSON
+  schema went undocumented while the one tested table stayed perfect. Every long flag, every
+  subcommand and every cache id must now appear in the README, introspected from clap rather
+  than parsed out of the source.
+
 ## [0.4.0] - 2026-08-29
 
 ### Changed

@@ -385,3 +385,82 @@ fn no_surface_hard_codes_an_ecosystem_count() {
         stated.join("\n  ")
     );
 }
+
+/// Every long flag the CLI accepts must appear in the README.
+///
+/// The README drifted a full version silently: `--summary`, `--color`, `--disable`, `--config`,
+/// `--exclude` as a flag and `git-prune --timeout` were all undocumented while the ecosystem
+/// table — the one thing a test checked — stayed perfect. A reference that is only correct when
+/// somebody remembers to update it is not a reference.
+///
+/// Introspects clap rather than parsing `cli.rs`, so a flag cannot hide behind an attribute this
+/// test did not anticipate.
+#[test]
+fn every_flag_the_cli_accepts_is_documented() {
+    use clap::CommandFactory;
+
+    let readme = include_str!("../README.md");
+    let command = voom::cli::Cli::command();
+    let mut missing = Vec::new();
+
+    collect_undocumented_flags(&command, readme, &mut missing);
+
+    assert!(
+        missing.is_empty(),
+        "the CLI accepts these and the README never mentions them:\n  {}",
+        missing.join("\n  ")
+    );
+}
+
+/// Every subcommand must appear too — they are the surface a reader is most likely to miss,
+/// because `--help` groups flags but buries commands.
+#[test]
+fn every_subcommand_is_documented() {
+    use clap::CommandFactory;
+
+    let readme = include_str!("../README.md");
+    let missing: Vec<String> = voom::cli::Cli::command()
+        .get_subcommands()
+        .map(clap::Command::get_name)
+        .filter(|name| !readme.contains(&format!("voom {name}")))
+        .map(str::to_owned)
+        .collect();
+
+    assert!(missing.is_empty(), "subcommands absent from the README: {missing:?}");
+}
+
+/// Walks a command and its subcommands, collecting long flags the README does not mention.
+fn collect_undocumented_flags(command: &clap::Command, readme: &str, missing: &mut Vec<String>) {
+    let scope = command.get_name().to_owned();
+    for argument in command.get_arguments() {
+        // `--help` and `--version` are clap's own and universally understood; documenting them
+        // would be noise, not completeness.
+        if matches!(argument.get_id().as_str(), "help" | "version") {
+            continue;
+        }
+        let Some(long) = argument.get_long() else {
+            continue;
+        };
+        if !readme.contains(&format!("--{long}")) {
+            missing.push(format!("{scope}: --{long}"));
+        }
+    }
+    for subcommand in command.get_subcommands() {
+        collect_undocumented_flags(subcommand, readme, missing);
+    }
+}
+
+/// Every cache id must be documented, because the id is what `--clean-caches` takes and it is not
+/// always the tool's name — a reader who guesses `gradle` instead of `gradle-caches` gets an
+/// error, and prose naming the tools does not tell them that.
+#[test]
+fn every_cache_id_is_documented() {
+    let readme = include_str!("../README.md");
+    let missing: Vec<&str> = voom::caches::CACHES
+        .iter()
+        .map(|cache| cache.id)
+        .filter(|id| !readme.contains(*id))
+        .collect();
+
+    assert!(missing.is_empty(), "cache ids absent from the README: {missing:?}");
+}
