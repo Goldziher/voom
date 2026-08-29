@@ -21,7 +21,7 @@ use ignore::{WalkBuilder, WalkState};
 use super::{DOT_GIT, GitPruneOptions, Skipped};
 use crate::caches::CacheRoots;
 use crate::classify::is_dependency_dir;
-use crate::delete::PROTECTED_PATHS;
+use crate::delete::{PROTECTED_PATHS, paths_equal};
 use crate::scan::NEVER_DESCEND;
 
 /// Files and directories inside a git directory that mean an operation is half-finished.
@@ -360,19 +360,21 @@ fn canonical_or_given(path: &Path) -> PathBuf {
 
 /// Every protected path, resolved once per run against this machine.
 ///
-/// `PROTECTED_PATHS` is the sweep's append-only denylist (ADR 0006), reused here rather than
-/// restated. The literals are checked as written *and* canonicalized, because on macOS `/tmp`
-/// canonicalizes to `/private/tmp` and a comparison against one form alone is a rail with a hole
-/// in it.
+/// `PROTECTED_PATHS` is the sweep's append-only denylist (ADR 0006), and this now genuinely
+/// *reuses* the deletion guard's resolution rather than restating it. It used to restate it, and
+/// the two answers differed: the guard resolves Windows locations from `SystemRoot`,
+/// `ProgramFiles` and `SystemDrive` precisely because the literals assume the system drive is
+/// `C:`, and this copy did not. On a machine whose Windows lives on `D:`, `C:\Windows` fails to
+/// canonicalize and contributes nothing, so a repository under `D:\Windows` was protected from
+/// deletion and not from housekeeping. Nothing here deletes, so the stakes were low — but a
+/// reader who checks one list and not the other must not get two answers, which is exactly what
+/// the old comment promised and did not deliver.
+///
+/// The home directory is added on top. A machine with dotfiles versioned at `$HOME` has a
+/// repository there, and `voom ~` would otherwise run housekeeping in it by default.
 fn resolved_protected_paths() -> Vec<PathBuf> {
-    PROTECTED_PATHS
-        .iter()
-        .filter_map(|protected| Path::new(protected).canonicalize().ok())
-        // The home directory, as the deletion guard also does. A machine with dotfiles versioned
-        // at `$HOME` has a repository there, and `voom ~` would otherwise run housekeeping in it
-        // by default. Nothing here deletes anything, so this is a belt-and-braces rail rather
-        // than a load-bearing one — but the two lists are described as the same denylist, and a
-        // reader who checks one and not the other must not get two answers.
+    crate::delete::resolved_protected_paths()
+        .into_iter()
         .chain(dirs::home_dir().and_then(|home| home.canonicalize().ok()))
         .collect()
 }
@@ -381,8 +383,8 @@ fn is_protected(canonical: &Path, resolved: &[PathBuf]) -> bool {
     canonical.parent().is_none()
         || PROTECTED_PATHS
             .iter()
-            .any(|protected| canonical == Path::new(protected))
-        || resolved.iter().any(|protected| canonical == protected.as_path())
+            .any(|protected| paths_equal(canonical, Path::new(protected)))
+        || resolved.iter().any(|protected| paths_equal(canonical, protected))
 }
 
 /// Whether the repository sits at or below one of the scan roots.
@@ -425,6 +427,46 @@ fn marker_in(dir: &Path) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The two denylists must give the same answers, because the code says they are one list.
+    ///
+    /// They were not. This module resolved `PROTECTED_PATHS` itself and stopped there, while the
+    /// deletion guard additionally resolves Windows locations from `SystemRoot`, `ProgramFiles`
+    /// and `SystemDrive` — because the literals assume the system drive is `C:`. On a machine
+    /// where Windows lives on `D:`, the guard protected `D:\Windows` and this did not.
+    ///
+    /// **This test is weaker than it looks, and the weakness is worth stating.** The extra
+    /// resolution is `#[cfg(windows)]`, so off Windows both lists are identical and this passes
+    /// against the old code too — verified by restoring it. Even on Windows it only diverges
+    /// when the system drive is not `C:`, which no CI runner has. What actually removed the
+    /// defect is that there is now one implementation and this calls it; the test guards against
+    /// someone reintroducing a *narrower* second list, on a machine where the two differ.
+    #[test]
+    fn should_protect_everything_the_deletion_guard_protects() {
+        let ours = resolved_protected_paths();
+
+        for guarded in crate::delete::resolved_protected_paths() {
+            assert!(
+                ours.iter().any(|path| path == &guarded),
+                "the deletion guard protects `{}` and git housekeeping does not — the two are \
+                 described as one denylist and must answer alike",
+                guarded.display()
+            );
+        }
+    }
+
+    /// And the home directory on top, which the guard reaches by a different route.
+    #[test]
+    fn should_protect_the_home_directory() {
+        let Some(home) = dirs::home_dir().and_then(|home| home.canonicalize().ok()) else {
+            return;
+        };
+
+        assert!(
+            is_protected(&home, &resolved_protected_paths()),
+            "a machine with dotfiles versioned at $HOME has a repository there"
+        );
+    }
     use super::*;
     use crate::testing::tree;
 

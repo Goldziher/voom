@@ -109,7 +109,7 @@ fn names_equal(left: &OsStr, right: &OsStr) -> bool {
 
 /// Whether two paths denote the same location, compared component by component so that the
 /// platform's name-equality rule applies to each.
-fn paths_equal(left: &Path, right: &Path) -> bool {
+pub(crate) fn paths_equal(left: &Path, right: &Path) -> bool {
     #[cfg(not(windows))]
     {
         left == right
@@ -173,7 +173,7 @@ fn path_starts_with(child: &Path, ancestor: &Path) -> bool {
 /// This is additive and never subtractive: `PROTECTED_PATHS` is append-only and is still checked
 /// exactly as written, so an entry that cannot be canonicalized (it does not exist on this
 /// machine) still protects its literal spelling.
-fn resolved_protected_paths() -> Vec<PathBuf> {
+pub(crate) fn resolved_protected_paths() -> Vec<PathBuf> {
     /// Locations Windows publishes for itself. `SystemDrive` is handled separately because it
     /// arrives without a separator.
     #[cfg(windows)]
