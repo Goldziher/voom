@@ -12,12 +12,23 @@ use super::{Anchor, Artifact, Ecosystem};
 // three or six levels down. Measured across one workspace: 69 directories at climb distances
 // 0 (7), 2 (58), 3 (3) and 6 (1). `Ancestor(6)` is that measurement plus nothing, and the
 // catalog's own 8-level ceiling is the ceiling on how wrong it can be.
+//
+// The bound is a measurement of one workspace, not a limit alef enforces: `.alef/` is resolved
+// against the *invoking* directory rather than against the config that governs it, so the
+// distance is a property of the consumer's layout. `SkipReason::MarkerOutOfReach` exists
+// because of that — past the bound a reader gets a sentence rather than silence.
+//
+// `.alef-cache/` is deliberately absent. It looks like alef's and it is not: alef never creates
+// it — the only mention of the name in alef's source is an ignore-list entry — and the one found
+// in the wild held a zig global cache, in zig's own `b h o z` shard layout. `alef.toml` does not
+// prove a directory alef does not write, so under ADR 0002 there is no entry to make. Reaching
+// it takes an `include`.
 pub(super) const ALEF: Ecosystem = Ecosystem {
     id: "alef",
     name: "alef",
     markers: &["alef.toml"],
     anchor: Anchor::Ancestor(6),
-    artifacts: &[Artifact::on(".alef/"), Artifact::on(".alef-cache/")],
+    artifacts: &[Artifact::on(".alef/")],
 };
 
 // NOTE: anchored `Inside` rather than on a sibling `basemind.toml`, because the config file is

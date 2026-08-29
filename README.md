@@ -289,7 +289,7 @@ key, for when you already know the name.
 | Elm | `elm.json` | `elm-stuff/` |
 | Terraform | `*.tf` | `.terraform/` |
 | Bazel | `WORKSPACE`, `WORKSPACE.bazel`, `MODULE.bazel` | `bazel-*/` |
-| alef | `alef.toml` | `.alef/`, `.alef-cache/` |
+| alef | `alef.toml` | `.alef/` |
 | basemind | `agent-id` | `.basemind/`†‡ |
 
 ‡ Proven from *inside*: `agent-id` is the file basemind writes into `.basemind/` when it
@@ -467,7 +467,7 @@ The reporting hook is the one to start with — it fails the commit on findings 
 ```yaml
 repos:
   - repo: https://github.com/Goldziher/voom
-    rev: v0.3.1
+    rev: v0.3.2
     hooks:
       - id: voom-report      # reports, deletes nothing
       # - id: voom-prune     # actually deletes — opt in deliberately
@@ -479,7 +479,7 @@ repos:
 [[hooks.sources]]
 id = "voom"
 git = "https://github.com/Goldziher/voom.git"
-revision = "v0.3.1"
+revision = "v0.3.2"
 hooks = ["voom-report"]
 ```
 

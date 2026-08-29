@@ -7,6 +7,26 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
+## [0.3.2] - 2026-08-29
+
+### Fixed
+
+- **`.alef-cache/` was removed on a marker that does not prove it.** 0.3.0 shipped it as an
+  on-by-default artifact of the `alef` ecosystem, anchored on `alef.toml`. alef does not create
+  that directory — the only mention of the name in alef's source is an ignore-list entry — and
+  the one found in the wild held a **zig** global cache, in zig's own `b h o z` shard layout. So
+  voom was deleting a directory on the strength of an unrelated tool's marker, which is precisely
+  what ADR 0002 exists to prevent, and it was on by default.
+
+  The entry is gone rather than turned off: `alef.toml` cannot prove a directory alef does not
+  write, at any `default_on` setting. Nothing else in the catalog claims the name, so reaching it
+  now takes an explicit `include`. `.alef/` is unaffected and still on by default.
+
+  Found by alef's own maintainer while verifying the tagging work, not by a test here — a catalog
+  entry is only as good as the claim that its marker proves its artifact, and no test can check
+  that claim. Reviewing an entry against the tool that supposedly writes it is the check that
+  works.
+
 ## [0.3.1] - 2026-08-29
 
 ### Added
