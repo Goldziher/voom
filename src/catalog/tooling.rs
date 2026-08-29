@@ -7,27 +7,25 @@
 
 use super::{Anchor, Artifact, Ecosystem};
 
-// NOTE: `alef.toml` sits at the repository root while `.alef/` is written wherever alef is
-// invoked — beside the root config, beside a crate two levels down, beside a language package
-// three or six levels down. Measured across one workspace: 69 directories at climb distances
-// 0 (7), 2 (58), 3 (3) and 6 (1). `Ancestor(6)` is that measurement plus nothing, and the
-// catalog's own 8-level ceiling is the ceiling on how wrong it can be.
-//
-// The bound is a measurement of one workspace, not a limit alef enforces: `.alef/` is resolved
+// NOTE: anchored `Inside` on the `CACHEDIR.TAG` alef writes into every cache it creates, rather
+// than on a climb to `alef.toml`. The climb was never soundly bounded: `.alef/` is resolved
 // against the *invoking* directory rather than against the config that governs it, so the
-// distance is a property of the consumer's layout. `SkipReason::MarkerOutOfReach` exists
-// because of that — past the bound a reader gets a sentence rather than silence.
+// distance is a property of the consumer's repository layout and their working directory, and
+// no ancestor bound is correct for it. `Inside` removes the question instead of bounding it.
+//
+// The tag is written by a helper every cache-creating site routes through, with a test on
+// alef's side asserting the root is tagged and not only its children — so this is a guarantee
+// rather than an emergent property. A `.alef/` written by an alef too old to tag is left alone;
+// that is the safe direction, and one run of a current alef restores it.
 //
 // `.alef-cache/` is deliberately absent. It looks like alef's and it is not: alef never creates
-// it — the only mention of the name in alef's source is an ignore-list entry — and the one found
-// in the wild held a zig global cache, in zig's own `b h o z` shard layout. `alef.toml` does not
-// prove a directory alef does not write, so under ADR 0002 there is no entry to make. Reaching
-// it takes an `include`.
+// it, and the one found in the wild held a zig global cache in zig's own shard layout. See
+// 0.3.2, which removed it.
 pub(super) const ALEF: Ecosystem = Ecosystem {
     id: "alef",
     name: "alef",
-    markers: &["alef.toml"],
-    anchor: Anchor::Ancestor(6),
+    markers: &["CACHEDIR.TAG"],
+    anchor: Anchor::Inside,
     artifacts: &[Artifact::on(".alef/")],
 };
 

@@ -451,29 +451,39 @@ fn should_never_remove_a_basemind_index_without_being_asked() {
     assert!(result.entries.is_empty(), "and a default run must not report it either");
 }
 
-/// The `Ancestor(6)` climb alef needs, at the bound and one past it.
+/// alef anchors `Inside`: the tag is in the cache or the cache is not proven. Depth stops
+/// mattering, which is the point — `.alef/` is written relative to the *invoking* directory, so
+/// no ancestor bound was ever correct for it.
 #[test]
-fn should_sweep_an_alef_cache_within_its_ancestor_bound_and_stop_past_it() {
+fn should_prove_an_alef_cache_at_any_depth_from_the_tag_inside_it() {
     let root = TempDir::new().unwrap();
-    fs::write(root.path().join("alef.toml"), b"[alef]").unwrap();
-
-    for nesting in ["", "a/", "a/b/c/", "a/b/c/d/e/f/", "a/b/c/d/e/f/g/"] {
+    // No alef.toml anywhere: the config is not what proves this any more.
+    for nesting in ["", "a/", "a/b/c/d/e/f/g/h/i/"] {
         let cache = root.path().join(format!("{nesting}.alef"));
         fs::create_dir_all(&cache).unwrap();
+        fs::write(
+            cache.join("CACHEDIR.TAG"),
+            b"Signature: 8985a1d0364e3d1e-cache-directory-tag\n",
+        )
+        .unwrap();
         fs::write(cache.join("snippet.bin"), b"output").unwrap();
     }
+    // And one with no tag, however deep, is left alone.
+    let untagged = root.path().join("z/.alef");
+    fs::create_dir_all(&untagged).unwrap();
+    fs::write(untagged.join("mine.txt"), b"not alef's").unwrap();
 
     run(&options(root.path())).expect("the run completes");
 
-    for nesting in ["", "a/", "a/b/c/", "a/b/c/d/e/f/"] {
+    for nesting in ["", "a/", "a/b/c/d/e/f/g/h/i/"] {
         assert!(
             !root.path().join(format!("{nesting}.alef")).exists(),
-            ".alef/ at `{nesting}` is within Ancestor(6) and must be swept"
+            ".alef/ at `{nesting}` carries its own tag and depth is irrelevant"
         );
     }
     assert!(
-        root.path().join("a/b/c/d/e/f/g/.alef/snippet.bin").exists(),
-        "seven levels down is beyond Ancestor(6) and nothing proves it"
+        untagged.join("mine.txt").exists(),
+        "a .alef with no tag inside it is not proven — this would be data loss"
     );
 }
 

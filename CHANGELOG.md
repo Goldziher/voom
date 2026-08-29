@@ -7,6 +7,25 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
+## [0.4.0] - 2026-08-29
+
+### Changed
+
+- **`.alef/` is now proven by the `CACHEDIR.TAG` inside it, not by climbing to `alef.toml`.**
+  The `Ancestor(6)` bound was measured honestly and inferred wrongly: alef resolves `.alef/`
+  against the *invoking* directory rather than against the config that governs it, so the climb
+  distance is a property of your repository's depth and where you ran alef from. It is unbounded
+  in principle, and a larger `n` is not closer to correct. `Inside` removes the question instead
+  of bounding it — the tag is in the directory or the directory is not proven, whatever sits
+  above it.
+
+  **A `.alef/` written by an alef too old to write the tag is now left alone**, until one run of
+  a current alef restores it. That is a real drop in recall and the safe direction: a false
+  negative costs disk, a false positive costs work.
+
+  `MarkerOutOfReach` (0.3.1) keeps its place. It was added because of alef and stays because
+  `Ancestor` still anchors .NET and Python, where a silent ceiling would be the same defect.
+
 ## [0.3.2] - 2026-08-29
 
 ### Fixed

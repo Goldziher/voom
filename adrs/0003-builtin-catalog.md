@@ -208,3 +208,34 @@ re-embedding an entire repository, and the `agent-id` and telemetry log beside i
 and history rather than derived output, so the rebuilt index is not the removed one. "Prefer a
 false negative" is not only about whether a directory is *provable*; it is also about what being
 right costs the user, and this is the second kind.
+
+## Amendment — alef anchors `Inside` — 2026-08-29
+
+`alef`'s `.alef/` moves from `markers: ["alef.toml"], Ancestor(6)` to
+`markers: ["CACHEDIR.TAG"], Inside`.
+
+The `Ancestor(6)` bound was measured from one workspace — distances 0, 2, 3 and 6 across 69
+directories — and the measurement was sound. The inference from it was not. alef's maintainer
+established that `.alef/` is resolved against the **invoking** directory rather than against the
+`alef.toml` that governs it, so the climb distance is a property of the consumer's repository
+depth and their working directory. It is unbounded in principle and nothing alef controls: no
+value of `n` is correct, and a larger one is not closer to correct.
+
+`Inside` does not bound the question, it removes it. A tag in the directory proves the directory,
+whatever sits above it and however the tool was invoked. alef writes the tag through a single
+helper that every cache-creating site routes through, with a test asserting the root is tagged
+and not merely its children — a guarantee rather than an emergent property, which is the
+difference between depending on a contract and depending on an observation.
+
+Two consequences, both accepted:
+
+- **A `.alef/` written by an alef too old to tag is left alone.** Recall drops until one run of a
+  current alef restores it. That is the safe direction — a false negative costs disk, a false
+  positive costs work — and it is why this is recorded rather than discovered.
+- **`SkipReason::MarkerOutOfReach` no longer has a first-party user.** It stays: `Ancestor` still
+  anchors .NET and Python, and a silent ceiling is a defect wherever it occurs. It was added
+  because of alef and is kept because of everyone else.
+
+The general lesson is worth more than the entry. A marker chosen because it is *present* is a
+marker that can move; a marker chosen because the tool *declares* it is a contract. Prefer the
+declaration, and prefer `Inside` when the tool offers one.
