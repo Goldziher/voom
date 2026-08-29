@@ -180,6 +180,28 @@ pub enum Skipped {
 }
 
 impl Skipped {
+    /// Whether a *sweep* names this repository without `--verbose`.
+    ///
+    /// The test is whether the reader can act on it. A rebase paused in the way and a
+    /// denylisted location are both things they can do something about; the other two are not.
+    ///
+    /// `EscapesRoot` fires on repositories the user never named — sweeping `/tmp` printed
+    /// `skipped /Users/…/xberg — outside every scan root` for a worktree in `/tmp` whose store
+    /// lives in a home directory, which reads as though voom had wanted to touch it. It is a
+    /// rail doing its job on something out of scope, which is the definition of not worth a
+    /// line.
+    ///
+    /// `Unresolved` fires on a `.git` file pointing at a store that is gone — a submodule whose
+    /// parent repository was deleted. It is permanent, it repeats on every run forever, and
+    /// there is no repository there for housekeeping to have skipped. `--verbose` still says so.
+    #[must_use]
+    pub fn is_actionable(&self) -> bool {
+        match self {
+            Self::InProgress { .. } | Self::Protected => true,
+            Self::EscapesRoot | Self::Unresolved { .. } => false,
+        }
+    }
+
     /// The enum-like code a machine consumer branches on.
     #[must_use]
     pub fn code(&self) -> &'static str {
@@ -337,14 +359,12 @@ impl Repository {
     /// repositories where something happened, or where a rail fired, get a line. The explicit
     /// subcommand reports all of them — there the user asked.
     #[must_use]
-    pub fn is_noteworthy(&self) -> bool {
+    pub fn is_noteworthy(&self, verbose: bool) -> bool {
         match self.status() {
-            // Every failure and every skip is worth a line. A path that was never a repository
-            // does not reach here at all — `discover::resolve` drops it — so what is left is a
-            // rebase paused in the way, a denylisted location, an escape from the scan root, or
-            // a `.git` file voom would not guess at. All of them are things the reader wants
-            // told about.
-            Status::Failed | Status::Skipped => true,
+            // Every failure is worth a line. Skips are not all equal: see
+            // [`Skipped::is_actionable`] for the two that a sweep stays quiet about, and why.
+            Status::Failed => true,
+            Status::Skipped => verbose || self.skipped.as_ref().is_none_or(Skipped::is_actionable),
             Status::Pruned => self.steps.iter().any(|step| step.summary().is_some()),
         }
     }
@@ -396,10 +416,10 @@ impl GitPruneResult {
 
     /// The repositories a sweep's report should print, in order. Empty means print nothing.
     #[must_use]
-    pub fn noteworthy(&self) -> Vec<&Repository> {
+    pub fn noteworthy(&self, verbose: bool) -> Vec<&Repository> {
         self.repositories
             .iter()
-            .filter(|repository| repository.is_noteworthy())
+            .filter(|repository| repository.is_noteworthy(verbose))
             .collect()
     }
 
@@ -692,6 +712,28 @@ fn remote_prune_args(dry_run: bool, remote: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The two skips a sweep stays quiet about, and the two it does not. Sweeping `/tmp`
+    /// printed four `outside every scan root` and `could not resolve its .git file` lines for
+    /// repositories the user had not named and could not act on, which is exactly the region of
+    /// the report that has to stay worth reading.
+    #[test]
+    fn should_name_only_actionable_skips_in_a_sweep() {
+        assert!(
+            Skipped::InProgress {
+                marker: ".git/rebase-merge".to_owned()
+            }
+            .is_actionable()
+        );
+        assert!(Skipped::Protected.is_actionable());
+        assert!(!Skipped::EscapesRoot.is_actionable());
+        assert!(
+            !Skipped::Unresolved {
+                detail: "its gitdir does not resolve".to_owned()
+            }
+            .is_actionable()
+        );
+    }
     use super::*;
 
     /// The default repack step is git's own, which is a no-op below git's thresholds. A bare `gc`

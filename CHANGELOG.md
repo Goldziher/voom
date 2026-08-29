@@ -52,6 +52,21 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **A sweep printed skip lines nobody could act on.** Sweeping `/tmp` named four repositories
+  as `outside every scan root` or `could not resolve its .git file` — a worktree whose store
+  lives in a home directory, and submodule pointers into a parent repository that no longer
+  exists. Both are permanent, neither is anything voom can do about, and the first reads as
+  though voom had wanted to touch the home directory. They are `--verbose` now. A repository
+  skipped mid-rebase or on the protected denylist is still named, because that one the reader
+  can act on.
+- **Running out of file descriptors said nothing useful and was never retried.** A real sweep
+  reported `failed 0 B rust vzdeep/a/target — Too many open files (os error 24)` with no
+  explanation and no retry, because no stable `ErrorKind` names EMFILE so it landed in the
+  catch-all. It is now recognised (EMFILE and ENFILE, and Windows'
+  `ERROR_TOO_MANY_OPEN_FILES`), says what happened, and is retried under `--force` on the same
+  backoff as a directory that was not empty — it is the same kind of problem, a fact about the
+  moment rather than about the artifact. The trigger was roughly twenty large removals in
+  flight at once; the artifact alone removes cleanly.
 - **A relative `--exclude` pattern silently did nothing.** `--exclude build` compiled to a glob
   that could never match a path the walker produces, so voom reported success and swept the
   directory anyway. Only absolute patterns worked, and nothing said so. Relative flag patterns

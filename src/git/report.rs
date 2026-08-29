@@ -170,8 +170,13 @@ pub fn render_human(result: &GitPruneResult, out: &mut impl io::Write) -> io::Re
 /// # Errors
 ///
 /// Propagates any write failure from `out`.
-pub fn write_sweep_block(result: &GitPruneResult, base: Option<&Path>, out: &mut impl io::Write) -> io::Result<bool> {
-    let noteworthy = result.noteworthy();
+pub fn write_sweep_block(
+    result: &GitPruneResult,
+    base: Option<&Path>,
+    verbose: bool,
+    out: &mut impl io::Write,
+) -> io::Result<bool> {
+    let noteworthy = result.noteworthy(verbose);
     if noteworthy.is_empty() {
         return Ok(false);
     }
@@ -393,7 +398,7 @@ mod tests {
         );
 
         let mut buffer = Vec::new();
-        let wrote = write_sweep_block(&quiet, None, &mut buffer).expect("writing to a Vec cannot fail");
+        let wrote = write_sweep_block(&quiet, None, false, &mut buffer).expect("writing to a Vec cannot fail");
 
         assert!(!wrote, "a no-op is silent");
         assert!(buffer.is_empty(), "{}", String::from_utf8_lossy(&buffer));
@@ -419,7 +424,7 @@ mod tests {
         );
 
         let mut buffer = Vec::new();
-        let wrote = write_sweep_block(&pruned, Some(Path::new("/projects")), &mut buffer).expect("a write");
+        let wrote = write_sweep_block(&pruned, Some(Path::new("/projects")), false, &mut buffer).expect("a write");
         let text = String::from_utf8(buffer).expect("the report is UTF-8");
 
         assert!(wrote);

@@ -376,7 +376,7 @@ fn should_have_nothing_noteworthy_to_say_about_a_quiet_repository() {
     let result = prune_during_sweep(&[repository], &sweep_options(root.path())).expect("a result");
 
     assert!(
-        result.noteworthy().is_empty(),
+        result.noteworthy(false).is_empty(),
         "a quiet repository would have produced output: {:?}",
         result.repositories
     );
@@ -410,7 +410,11 @@ fn should_prune_a_repository_a_sweep_walked_past() {
         !repository.join(".git/worktrees/stale").exists(),
         "the sweep did not prune the stale worktree it walked past"
     );
-    assert_eq!(result.noteworthy().len(), 1, "and it is worth a line in the report");
+    assert_eq!(
+        result.noteworthy(false).len(),
+        1,
+        "and it is worth a line in the report"
+    );
 }
 
 /// A repository with one stale worktree and one Rust artifact beside it, for the wiring tests

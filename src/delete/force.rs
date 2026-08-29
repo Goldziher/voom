@@ -16,6 +16,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use super::Verified;
+use crate::delete::outcome::{FailureKind, RemovalFailure};
 
 /// How a removal behaves once every rail has passed.
 ///
@@ -94,7 +95,27 @@ pub(super) fn remove(verified: &Verified, removal: Removal) -> std::io::Result<(
             // A writer got there between voom emptying a directory and unlinking it. Time is
             // the only thing that helps, and a mode change would be answering a question nobody
             // asked.
+            //
+            // Descriptor exhaustion is the same shape of problem: the machine ran out of file
+            // descriptors while several large removals were in flight, which is a fact about
+            // the moment and not about the artifact. Whichever sibling finishes first hands
+            // some back. Observed on a real sweep of `/tmp` with roughly twenty artifacts
+            // coming out at once, and not reproducible against any of them alone.
             std::io::ErrorKind::DirectoryNotEmpty => {
+                let Some(wait) = BACKOFF.get(attempt) else {
+                    return Err(error);
+                };
+                std::thread::sleep(*wait);
+                attempt += 1;
+            }
+            // Descriptor exhaustion is the same shape of problem, reached through the errno
+            // because no stable `ErrorKind` names it — see `FailureKind::of_error`. The
+            // machine ran out of descriptors while several large removals were in flight,
+            // which is a fact about the moment and not about the artifact: whichever sibling
+            // finishes first hands some back. Observed on a real sweep of `/tmp` with roughly
+            // twenty artifacts coming out at once, and not reproducible against any one of
+            // them alone.
+            _ if RemovalFailure::from_io(&error).kind() == FailureKind::Exhausted => {
                 let Some(wait) = BACKOFF.get(attempt) else {
                     return Err(error);
                 };

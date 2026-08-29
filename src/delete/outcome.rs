@@ -84,6 +84,12 @@ pub enum FailureKind {
     Denied,
     /// The filesystem is mounted read-only.
     ReadOnly,
+    /// No file descriptor was available to open something with.
+    ///
+    /// Either this process hit its own limit or the machine hit its table-wide one. Both are a
+    /// statement about the moment rather than about the artifact, which is why this is the one
+    /// failure besides [`NotEmpty`](Self::NotEmpty) that `--force` waits and retries.
+    Exhausted,
     /// Anything else. The OS's own message is the only description.
     Other,
 }
@@ -98,6 +104,29 @@ impl FailureKind {
         }
     }
 
+    /// Classifies a whole error, so descriptor exhaustion can be recognised.
+    ///
+    /// **This is the one place voom reads a raw OS number**, and it is worth saying why, since
+    /// the rule everywhere else is to key on [`std::io::ErrorKind`] because an errno is not
+    /// portable. Here there is no stable kind to key on: `ErrorKind::TooManyOpenFiles` exists
+    /// but is unstable (`io_error_too_many_open_files`), so on a stable toolchain EMFILE and
+    /// ENFILE both arrive as `Uncategorized` and are indistinguishable from everything else.
+    ///
+    /// The numbers are therefore named per platform rather than assumed, which is exactly the
+    /// mistake keying on 66 for ENOTEMPTY would have been. `should_recognise_descriptor_exhaustion`
+    /// checks the mapping on whichever platform the suite runs on, and when the kind stabilises
+    /// this collapses back into [`Self::of`].
+    fn of_error(error: &std::io::Error) -> Self {
+        let kind = Self::of(error.kind());
+        if kind != Self::Other {
+            return kind;
+        }
+        if error.raw_os_error().is_some_and(is_exhaustion) {
+            return Self::Exhausted;
+        }
+        kind
+    }
+
     /// The stable code emitted in JSON.
     ///
     /// [`Self::Other`] keeps `removal_failed`, the value schema 1 emitted for every failure, so
@@ -108,6 +137,7 @@ impl FailureKind {
             Self::NotEmpty => "not_empty",
             Self::Denied => "permission_denied",
             Self::ReadOnly => "read_only_filesystem",
+            Self::Exhausted => "descriptors_exhausted",
             Self::Other => "removal_failed",
         }
     }
@@ -120,8 +150,31 @@ impl FailureKind {
             // Deliberately says "inside", because that is the limit: `--force` never touches the
             // artifact's parent, and a read-only parent is the one shape it cannot fix.
             Self::Denied => Some("--force repairs permissions inside the artifact and retries"),
+            Self::Exhausted => Some("--force waits and retries; -j lowers how many run at once"),
             Self::ReadOnly | Self::Other => None,
         }
+    }
+}
+
+/// Whether a raw OS error number means "no file descriptor was available".
+///
+/// EMFILE is the process's own limit and ENFILE the machine's table; both are statements about
+/// the moment rather than about the artifact, and voom treats them the same.
+const fn is_exhaustion(raw: i32) -> bool {
+    #[cfg(unix)]
+    {
+        // EMFILE and ENFILE, identical across Linux and the BSDs including macOS.
+        matches!(raw, 24 | 23)
+    }
+    #[cfg(windows)]
+    {
+        // ERROR_TOO_MANY_OPEN_FILES.
+        raw == 4
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = raw;
+        false
     }
 }
 
@@ -140,6 +193,11 @@ impl std::fmt::Display for FailureKind {
             ),
             Self::Denied => write!(f, "permission denied unlinking something inside it"),
             Self::ReadOnly => write!(f, "the filesystem is mounted read-only"),
+            Self::Exhausted => write!(
+                f,
+                "no file descriptors were available — this process or the machine ran out while \
+                 the removal was in flight"
+            ),
             Self::Other => write!(f, "the removal did not succeed"),
         }
     }
@@ -156,7 +214,7 @@ pub struct RemovalFailure {
 impl RemovalFailure {
     pub(crate) fn from_io(error: &std::io::Error) -> Self {
         Self {
-            kind: FailureKind::of(error.kind()),
+            kind: FailureKind::of_error(error),
             os_error: error.raw_os_error(),
             os_message: error.to_string(),
         }
@@ -251,6 +309,42 @@ impl Outcome {
 
 #[cfg(test)]
 mod tests {
+
+    /// The mapping the errno branch rests on, checked on whichever platform runs the suite.
+    ///
+    /// A sweep of `/tmp` reported `Too many open files (os error 24)` with no hint and no
+    /// retry, because `FailureKind::of` saw `Uncategorized` and answered `Other`. If
+    /// `ErrorKind::TooManyOpenFiles` ever stabilises this test keeps passing and the errno
+    /// branch can go.
+    #[test]
+    fn should_recognise_descriptor_exhaustion() {
+        for raw in exhaustion_errnos() {
+            let failure = RemovalFailure::from_io(&std::io::Error::from_raw_os_error(*raw));
+            assert_eq!(
+                failure.kind(),
+                FailureKind::Exhausted,
+                "os error {raw} must be recognised as descriptor exhaustion, not `Other`"
+            );
+            assert!(
+                failure.kind().hint().is_some(),
+                "and must suggest something the user can do"
+            );
+        }
+    }
+
+    /// And nothing else is swept up with it: a neighbouring errno must stay `Other`.
+    #[test]
+    fn should_not_mistake_another_error_for_descriptor_exhaustion() {
+        let neighbour = if cfg!(windows) { 5 } else { 25 };
+        assert_eq!(
+            RemovalFailure::from_io(&std::io::Error::from_raw_os_error(neighbour)).kind(),
+            FailureKind::Other
+        );
+    }
+
+    const fn exhaustion_errnos() -> &'static [i32] {
+        if cfg!(windows) { &[4] } else { &[24, 23] }
+    }
     use super::*;
 
     /// Every refusal reaches JSON as a code a hook branches on, so two refusals sharing one

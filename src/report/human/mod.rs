@@ -322,11 +322,15 @@ pub fn render(result: &RunResult, options: HumanOptions, out: &mut impl io::Writ
         // repository a sweep walks past and nearly always finds nothing to do, so a block that
         // appeared whenever it *ran* would be on almost every report and would train the reader
         // to skim the region where refusals and failures live.
-        if let Some(git) = result.git.as_ref().filter(|git| !git.noteworthy().is_empty()) {
+        if let Some(git) = result
+            .git
+            .as_ref()
+            .filter(|git| !git.noteworthy(options.verbose).is_empty())
+        {
             if wrote_block {
                 writeln!(out)?;
             }
-            crate::git::write_sweep_block(git, base, out)?;
+            crate::git::write_sweep_block(git, base, options.verbose, out)?;
             wrote_body = true;
         }
     }
