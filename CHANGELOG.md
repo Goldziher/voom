@@ -7,7 +7,7 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
-## [Unreleased]
+## [0.3.1] - 2026-08-29
 
 ### Added
 
