@@ -162,12 +162,21 @@ pub(super) enum Resolution {
     Refused(PathBuf, Skipped),
 }
 
-impl Resolution {
-    fn path(&self) -> &Path {
-        match self {
-            Self::Repository(located) => &located.work_tree,
-            Self::Refused(path, _) => path,
-        }
+/// The sort key that puts the entry `retain` should keep first within its deduplication group.
+///
+/// Grouping is on the deduplication key, so everything sharing an object store is adjacent, and
+/// `linked` breaks the tie: a main repository sorts before a linked worktree of the same
+/// repository, so it is the one kept and the report names the checkout the user thinks of as
+/// "the repository". The working tree breaks the remaining tie, for determinism.
+///
+/// It is a key rather than a hand-written `match` because the `match` was not a total order:
+/// two repositories compared on `linked` first while a mixed pair compared on path, so a linked
+/// worktree, a main repository and a refusal could form a cycle. `slice::sort_by` detects that
+/// and aborts the process. A comparison derived from a tuple key cannot.
+fn order_key(resolution: &Resolution) -> (&Path, bool, &Path) {
+    match resolution {
+        Resolution::Repository(located) => (&located.common_dir, located.linked, &located.work_tree),
+        Resolution::Refused(path, _) => (path, false, path),
     }
 }
 
@@ -188,15 +197,7 @@ pub(super) fn resolve_all(work_trees: &[PathBuf], roots: &[PathBuf]) -> Vec<Reso
         .filter_map(|work_tree| resolve(work_tree, roots, &protected))
         .collect();
 
-    // A main repository sorts before a linked worktree of the same repository, so it is the one
-    // kept — the report then names the checkout the user thinks of as "the repository".
-    resolved.sort_by(|left, right| match (left, right) {
-        (Resolution::Repository(first), Resolution::Repository(second)) => first
-            .linked
-            .cmp(&second.linked)
-            .then_with(|| first.work_tree.cmp(&second.work_tree)),
-        _ => left.path().cmp(right.path()),
-    });
+    resolved.sort_by(|left, right| order_key(left).cmp(&order_key(right)));
 
     let mut seen = BTreeSet::new();
     resolved.retain(|resolution| match resolution {
@@ -582,6 +583,71 @@ mod tests {
         assert!(contained(Path::new("/projects"), &roots));
         assert!(contained(Path::new("/projects/api"), &roots));
         assert!(!contained(Path::new("/elsewhere/api"), &roots));
+    }
+
+    /// The three resolutions whose ordering formed a cycle, in the shape a real run produced.
+    fn cyclic_trio() -> Vec<Resolution> {
+        let located = |work_tree: &str, common_dir: &str, linked: bool| Located {
+            work_tree: PathBuf::from(work_tree),
+            common_dir: PathBuf::from(common_dir),
+            linked,
+        };
+        vec![
+            Resolution::Repository(located("/a", "/store", true)),
+            Resolution::Repository(located("/b", "/store", false)),
+            Resolution::Refused(PathBuf::from("/aa"), Skipped::EscapesRoot),
+        ]
+    }
+
+    /// The deduplication ordering is a total order.
+    ///
+    /// It was not, and `voom` over a home directory aborted the process on it: two repositories
+    /// compared on `linked` first while a mixed pair compared on path, so the main repository at
+    /// `/b` sorted before the linked worktree at `/a`, which sorted before the refusal at `/aa`,
+    /// which sorted before `/b`. `slice::sort_by` detects such a cycle and panics with
+    /// "user-provided comparison function does not correctly implement a total order".
+    #[test]
+    fn should_order_resolutions_transitively() {
+        let items = cyclic_trio();
+        for left in &items {
+            for middle in &items {
+                for right in &items {
+                    let (first, second) = (
+                        order_key(left) <= order_key(middle),
+                        order_key(middle) <= order_key(right),
+                    );
+                    assert!(
+                        !(first && second) || order_key(left) <= order_key(right),
+                        "{:?} <= {:?} <= {:?} but not {:?} <= {:?}",
+                        order_key(left),
+                        order_key(middle),
+                        order_key(right),
+                        order_key(left),
+                        order_key(right)
+                    );
+                }
+            }
+        }
+    }
+
+    /// A main repository is the one kept when it shares an object store with a linked worktree.
+    #[test]
+    fn should_keep_the_main_repository_over_a_linked_worktree() {
+        let mut items = cyclic_trio();
+        items.sort_by(|left, right| order_key(left).cmp(&order_key(right)));
+
+        let kept: Vec<_> = items
+            .iter()
+            .filter_map(|item| match item {
+                Resolution::Repository(located) => Some(located.work_tree.clone()),
+                Resolution::Refused(..) => None,
+            })
+            .collect();
+        assert_eq!(
+            kept,
+            vec![PathBuf::from("/b"), PathBuf::from("/a")],
+            "the main repository sorts first"
+        );
     }
 
     /// A repository outside every scan root is named and left alone rather than acted on.
