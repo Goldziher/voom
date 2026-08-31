@@ -7,6 +7,24 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
+## [0.4.5] - 2026-08-31
+
+### Fixed
+
+- **A sweep of a home directory could abort the process** with
+  `user-provided comparison function does not correctly implement a total order`. Git
+  housekeeping sorts its resolved repositories before deduplicating them, and the comparator
+  was not a total order: two repositories compared on whether they were linked worktrees
+  first, while a repository against a refused path compared on path alone. A linked worktree,
+  the main repository it shares a store with, and a refusal could therefore form a cycle —
+  `a < b`, `b < c`, `c < a`. Rust's sort detects that and panics, killing the run.
+
+  It needed a couple of dozen repositories of mixed kinds to surface, which is why it only
+  ever appeared on a real machine and never in the fixtures. The ordering is now derived from
+  a tuple key, which cannot express a cycle, and keeps the behaviour it was written for: a
+  main repository still sorts before a linked worktree of the same repository, so it is the
+  one kept and the one the report names.
+
 ## [0.4.4] - 2026-08-29
 
 ### Changed

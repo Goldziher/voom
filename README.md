@@ -355,7 +355,7 @@ The reporting hook is the one to start with — it fails the commit on findings 
 ```yaml
 repos:
   - repo: https://github.com/Goldziher/voom
-    rev: v0.4.4
+    rev: v0.4.5
     hooks:
       - id: voom-report      # reports, deletes nothing
       # - id: voom-prune     # actually deletes — opt in deliberately
@@ -367,7 +367,7 @@ repos:
 [[hooks.sources]]
 id = "voom"
 git = "https://github.com/Goldziher/voom.git"
-revision = "v0.4.4"
+revision = "v0.4.5"
 hooks = ["voom-report"]
 ```
 
