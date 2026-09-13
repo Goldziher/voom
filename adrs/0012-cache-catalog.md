@@ -157,6 +157,18 @@ alef followed the same path independently: `CACHEDIR.TAG` across sixteen creatio
 one helper, which retires the `Ancestor(6)` climb for `.alef/` altogether in favour of an `Inside`
 anchor that no repository layout can defeat.
 
+> **Correction — 2026-09-13.** The last clause was false, and measurement is what found it. alef's
+> per-project sites tagged `.alef/snippets/` and never `.alef/` itself, so the `Inside` anchor —
+> which requires the marker *directly inside* the candidate — was defeated by the ordinary layout.
+> On the machine this was measured on, **82 of 83 `.alef/` directories carried no tag at their
+> root: voom removed one, worth 0.00 GB, and missed 18.86 GB.** The bug is alef's and was fixed
+> there, by routing the per-project sites through the `ensure_cache_dir_under` helper that already
+> existed for exactly this and whose own doc comment predicted the failure. Two things worth
+> keeping: the generated fixtures could not have caught it, because `tests/catalog_fixtures.rs`
+> places an `Inside` marker at the candidate root — the shape that fails is one level deeper, and
+> now has a hand-written test; and "no layout can defeat it" was a claim about someone else's code
+> that this ADR was in no position to make.
+
 Two things worth keeping from how that went:
 
 - **The tag is worth more to the tool than to voom.** Both authors took it for `tar
