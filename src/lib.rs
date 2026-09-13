@@ -32,6 +32,7 @@ pub mod report;
 pub mod run;
 pub mod size;
 pub mod suggest;
+pub mod tagged;
 // The integration suites cannot see a `#[cfg(test)]` module of the library they link
 // against, and two copies of a fixture helper drift — a snapshot that handled symlinks or
 // separators differently in one suite would have it trusting output the other could not

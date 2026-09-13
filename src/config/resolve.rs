@@ -41,6 +41,8 @@ pub struct Flags {
     pub clean_caches: Vec<String>,
     /// `--no-git`, as `Some(false)`. `None` leaves the decision to configuration.
     pub git: Option<bool>,
+    /// `--clean-tagged`, as `Some(true)`. `None` leaves the decision to configuration.
+    pub clean_tagged: Option<bool>,
 }
 
 /// One compiled `[[paths]]` rule.
@@ -64,6 +66,7 @@ struct Accumulated {
     include: Vec<String>,
     clean_caches: Vec<String>,
     git: Option<bool>,
+    clean_tagged: Option<bool>,
     sources: Vec<PathBuf>,
 }
 
@@ -89,6 +92,8 @@ pub struct Resolved {
     /// Whether an ordinary sweep runs git housekeeping here (ADR 0011). On unless something
     /// turned it off.
     pub git: bool,
+    /// Whether a `CACHEDIR.TAG` alone proves an artifact here (ADR 0013). Off unless asked.
+    pub clean_tagged: bool,
     /// The files that contributed, in ascending precedence.
     pub sources: Vec<PathBuf>,
 }
@@ -316,6 +321,9 @@ impl Resolver {
             // scan root may turn housekeeping back on for a run that was invoked with
             // `--no-git`. On by default, which is what makes it ordinary behaviour.
             git: self.flags.git.or(accumulated.git).unwrap_or(true),
+            // `--clean-tagged`. Off by default: a tagged directory may carry any name, so
+            // nothing about a default run may depend on finding one (ADR 0013).
+            clean_tagged: self.flags.clean_tagged.or(accumulated.clean_tagged).unwrap_or(false),
             sources: accumulated.sources.clone(),
         })
     }
@@ -337,6 +345,9 @@ fn apply(accumulated: &mut Accumulated, layer: &Layer) -> Result<()> {
 
     // Later layer wins, matching every other scalar key: a repository's committed `voom.toml`
     // decides for its own subtree.
+    if let Some(enabled) = layer.file.tagged.enabled {
+        accumulated.clean_tagged = Some(enabled);
+    }
     if let Some(enabled) = layer.file.git.enabled {
         accumulated.git = Some(enabled);
     }

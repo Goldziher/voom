@@ -316,6 +316,21 @@ pub struct PruneArgs {
     #[arg(long, value_name = "IDS", value_delimiter = ',', help_heading = "Selection")]
     pub clean_caches: Vec<String>,
 
+    /// Remove directories that declare themselves regenerable with a `CACHEDIR.TAG`.
+    ///
+    /// The [tag](https://bford.info/cachedir/) is a file a tool writes inside its own cache to
+    /// say the contents can be rebuilt; `tar --exclude-caching`, `rsync --exclude-tag`, Borg and
+    /// restic all honour it. It is the one proof that does not depend on a name or a location, so
+    /// it reaches what the catalog cannot: a `CARGO_TARGET_DIR` pointed at `/tmp`, a build
+    /// directory somebody renamed, a cache belonging to a tool voom has never heard of.
+    ///
+    /// Never on by default, for that same reason — it will take a directory of any name. voom
+    /// verifies the tag's signature rather than trusting the filename, an anchored artifact still
+    /// wins where both apply, and every keep policy and safety rail is unchanged. Also settable
+    /// as `[tagged] enabled = true` in `voom.toml`, which this flag overrides.
+    #[arg(long, help_heading = "Selection")]
+    pub clean_tagged: bool,
+
     /// Let the walk descend into machine-global tool caches and installed toolchains.
     ///
     /// This opens those locations to the walk; it does not make any cache a removal target. What
@@ -454,6 +469,7 @@ impl PruneArgs {
             exclude: self.exclude.clone(),
             include: self.include.clone(),
             clean_caches: self.clean_caches.clone(),
+            clean_tagged: self.clean_tagged.then_some(true),
             // Only ever `Some(false)`: the flag can turn housekeeping off, and nothing turns it
             // on, because it is already on.
             git: self.no_git.then_some(false),

@@ -216,6 +216,23 @@ mod tests {
         }
     }
 
+    /// The third set sharing that one column (ADR 0013). `tagged` must not be an ecosystem id or
+    /// a cache id either, or a reader cannot tell which table produced the line.
+    #[test]
+    fn no_id_collides_with_tagged() {
+        let tagged = crate::classify::TAGGED_ID;
+        assert!(
+            crate::catalog::find(tagged).is_none(),
+            "`{tagged}` is also an ecosystem id, so the report cannot say which"
+        );
+        for cache in CACHES {
+            assert_ne!(
+                cache.id, tagged,
+                "`{tagged}` is also a cache id, so the report cannot say which"
+            );
+        }
+    }
+
     /// A location is joined onto the home directory, so an absolute or climbing one would
     /// escape it — the cache equivalent of the catalog's own containment invariant.
     #[test]

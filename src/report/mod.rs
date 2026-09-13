@@ -28,7 +28,15 @@ use crate::scan::{Skipped, WalkFailure};
 /// `totals.bytes` now answers a different question for the same tree: every byte the run freed,
 /// rather than only the bytes of artifacts that are entirely gone. Since the break was being
 /// spent, `reason` also became specific on a failure instead of always `removal_failed`.
-pub const SCHEMA_VERSION: u32 = 3;
+///
+/// **3** — `source` gained the value `"cache"` for a named machine-global tool cache (ADR 0012),
+/// which no version-2 consumer handles.
+///
+/// **4** — `source` gained the value `"tagged"` for a directory proved by its own `CACHEDIR.TAG`
+/// (ADR 0013). Like `"cache"` it reports a null `artifact` and a null `marker_dir`, and carries
+/// its own id in `ecosystem` — so a version-3 consumer that branches exhaustively on `source`
+/// meets a value it does not know.
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// Process exit codes (ADR 0007). Distinct codes let a hook branch without parsing text.
 pub mod exit {
@@ -332,6 +340,21 @@ pub(crate) mod fixtures {
                 provenance: crate::classify::Provenance::Included {
                     pattern: pattern.to_owned(),
                 },
+            },
+            path,
+            bytes,
+            outcome,
+        }
+    }
+
+    /// An entry for a directory proved by its own `CACHEDIR.TAG` (ADR 0013).
+    pub(crate) fn tagged(path: &str, bytes: u64, outcome: Outcome) -> Entry {
+        let path = PathBuf::from(path);
+        Entry {
+            unreadable: 0,
+            finding: Finding {
+                path: path.clone(),
+                provenance: crate::classify::Provenance::Tagged,
             },
             path,
             bytes,

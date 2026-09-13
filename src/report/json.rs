@@ -60,24 +60,27 @@ fn entry_value(entry: &Entry) -> Value {
         // What the removal actually freed, which for a partial removal is not `bytes`.
         // `sum(artifacts[].reclaimed_bytes) == totals.bytes` holds for every run.
         "reclaimed_bytes": entry.reclaimed_bytes(),
-        // `source` is the field a consumer branches on, and schema 3 added a third value to
-        // it. `ecosystem`, `artifact` and `marker_dir` are null for an unanchored removal, and
-        // a hook that treats a null ecosystem as "unknown" rather than "nothing proved this"
-        // would be reading it wrong. For a cache, `ecosystem` carries the cache id and
-        // `artifact` is null, because no catalog declaration was involved.
+        // `source` is the field a consumer branches on; schema 3 added a third value and
+        // schema 4 a fourth. `ecosystem`, `artifact` and `marker_dir` are null for an unanchored
+        // removal, and a hook that treats a null ecosystem as "unknown" rather than "nothing
+        // proved this" would be reading it wrong. For a cache, `ecosystem` carries the cache id
+        // and `artifact` is null, because no catalog declaration was involved; for a tagged
+        // directory it carries `tagged` on the same grounds.
         "source": match &entry.finding.provenance {
             Provenance::Anchored { .. } => "marker",
             Provenance::Included { .. } => "config-include",
             Provenance::Cache { .. } => "cache",
+            Provenance::Tagged => "tagged",
         },
         "marker_dir": match &entry.finding.provenance {
-            // A cache is proven from inside itself, so the marker directory is the artifact —
-            // repeating `path` here would say nothing, and null says "look at the path".
+            // A cache and a tagged directory are both proven from inside themselves, so the
+            // marker directory is the artifact — repeating `path` here would say nothing, and
+            // null says "look at the path".
             Provenance::Anchored { marker_dir, .. } => Some(marker_dir.display().to_string()),
-            Provenance::Included { .. } | Provenance::Cache { .. } => None,
+            Provenance::Included { .. } | Provenance::Cache { .. } | Provenance::Tagged => None,
         },
         "include_pattern": match &entry.finding.provenance {
-            Provenance::Anchored { .. } | Provenance::Cache { .. } => None,
+            Provenance::Anchored { .. } | Provenance::Cache { .. } | Provenance::Tagged => None,
             Provenance::Included { pattern } => Some(pattern.as_str()),
         },
         "outcome": outcome_value(&entry.outcome),
@@ -209,6 +212,29 @@ mod tests {
     #[test]
     fn should_render_the_documented_shape() {
         insta::assert_json_snapshot!(document_for_tests());
+    }
+
+    /// Schema 4's value. A tagged directory reports its own id in `ecosystem` and nothing in
+    /// `artifact` or `marker_dir`, because no catalog declaration was involved and the proof lies
+    /// inside the path itself.
+    #[test]
+    fn should_mark_a_tagged_removal_with_its_own_source() {
+        let result = crate::report::fixtures::result(
+            vec![crate::report::fixtures::tagged(
+                "/tmp/enterprise-pro-target",
+                27_000_000_000,
+                Outcome::Removed,
+            )],
+            false,
+        );
+
+        let artifact = document(&result)["artifacts"][0].clone();
+
+        assert_eq!(artifact["source"], serde_json::json!("tagged"));
+        assert_eq!(artifact["ecosystem"], serde_json::json!("tagged"));
+        assert_eq!(artifact["artifact"], Value::Null);
+        assert_eq!(artifact["marker_dir"], Value::Null);
+        assert_eq!(artifact["include_pattern"], Value::Null);
     }
 
     /// A hook reading this has to be able to tell a proven removal from one the user's config

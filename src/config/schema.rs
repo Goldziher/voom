@@ -34,6 +34,23 @@ pub struct ConfigFile {
     /// Named machine-global tool caches to remove (ADR 0012). Empty unless asked.
     #[serde(default)]
     pub caches: CachesSection,
+    /// Directories that declare themselves regenerable with a `CACHEDIR.TAG` (ADR 0013). Off
+    /// unless asked.
+    #[serde(default)]
+    pub tagged: TaggedSection,
+}
+
+/// `[tagged]`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaggedSection {
+    /// Whether a directory carrying a valid `CACHEDIR.TAG` is removed on its own declaration.
+    ///
+    /// Unset inherits the layer above and is off at the top, because this is the one route that
+    /// reaches a directory of *any* name. A repository config may turn it on for its own subtree,
+    /// which is the case it exists for — a project whose build output goes somewhere the catalog
+    /// cannot name.
+    pub enabled: Option<bool>,
 }
 
 /// `[caches]`.

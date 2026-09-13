@@ -173,16 +173,59 @@ impl Visitor<'_> {
             // 1.3 s to 7.7 s. Pruning is a recall trade, never a safety one, and this one was
             // measured before it was made.
             Verdict::Skip(reason) => {
-                let prune = is_dir && matches!(reason, SkipReason::NoInnerMarker { .. });
+                // The tagged check runs only where the catalog declined. An anchored verdict is
+                // more specific — it names an ecosystem and an artifact a reader can act on —
+                // so `target/` beside a `Cargo.toml` stays Rust's even though Cargo also tags it.
+                if self.take_if_tagged(path, is_dir, sender) {
+                    return WalkState::Skip;
+                }
+                // ~keep The `NoInnerMarker` prune above is a measured 6x win, and `--clean-tagged`
+                // has to give it up. The prune's premise is that an unproven self-declaring cache
+                // holds nothing worth looking for; a run that asked for tagged directories has
+                // said the opposite, and the directory one level down is exactly where the field
+                // case lived — alef tagged `.alef/snippets/` and not `.alef/`, so pruning at
+                // `.alef/` hid 18.86 GB (see the correction to ADR 0012). The cost is bounded: it
+                // applies only to directories named like an `Inside`-anchored entry, of which a
+                // real tree has a handful.
+                let prune = is_dir && !self.options.clean_tagged && matches!(reason, SkipReason::NoInnerMarker { .. });
                 self.note_skip(sender, path, reason);
                 if prune {
                     return WalkState::Skip;
                 }
             }
-            Verdict::NotACandidate => {}
+            Verdict::NotACandidate => {
+                if self.take_if_tagged(path, is_dir, sender) {
+                    return WalkState::Skip;
+                }
+            }
         }
 
         WalkState::Continue
+    }
+
+    /// Claims `path` when the run asked for tagged directories and this one declares itself.
+    ///
+    /// Returns whether the caller must prune. Pruning is the whole point: a tagged directory is
+    /// an indivisible unit like every other artifact, and descending one is how voom currently
+    /// spends the traversal of a 19 GB relocated `CARGO_TARGET_DIR` to report nothing at all.
+    ///
+    /// ~keep A symlink is never probed. Reading `link/CACHEDIR.TAG` would resolve through the
+    /// link, which is the one thing voom does not do anywhere — and a symlinked artifact could
+    /// not be removed afterwards regardless (ADR 0006). So unlike a named artifact, a symlinked
+    /// tagged directory is not reported-then-refused: there is no way to learn it was tagged
+    /// without doing the thing the rail forbids. `is_dir` is already false for a symlink, since
+    /// the walker does not follow links; the check is named here so nobody later "fixes" it by
+    /// widening the condition.
+    fn take_if_tagged(&self, path: &Path, is_dir: bool, sender: &mpsc::Sender<Message>) -> bool {
+        if !self.options.clean_tagged || !is_dir || !crate::tagged::is_tagged(path) {
+            return false;
+        }
+        let finding = Finding {
+            path: path.to_path_buf(),
+            provenance: Provenance::Tagged,
+        };
+        let _ = sender.send(Message::Found(Box::new(finding)));
+        true
     }
 
     /// Decides what a dependency directory is, without ever entering it.

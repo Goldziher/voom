@@ -200,6 +200,37 @@ A cache whose contents are only shard directories — sccache, zig, NuGet, Maven
 absent: the marker would prove nothing the path had not already said. See
 [ADR 0012](adrs/0012-cache-catalog.md).
 
+## Tagged directories
+
+A catalog entry matches a *name* and a cache entry matches a *location*. Neither can reach a build
+directory that has neither — a `CARGO_TARGET_DIR` pointed at `/tmp`, a `.build-cache/` somebody
+renamed, a cache belonging to a tool voom has never heard of. Measured on one workstation, that was
+104 GB across 53 directories.
+
+`--clean-tagged` reaches them, using the one piece of evidence that needs no name and no location:
+the [`CACHEDIR.TAG`](https://bford.info/cachedir/) the tool wrote *inside* the directory to say the
+contents can be rebuilt. `tar --exclude-caching`, `rsync --exclude-tag`, Borg and restic all honour
+the same file.
+
+```bash
+voom --dry-run --clean-tagged ~ /tmp   # read it first; this takes directories of any name
+```
+
+It is never on by default, and the reasons it is safe anyway are worth stating:
+
+- **The signature is verified**, not the filename. A file someone happened to call `CACHEDIR.TAG`
+  does not license a removal.
+- **An anchored artifact wins** where both apply, so `target/` beside a `Cargo.toml` is still
+  reported as Rust's.
+- **A tagged directory is pruned, not descended** — which makes a sweep *faster*, since a relocated
+  target directory is otherwise walked in full to report nothing.
+- **A symlink is never probed**, because reading through it is the one thing voom does not do.
+- Every keep policy, the protected denylist, containment and the filesystem boundary are unchanged.
+
+Also settable as `[tagged] enabled = true` in a `voom.toml`, which is the useful form for a single
+project whose output goes somewhere the catalog cannot name. See
+[ADR 0013](adrs/0013-tagged-directories.md).
+
 ## Finding what the catalog does not cover
 
 The catalog covers ecosystems, not the cache your own tooling writes into every package

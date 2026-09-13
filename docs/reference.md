@@ -29,6 +29,7 @@ The `Group` column matches `voom --help`'s own grouping.
 | Selection | `--exclude <GLOB>` | | | Never scan this path. Repeatable. Relative to the tree being swept. |
 | Selection | `--include <GLOB>` | | | Remove this path whether or not a marker proves it. Repeatable. Outranks every prune, cannot reach inside a pruned directory, and `--exclude` still wins. |
 | Selection | `--clean-caches <IDS>` | | | Remove these named tool caches. Repeatable, or comma-separated — see `voom caches`. |
+| Selection | `--clean-tagged` | | off | Remove any directory carrying a valid `CACHEDIR.TAG`, on that declaration alone. Reaches relocated and renamed build directories the catalog cannot name. Also `[tagged] enabled`. |
 | Selection | `--caches` | | off | Let the walk descend into tool caches and installed toolchains, which are skipped by default. It removes no cache — that is `--clean-caches`. |
 | Selection | `--config <PATH>` | | discovered hierarchy | Use this configuration file instead of resolving `voom.toml` from the tree. |
 | Keep policies | `--min-age <DURATION>` | | unset | Never remove an artifact modified more recently, e.g. `7d`. |

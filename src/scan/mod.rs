@@ -33,6 +33,10 @@ pub use patterns::PatternSet;
 use visitor::Visitor;
 
 /// How to walk.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "these mirror command-line flags, which are bools by nature"
+)]
 #[derive(Debug)]
 pub struct ScanOptions {
     /// Worker threads. `None` means available parallelism.
@@ -54,6 +58,12 @@ pub struct ScanOptions {
     pub caches: CacheRoots,
     /// Whether to collect the repositories the walk passes, for git housekeeping (ADR 0011).
     pub collect_repositories: bool,
+    /// Whether a directory carrying a valid `CACHEDIR.TAG` is an artifact (ADR 0013).
+    ///
+    /// Off by default and reached only by asking. When on, such a directory is taken whole and
+    /// pruned — which is *less* work than the alternative, because a relocated build directory is
+    /// otherwise descended in full and yields nothing but skips.
+    pub clean_tagged: bool,
 }
 
 impl Default for ScanOptions {
@@ -66,6 +76,7 @@ impl Default for ScanOptions {
             include: PatternSet::default(),
             caches: CacheRoots::default(),
             collect_repositories: false,
+            clean_tagged: false,
         }
     }
 }

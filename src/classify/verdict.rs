@@ -11,6 +11,14 @@ use std::path::PathBuf;
 
 use super::ArtifactId;
 
+/// The id a tagged directory reports in the ecosystem column of both reporters.
+///
+/// It shares that column with every ecosystem id and every cache id, so a reader can tell which
+/// table a line came from only if all three sets stay disjoint. `no_id_collides_with_tagged`
+/// forbids the overlap, the same way `no_cache_id_collides_with_an_ecosystem_id` does for the
+/// other pair.
+pub const TAGGED_ID: &str = "tagged";
+
 /// What the classifier concluded about one directory entry.
 ///
 /// `#[non_exhaustive]` because a new verdict is a change this design expects to make, and after
@@ -66,6 +74,16 @@ pub enum Provenance {
         /// The entry that claimed it.
         cache: &'static crate::caches::Cache,
     },
+    /// A directory that declared itself regenerable with a valid `CACHEDIR.TAG`.
+    ///
+    /// ADR 0013's route, and the only one whose evidence is neither a name nor a location: the
+    /// tool that wrote the directory said inside it that the contents can be rebuilt. That makes
+    /// it the one mechanism able to reach a relocated `CARGO_TARGET_DIR` or a renamed build
+    /// directory, and the reason it is never on by default.
+    ///
+    /// Carries no data: the declaration lives inside the path itself, so there is nothing to
+    /// report that `path` does not already say.
+    Tagged,
 }
 
 /// An artifact voom is entitled to remove.
@@ -83,7 +101,7 @@ impl Finding {
     pub fn artifact(&self) -> Option<ArtifactId> {
         match &self.provenance {
             Provenance::Anchored { artifact, .. } => Some(*artifact),
-            Provenance::Cache { .. } | Provenance::Included { .. } => None,
+            Provenance::Cache { .. } | Provenance::Included { .. } | Provenance::Tagged => None,
         }
     }
 
@@ -91,12 +109,15 @@ impl Finding {
     ///
     /// A cache reports its own id (`cargo-registry`, `uv`) in the same column, because to a
     /// reader scanning the report the question is the same one — what kind of thing was this —
-    /// and the answer is equally definite.
+    /// and the answer is equally definite. A tagged directory answers `tagged` for the same
+    /// reason: it is what proved it, and the column would otherwise be empty on the one route
+    /// whose evidence a reader is most likely to want named.
     #[must_use]
     pub fn ecosystem(&self) -> Option<&'static str> {
         match &self.provenance {
             Provenance::Anchored { artifact, .. } => Some(artifact.ecosystem().id),
             Provenance::Cache { cache } => Some(cache.id),
+            Provenance::Tagged => Some(TAGGED_ID),
             Provenance::Included { .. } => None,
         }
     }

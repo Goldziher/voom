@@ -216,8 +216,10 @@ fn artifact_line(entry: &Entry, base: Option<&Path>, forced: bool) -> Line {
             }
             // A cache says nothing here either: the ecosystem column already carries its id,
             // and the note about what removing it costs belongs to `voom caches` rather than
-            // to every line of every report.
-            Provenance::Anchored { .. } | Provenance::Cache { .. } => None,
+            // to every line of every report. A tagged directory follows the same rule — its
+            // column reads `tagged`, and repeating "declared by CACHEDIR.TAG" on each of the
+            // dozens a real machine has would cost more width than it buys.
+            Provenance::Anchored { .. } | Provenance::Cache { .. } | Provenance::Tagged => None,
         },
     };
     let ecosystem = entry.ecosystem();

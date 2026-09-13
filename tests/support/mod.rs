@@ -48,6 +48,30 @@ pub fn options(root: &Path) -> RunOptions {
     }
 }
 
+/// [`options`] with `--clean-tagged`, for the ADR 0013 tests.
+#[must_use]
+pub fn options_tagged(root: &Path) -> RunOptions {
+    RunOptions {
+        flags: Flags {
+            clean_tagged: Some(true),
+            ..Flags::default()
+        },
+        ..options(root)
+    }
+}
+
+/// The exact bytes a conforming `CACHEDIR.TAG` begins with, per the specification.
+///
+/// Spelled out here rather than imported so a test cannot pass because the constant under test
+/// was changed to match it.
+pub const VALID_TAG: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55\n# regenerable\n";
+
+/// Writes a valid cache tag into `dir`, creating `dir` if needed.
+pub fn tag(dir: &Path) {
+    fs::create_dir_all(dir).expect("the tagged directory");
+    fs::write(dir.join("CACHEDIR.TAG"), VALID_TAG).expect("writing the tag");
+}
+
 /// [`options`] with `--force`, for the tests that are about what a retry reclaims.
 #[must_use]
 pub fn options_forcing(root: &Path) -> RunOptions {

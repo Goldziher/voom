@@ -212,6 +212,7 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
         include: PatternSet::new(at_root.include.clone())?,
         caches: CacheRoots::for_root(root, options.caches, &at_root.clean_caches),
         collect_repositories: at_root.git,
+        clean_tagged: at_root.clean_tagged,
     };
     // Progress goes to stderr so it never contaminates piped stdout, and only when stderr is a
     // terminal — a redirected run gets nothing.

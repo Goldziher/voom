@@ -32,7 +32,7 @@ mod verdict;
 
 pub use selection::ArtifactId;
 pub use selection::Selection;
-pub use verdict::{Finding, Provenance, SkipReason, Verdict};
+pub use verdict::{Finding, Provenance, SkipReason, TAGGED_ID, Verdict};
 
 /// The per-directory configuration file discovered during the walk (ADR 0004).
 pub const CONFIG_FILE_NAME: &str = "voom.toml";
