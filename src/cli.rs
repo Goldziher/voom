@@ -316,7 +316,12 @@ pub struct PruneArgs {
     #[arg(long, value_name = "IDS", value_delimiter = ',', help_heading = "Selection")]
     pub clean_caches: Vec<String>,
 
-    /// Also sweep machine-global tool caches and installed toolchains.
+    /// Let the walk descend into machine-global tool caches and installed toolchains.
+    ///
+    /// This opens those locations to the walk; it does not make any cache a removal target. What
+    /// it finds is ordinary build output that happens to sit inside one — on a typical machine a
+    /// few megabytes of debris, against a much larger scan. To remove a cache itself, name it:
+    /// `--clean-caches <id>`. Run `voom caches` for the table.
     ///
     /// Skipped by default: `~/.cargo/registry`, `~/.pyenv`, `~/google-cloud-sdk` and friends are
     /// shared across every project or are installed programs, not this tree's build output.
@@ -419,6 +424,22 @@ pub fn render_git(
 }
 
 impl PruneArgs {
+    /// The advisory to print when `--caches` was given without naming a cache to remove.
+    ///
+    /// `--caches` only opens cache locations to the *walk*; removing a cache takes
+    /// `--clean-caches <id>` (ADR 0012). The pair is asymmetric enough that asking for the first
+    /// while meaning the second is the ordinary mistake, and it is an expensive one: the walk
+    /// grows by every file under every toolchain on the machine, and what it finds is incidental
+    /// debris rather than any cache. Said once on stderr, so a piped `--format json` stdout is
+    /// untouched.
+    #[must_use]
+    pub fn caches_without_clean_note(&self) -> Option<&'static str> {
+        (self.caches && self.clean_caches.is_empty()).then_some(
+            "note: --caches only lets the walk enter tool caches; it removes none of them. \
+             To remove a cache, name it with --clean-caches <id> (`voom caches` lists them).",
+        )
+    }
+
     /// Turns flags into the overrides that sit above every configuration layer.
     ///
     /// # Errors

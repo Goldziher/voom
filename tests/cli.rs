@@ -566,3 +566,44 @@ fn should_accept_force_and_leave_a_dry_run_byte_identical() {
         "a forced dry run changes nothing at all"
     );
 }
+
+/// `--caches` only opens tool-cache locations to the walk; removing one takes `--clean-caches`
+/// (ADR 0012). Asking for the first while meaning the second is the ordinary mistake, and it is
+/// silent — the run simply scans far more and reports almost nothing. See F1 in the gap analysis
+/// that prompted this: `--caches` over a real home directory bought 22 MB for 78% more scan time.
+#[test]
+fn should_note_that_caches_alone_removes_no_cache() {
+    let tree = mixed_tree();
+    voom()
+        .args(["--dry-run", "--caches"])
+        .arg(tree.path())
+        .assert()
+        .success()
+        .stderr(contains("--clean-caches"));
+}
+
+#[test]
+fn should_not_note_anything_when_a_cache_is_actually_named() {
+    let tree = mixed_tree();
+    voom()
+        .args(["--dry-run", "--caches", "--clean-caches", "uv"])
+        .arg(tree.path())
+        .assert()
+        .success()
+        .stderr(contains("--clean-caches").not());
+}
+
+#[test]
+fn should_keep_the_caches_note_off_stdout() {
+    let tree = mixed_tree();
+    let assert = voom()
+        .args(["--dry-run", "--caches", "--format", "json"])
+        .arg(tree.path())
+        .assert()
+        .success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&stdout).is_ok(),
+        "the advisory must not contaminate a piped JSON document, got: {stdout}"
+    );
+}
