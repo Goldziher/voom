@@ -180,3 +180,24 @@ Two things worth keeping from how that went:
 
 The bar in the section above is unchanged. sccache, zig, NuGet and Maven stay out until their
 authors say the same thing in the same place.
+
+## Amendment — the cache surface collapses into two flags — 2026-09-16
+
+Three options for a machine-global, always-off table was one too many, and the walk-opt-in half
+of it was load-bearing nothing. 0.6.0 removes it:
+
+- **`--caches` is gone.** Its entire effect was letting the walk enumerate *inside* installed
+  toolchains, buying incidental debris for hours of scan time — the measurement in Context above
+  is the whole story. Nothing in the walker can do it anymore: `CACHE_DIRS` is skipped
+  unconditionally, always, and the bullet "`--caches` keeps its existing meaning" is void.
+- **A bare `--clean-caches` removes every entry in `CACHES`**, reversing this ADR's rejection of
+  a no-ids form. `--clean-caches[=<ids>]` is one optional-value flag: bare means the whole table,
+  `--clean-caches=uv,go-build` means what it always did. The `=` is required so the flag can
+  never swallow the next path argument. Nothing else changed — each entry still needs its inside
+  marker, and still passes the same six deletion rails, which is why the bare form is safe to
+  offer at all.
+- **`voom caches` became `--list-caches`.** A machine-cache table is not a noun command surface
+  — the table resolves against a machine, not "the" machine a subcommand implies — and the flag
+  renders from the same code. It exits `0` and never scans.
+- **`git-prune` gained nothing and kept something:** it never had a `--caches` flag of its own,
+  and its discovery walk always skipped `CACHE_DIRS` by default, which is now the only behaviour.

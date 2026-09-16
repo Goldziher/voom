@@ -13,9 +13,12 @@
 //! removing them would have broken an installed pnpm, the bun toolchain and the gcloud SDK
 //! while reclaiming space that those tools re-download on their own terms.
 //!
-//! `--caches` opts back in. Naming one of these paths as an explicit scan root also works
-//! without the flag: the skip applies to what a walk descends into, not to what the user
-//! deliberately points at.
+//! The skip is unconditional: a walk never descends into these roots, and nothing re-opens
+//! them. Naming one of these paths as an explicit scan root still works, because the skip
+//! applies to what a walk wanders into, not to what the user deliberately points at.
+//! `--clean-caches` removes one of these directories (or all of them, with a bare flag) on
+//! marker proof inside it — some are reusable state a tool re-downloads, and removing them is
+//! cheap and safe; installed programs like `~/.pyenv/versions` stay out of the table.
 //!
 //! See `adrs/0001-mission-and-scope.md`, which put these out of scope for v1 and floated the
 //! opt-in flag that now exists.
@@ -123,19 +126,15 @@ pub struct CacheRoots {
 impl CacheRoots {
     /// Resolves the cache directories that sit under `root`.
     ///
-    /// Returns an empty set when caches are enabled, when the home directory cannot be
-    /// determined, or when the root cannot be canonicalized — the caller has already reported a
-    /// root it cannot resolve, and an empty set means "skip nothing", never "skip everything".
+    /// Returns an empty set when the home directory cannot be determined, or when the root
+    /// cannot be canonicalized — the caller has already reported a root it cannot resolve, and
+    /// an empty set means "skip nothing", never "skip everything".
     #[must_use]
-    pub fn for_root(root: &Path, enabled: bool, clean: &[String]) -> Self {
+    pub fn for_root(root: &Path, clean: &[String]) -> Self {
         let Some(home) = dirs::home_dir() else {
             return Self::default();
         };
-        let mut resolved = if enabled {
-            Self::default()
-        } else {
-            Self::under(&home, root)
-        };
+        let mut resolved = Self::under(&home, root);
         resolved.removable = removable_under(&home, root, clean);
         resolved
     }
@@ -187,7 +186,7 @@ impl CacheRoots {
     /// The cache entry this path is, if the run enabled one that lives here.
     ///
     /// Checked before [`contains`](Self::contains) in the walker, so naming a cache reaches it
-    /// without `--caches` having to open the location up wholesale.
+    /// through an otherwise-pruned ancestor.
     #[must_use]
     pub fn removable(&self, path: &Path) -> Option<&'static Cache> {
         if self.removable.is_empty() {
@@ -335,9 +334,13 @@ mod tests {
     }
 
     #[test]
-    fn should_skip_nothing_when_caches_are_enabled() {
+    fn should_always_skip_caches_by_location() {
         let home = home(&[".cargo/registry"]);
-        assert!(CacheRoots::for_root(home.path(), true, &[]).is_empty());
+        let roots = CacheRoots::under_with(home.path(), home.path(), &[]);
+        assert!(
+            roots.contains(&home.path().join(".cargo/registry")),
+            "a sweep always skips an installed toolchain by location"
+        );
     }
 
     /// A cache root that does not exist on this machine must cost nothing and skip nothing.

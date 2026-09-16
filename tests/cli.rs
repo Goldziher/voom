@@ -232,7 +232,7 @@ fn should_print_only_the_footer_with_summary() {
 /// by the unit tests in `src/caches.rs`; what is Unix-only here is the end-to-end wiring.
 #[test]
 #[cfg(unix)]
-fn should_skip_a_tool_cache_under_home_and_sweep_it_with_the_flag() {
+fn should_skip_a_tool_cache_under_home() {
     let home = TempDir::new().unwrap();
     let cache = home.path().join(".npm/_cacache/pkg");
     fs::create_dir_all(cache.join("dist")).unwrap();
@@ -251,25 +251,17 @@ fn should_skip_a_tool_cache_under_home_and_sweep_it_with_the_flag() {
         .assert()
         .success()
         .stdout(contains("project/dist").and(contains("_cacache").not()));
-
-    voom()
-        .env("HOME", home.path())
-        .args(["--dry-run", "--caches", "--format", "json"])
-        .arg(home.path())
-        .assert()
-        .success()
-        .stdout(contains("project/dist").and(contains("_cacache")));
 }
 
 /// Pointing voom *at* a cache is explicit intent. The skip is a rule about what a walk wanders
-/// into, not about what the user asked for, so it must not need the flag.
+/// into, not about what the user asked for, so naming the cache as the scan root must reach it.
 ///
 /// Unix only for the reason above — and this one had to be gated rather than left alone,
 /// because on Windows the fake `HOME` was ignored, no cache root resolved, and the assertion
 /// passed without the skip logic ever running. A test that cannot fail is not a test.
 #[test]
 #[cfg(unix)]
-fn should_sweep_a_cache_named_as_the_scan_root_without_the_flag() {
+fn should_sweep_a_cache_named_as_the_scan_root() {
     let home = TempDir::new().unwrap();
     let cache = home.path().join(".npm/_cacache/pkg");
     fs::create_dir_all(cache.join("dist")).unwrap();
@@ -567,43 +559,93 @@ fn should_accept_force_and_leave_a_dry_run_byte_identical() {
     );
 }
 
-/// `--caches` only opens tool-cache locations to the walk; removing one takes `--clean-caches`
-/// (ADR 0012). Asking for the first while meaning the second is the ordinary mistake, and it is
-/// silent — the run simply scans far more and reports almost nothing. See F1 in the gap analysis
-/// that prompted this: `--caches` over a real home directory bought 22 MB for 78% more scan time.
+/// `--list-caches` prints the cache table and exits without ever scanning, so it must leave a
+/// tree untouched regardless of what it holds.
 #[test]
-fn should_note_that_caches_alone_removes_no_cache() {
+fn should_list_caches_without_scanning() {
     let tree = mixed_tree();
+    let before = snapshot(tree.path());
+
     voom()
-        .args(["--dry-run", "--caches"])
+        .args(["--list-caches"])
         .arg(tree.path())
         .assert()
         .success()
-        .stderr(contains("--clean-caches"));
+        .stdout(contains("cargo-registry"));
+
+    assert_eq!(
+        snapshot(tree.path()),
+        before,
+        "listing the cache table must not scan or remove"
+    );
 }
 
+/// A bare `--clean-caches` means "every cache the table knows about": both the proven survivors
+/// go, each still on marker proof, and a location whose marker is absent is left alone. Driven
+/// with a fake `HOME`, which is process-scoped and so leaves other tests alone.
 #[test]
-fn should_not_note_anything_when_a_cache_is_actually_named() {
-    let tree = mixed_tree();
+#[cfg(unix)]
+fn should_clean_every_proven_cache_with_a_bare_flag() {
+    let home = TempDir::new().unwrap();
+
+    let registry = home.path().join(".cargo/registry");
+    fs::create_dir_all(registry.join("src")).unwrap();
+    fs::write(registry.join("CACHEDIR.TAG"), b"Signature: 8e477066c4a3e6a4\n").unwrap();
+
+    let cacache = home.path().join(".npm/_cacache");
+    fs::create_dir_all(&cacache).unwrap();
+    fs::write(cacache.join("leftovers.o"), b"x").unwrap();
+
     voom()
-        .args(["--dry-run", "--caches", "--clean-caches", "uv"])
-        .arg(tree.path())
-        .assert()
-        .success()
-        .stderr(contains("--clean-caches").not());
-}
-
-#[test]
-fn should_keep_the_caches_note_off_stdout() {
-    let tree = mixed_tree();
-    let assert = voom()
-        .args(["--dry-run", "--caches", "--format", "json"])
-        .arg(tree.path())
+        .env("HOME", home.path())
+        .args(["--clean-caches"])
+        .arg(home.path())
         .assert()
         .success();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+
+    assert!(!registry.exists(), "a proven cache is removed by a bare --clean-caches");
+    assert!(cacache.exists(), "an unproven cache is left alone");
+}
+
+/// `--clean-caches=<ids>` removes only the named caches, so the command can stay explicit about
+/// what survives when a run sweeps a real home directory.
+#[test]
+#[cfg(unix)]
+fn should_clean_only_the_named_caches() {
+    let home = TempDir::new().unwrap();
+
+    let registry = home.path().join(".cargo/registry");
+    fs::create_dir_all(registry.join("src")).unwrap();
+    fs::write(registry.join("CACHEDIR.TAG"), b"Signature: 8e477066c4a3e6a4\n").unwrap();
+
+    let cacache = home.path().join(".npm/_cacache/content-v2");
+    fs::create_dir_all(&cacache).unwrap();
+    fs::write(cacache.join("blob"), b"x").unwrap();
+
+    voom()
+        .env("HOME", home.path())
+        .args(["--clean-caches=cargo-registry"])
+        .arg(home.path())
+        .assert()
+        .success();
+
+    assert!(!registry.exists(), "the named cache is removed");
     assert!(
-        serde_json::from_str::<serde_json::Value>(&stdout).is_ok(),
-        "the advisory must not contaminate a piped JSON document, got: {stdout}"
+        cacache.exists(),
+        "a cache that was not named survives — including when it is proven"
     );
+}
+
+/// A mistyped id removes nothing and must fail rather than report success, which would be
+/// indistinguishable from an empty cache.
+#[test]
+fn should_reject_an_unknown_cache_id() {
+    let tree = mixed_tree();
+    voom()
+        .args(["--clean-caches=nope"])
+        .arg(tree.path())
+        .assert()
+        .failure()
+        .stderr(contains("not a known cache"));
+    assert_eq!(snapshot(tree.path()), snapshot(tree.path()), "nothing was touched");
 }

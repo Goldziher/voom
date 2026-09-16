@@ -119,8 +119,6 @@ pub struct GitPruneOptions {
     pub timeout: Duration,
     /// Paths never searched.
     pub exclude: PatternSet,
-    /// Whether to search machine-global tool caches and installed toolchains too.
-    pub caches: bool,
     /// Whether to prune remote-tracking branches whose upstream is gone.
     ///
     /// **Off by default, and not available to a sweep at all.** `git remote prune` contacts the
@@ -148,7 +146,6 @@ impl Default for GitPruneOptions {
             one_file_system: true,
             timeout: DEFAULT_TIMEOUT,
             exclude: PatternSet::default(),
-            caches: false,
             remotes: false,
             worktree_expire: WORKTREE_PRUNE_EXPIRE.to_owned(),
             count_objects: false,

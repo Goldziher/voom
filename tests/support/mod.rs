@@ -40,7 +40,6 @@ pub fn options(root: &Path) -> RunOptions {
         jobs: Some(2),
         one_file_system: true,
         force: false,
-        caches: false,
         verbose: true,
         config: None,
         progress: false,

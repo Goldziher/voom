@@ -59,7 +59,7 @@ pub enum Error {
     ///
     /// Rejected for the same reason as an unknown ecosystem: a mistyped id would otherwise
     /// remove nothing and report success, which is indistinguishable from an empty cache.
-    #[error("`{id}` is not a known cache — run `voom caches` to see the table")]
+    #[error("`{id}` is not a known cache — run `voom --list-caches` to see the table")]
     UnknownCache {
         /// What was asked for.
         id: String,

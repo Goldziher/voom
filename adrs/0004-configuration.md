@@ -157,7 +157,7 @@ alternative would mean asking at every prune whether some glob might match an un
 descendant, which a glob cannot answer without walking the subtree — and directory-level pruning
 is where essentially all the wall-clock saving comes from (ADR 0005). It also fails toward not
 deleting, which is the direction `safety-first` asks for. A user who wants a path inside a cache
-swept names the cache as a scan root, or passes `--caches`. Both halves are pinned by
+swept names the cache as a scan root. Both halves are pinned by
 `src/scan.rs::should_let_an_include_name_a_tool_cache_outright` and
 `should_not_let_an_include_reach_inside_a_pruned_directory`.
 

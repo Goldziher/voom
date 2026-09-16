@@ -47,7 +47,7 @@ src/
   run.rs        the pipeline, wired: RunOptions in, RunResult out
   config/       hierarchical TOML: load, merge, resolve (ADR 0004)
   catalog/      static ecosystem table (ADR 0003), one module per group
-  caches.rs     the machine-global cache and toolchain roots a walk skips (--caches)
+  caches.rs     the machine-global cache and toolchain roots a walk always skips (--clean-caches)
   scan.rs       parallel walker + subtree pruning (ADR 0005)
   classify.rs   marker anchoring (ADR 0002)
   names.rs      allocation-free file-name matching behind markers and candidates

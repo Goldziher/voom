@@ -3,6 +3,8 @@
 - Status: Accepted
 - Date: 2026-08-28
 - Updated: 2026-08-28 — `--caches` shipped; recorded the wider skip list and why.
+- Updated: 2026-09-16 — `--caches` removed; the skip list is now unconditional. See the correction
+  below.
 - Updated: 2026-08-28 — dependency directories are in the catalog, off by default, behind
   `--clean-dependencies`. See the second amendment.
 
@@ -121,6 +123,12 @@ The numbers behind the decision were measured on the author's `$HOME`, not estim
 skip, a sweep found 469 artifacts, 301 of them inside what became the skip list — including that
 installed pnpm. After the skip, the same sweep finds 174 artifacts, 172 of them real projects
 under `~/workspace`. `--caches` restores the full set (475).
+
+**Correction — 2026-09-16.** The `--caches` opt-in above no longer exists: 0.6.0 removed it, so
+the skip list is unconditional (ADR 0012's amendment). "A user who wants one of these locations
+swept names it as a scan root" is unchanged — root intent still outranks a walk heuristic — and a
+*removable* cache is reached by `--clean-caches[=<ids>]` rather than by opening the location to
+the walk.
 
 Like the protected-path denylist (ADR 0006), `CACHE_DIRS` (`src/caches.rs`) is append-only:
 entries may be added, but removing or narrowing one requires an ADR amendment explaining why it

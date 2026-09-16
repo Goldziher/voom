@@ -98,10 +98,10 @@ impl Visitor<'_> {
             return WalkState::Skip;
         }
 
-        // A named cache is checked before the blanket skip below, so `--clean-caches uv`
-        // reaches `~/.cache/uv` without `--caches` having to open every cache location at
-        // once. The marker still has to prove it (ADR 0012): the id says which directory to
-        // look at, never that it may go.
+        // A named cache is checked before the blanket skip below, so `--clean-caches=uv`
+        // reaches `~/.cache/uv` without opening every cache location at once. The marker still
+        // has to prove it (ADR 0012): the id says which directory to look at, never that it may
+        // go.
         if is_dir && let Some(cache) = self.options.caches.removable(path) {
             self.visit_named_cache(path, cache, sender);
             // Skipped either way: a cache is an indivisible unit like any other artifact, and

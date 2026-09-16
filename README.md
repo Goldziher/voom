@@ -112,8 +112,9 @@ voom --dry-run --verbose ~                                  # preview, with a re
 voom --min-age 7d ~                                          # only artifacts untouched for a week
 voom --ecosystem rust --ecosystem node ~                     # only these ecosystems
 voom --format json ~ | jq '.totals'                          # machine-readable
-voom --dry-run --caches ~                                    # include tool caches, skipped by default
-voom --dry-run --clean-caches cargo-registry,uv,go-build ~   # remove named tool caches by id
+voom --list-caches                                           # the tool caches this machine holds
+voom --dry-run --clean-caches ~                              # remove every proven tool cache
+voom --dry-run --clean-caches=cargo-registry,uv ~            # remove these named tool caches
 voom --dry-run --include .mytool-cache ~/projects            # sweep something the catalog misses
 voom --dry-run --clean-dependencies ~                        # also node_modules/, vendor/, deps/, .venv/
 voom --no-git ~                                               # skip the git housekeeping a sweep does
@@ -125,7 +126,7 @@ Run `voom --help` for the full, grouped list, or see the
 
 Exit codes: `0` clean, `1` some artifacts could not be removed (a partial removal counts), `2`
 usage or config error, `3` findings with `--dry-run --exit-code` (for hooks). Git housekeeping
-never fails a sweep. `catalog`, `caches`, `config show` and `suggest` always exit `0`.
+never fails a sweep. `catalog`, `--list-caches`, `config show` and `suggest` always exit `0`.
 
 ### Options
 
@@ -151,7 +152,8 @@ one costs a re-download and can break offline work. `--clean-dependencies` turns
 
 **3. Tool caches and installed toolchains are skipped by location**, not name — an installed pnpm
 sits beside a real `package.json` and is otherwise indistinguishable from a project someone built.
-`--caches` opts back in; naming one of those paths as a scan root sweeps it regardless.
+The skip is unconditional: nothing re-opens those locations, though naming one of those paths as
+a scan root sweeps it anyway, because root intent outranks a walk heuristic.
 
 **4. Six rails you cannot switch off.** Symlinks and Windows reparse points are refused rather than
 followed. Every target is canonicalized. An append-only denylist protects `/`, `$HOME` itself,
@@ -167,8 +169,8 @@ Full reasoning in [ADR 0002](adrs/0002-marker-anchored-classification.md) and
 ## Cache catalog
 
 The ecosystem catalog covers build output; it has nothing to say about `~/.cargo/registry` or
-`~/.cache/uv`, which are machine-global downloads rather than anything a project built. `voom
-caches` lists the ones voom knows how to empty by name:
+`~/.cache/uv`, which are machine-global downloads rather than anything a project built.
+`voom --list-caches` lists the ones voom knows how to empty by name:
 
 | id | Cache | Location(s) |
 | --- | --- | --- |
@@ -189,11 +191,12 @@ The id is what `--clean-caches` and `[caches] enable` take — not always the to
 cache id and an ecosystem id sharing one word would leave a report unable to say which table a
 line came from. Each is proven the way everything else is: not by its path, but by a marker the
 tool wrote *inside* it, most often the cross-tool [`CACHEDIR.TAG`](https://bford.info/cachedir/).
-None is on by default and none is reachable without naming it:
+None is ever removed without that marker, and unless it lies under the tree being swept:
 
 ```bash
-voom caches                                  # the table, resolved against this machine
-voom --dry-run --clean-caches uv,go-build ~  # then remove the ones you named
+voom --list-caches                      # the table, resolved against this machine
+voom --dry-run --clean-caches ~         # a bare flag: every proven cache under the root
+voom --dry-run --clean-caches=uv,go-build ~   # or the ones you name, comma-separated with `=`
 ```
 
 A cache whose contents are only shard directories — sccache, zig, NuGet, Maven — is deliberately

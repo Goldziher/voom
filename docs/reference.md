@@ -28,9 +28,9 @@ The `Group` column matches `voom --help`'s own grouping.
 | Selection | `--clean-dependencies` | | off | Also remove `node_modules/`, Rust, composer and Go `vendor/`, mix `deps/` and Python virtualenvs. Sugar over `--enable`-ing each. |
 | Selection | `--exclude <GLOB>` | | | Never scan this path. Repeatable. Relative to the tree being swept. |
 | Selection | `--include <GLOB>` | | | Remove this path whether or not a marker proves it. Repeatable. Outranks every prune, cannot reach inside a pruned directory, and `--exclude` still wins. |
-| Selection | `--clean-caches <IDS>` | | | Remove these named tool caches. Repeatable, or comma-separated — see `voom caches`. |
+| Selection | `--clean-caches[=<IDS>]` | | empty | Remove tool caches under the swept tree, each still on its marker. Bare `--clean-caches` removes every cache the table knows about; `--clean-caches=uv,go-build` removes named ones, repeatable or comma-separated. The `=` is required or clap reads the next argument as a path. See `--list-caches`. |
 | Selection | `--clean-tagged` | | off | Remove any directory carrying a valid `CACHEDIR.TAG`, on that declaration alone. Reaches relocated and renamed build directories the catalog cannot name. Also `[tagged] enabled`. |
-| Selection | `--caches` | | off | Let the walk descend into tool caches and installed toolchains, which are skipped by default. It removes no cache — that is `--clean-caches`. |
+| Output | `--list-caches` | | | Print the tool-cache table, resolved against this machine, and exit without scanning. Always exits `0`. |
 | Selection | `--config <PATH>` | | discovered hierarchy | Use this configuration file instead of resolving `voom.toml` from the tree. |
 | Keep policies | `--min-age <DURATION>` | | unset | Never remove an artifact modified more recently, e.g. `7d`. |
 | Keep policies | `--min-size <SIZE>` | | unset | Skip artifacts smaller than this, e.g. `1MB`. |
@@ -42,7 +42,6 @@ The `Group` column matches `voom --help`'s own grouping.
 | Command | What it does |
 | --- | --- |
 | `voom catalog` | Print the built-in ecosystem catalog. Always exits `0`. |
-| `voom caches` | Print the tool-cache table, resolved against this machine. Always exits `0`. |
 | `voom config show [PATH]` | Print the fully merged, resolved configuration and the files it came from. `PATH` defaults to `.`. Always exits `0`. |
 | `voom suggest [PATHS]` | Rank repeated directories a `.gitignore` names that the catalog does not cover. Removes nothing. Takes `--one-file-system[=BOOL]` and `-j`/`--jobs <N>`. Always exits `0`. |
 | `voom watch [PATHS]` | Keep a tree pruned continuously. `--debounce <DURATION>` (default `5s`), `--quiet-period <DURATION>` (default `60s`). Sweep flags come from the top-level arguments. |

@@ -249,7 +249,7 @@ fn walk(
     visit: impl Fn(&ignore::DirEntry, bool) -> WalkState + Send + Sync,
 ) {
     for root in roots {
-        let caches = CacheRoots::for_root(root, false, &[]);
+        let caches = CacheRoots::for_root(root, &[]);
         let mut builder = WalkBuilder::new(root);
         builder
             .git_ignore(false)

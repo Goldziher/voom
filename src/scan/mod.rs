@@ -315,7 +315,7 @@ mod tests {
     /// prune, whether some glob might match an unknown descendant, which globs cannot answer.
     ///
     /// It fails toward not deleting, which is the direction `safety-first` asks for. A user who
-    /// wants a path inside a cache swept names the cache as a scan root, or passes `--caches`.
+    /// wants a path inside a cache swept names the cache as a scan root.
     #[test]
     fn should_not_let_an_include_reach_inside_a_pruned_directory() {
         let fixture = tree(&[".npm/_cacache/pkg/leftovers.o"]);
@@ -357,7 +357,6 @@ mod tests {
         );
     }
 
-    /// The same tree with `--caches`, which is the whole point of the flag.
     /// A named cache is proven the way everything else is. The location says which directory
     /// to look at; the marker inside says whether it may go. Without the marker it stays, and
     /// this is the data-loss regression test for the whole cache table.
@@ -495,27 +494,6 @@ mod tests {
         );
 
         assert!(scan.findings.is_empty(), "{:?}", found(&scan, fixture.path()));
-    }
-
-    #[test]
-    fn should_descend_into_a_tool_cache_when_asked_to() {
-        let fixture = tree(&[
-            ".npm/_cacache/pkg/package.json",
-            ".npm/_cacache/pkg/dist/bundle.js",
-            "project/package.json",
-            "project/dist/bundle.js",
-        ]);
-        let options = ScanOptions {
-            caches: CacheRoots::for_root(fixture.path(), true, &[]),
-            ..verbose()
-        };
-
-        let scan = run(fixture.path(), &options);
-
-        assert_eq!(
-            found(&scan, fixture.path()),
-            vec![".npm/_cacache/pkg/dist", "project/dist"]
-        );
     }
 
     /// The regression test the walker configuration exists for.

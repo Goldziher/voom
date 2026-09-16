@@ -33,7 +33,7 @@
 pub struct Cache {
     /// The id `--clean-caches` and `voom.toml` name it by.
     pub id: &'static str,
-    /// Human label for `voom caches`.
+    /// Human label for `--list-caches`.
     pub name: &'static str,
     /// Locations relative to the user's home directory. Several when a tool's cache moved or
     /// differs by platform; every one of them must satisfy `markers` on its own.
@@ -41,7 +41,7 @@ pub struct Cache {
     /// Names that must appear *inside* the directory for it to be one. Any one is enough, and
     /// an empty list is rejected at construction time.
     pub markers: &'static [&'static str],
-    /// What removing it costs, printed by `voom caches`. Always a re-download or a rebuild,
+    /// What removing it costs, printed by `--list-caches`. Always a re-download or a rebuild,
     /// never lost work — an entry that cannot say so does not belong here.
     pub note: &'static str,
 }

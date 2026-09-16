@@ -34,11 +34,6 @@ fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
             voom::cli::render_catalog(&mut out).context("writing the catalog")?;
             Ok(exit::SUCCESS)
         }
-        Some(Command::Caches) => {
-            let mut out = anstream::stdout().lock();
-            voom::cli::render_caches(&mut out).context("writing the cache table")?;
-            Ok(exit::SUCCESS)
-        }
         Some(Command::Config {
             action: ConfigAction::Show { path },
         }) => {
@@ -58,13 +53,6 @@ fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
     }
 }
 
-/// Say once, on stderr, when `--caches` was asked for but nothing was named to remove.
-fn note_caches_without_clean(prune: &voom::cli::PruneArgs) {
-    if let Some(note) = prune.caches_without_clean_note() {
-        let _ = writeln!(anstream::stderr(), "{note}");
-    }
-}
-
 /// `voom git-prune`: git's own housekeeping, run on its own.
 fn git_prune(cli: &Cli, args: &voom::cli::GitPruneArgs) -> anyhow::Result<i32> {
     let options = args.to_git_options(&cli.prune)?;
@@ -78,7 +66,6 @@ fn git_prune(cli: &Cli, args: &voom::cli::GitPruneArgs) -> anyhow::Result<i32> {
 }
 
 fn watch(cli: &Cli, args: &voom::cli::WatchArgs) -> anyhow::Result<i32> {
-    note_caches_without_clean(&cli.prune);
     let options = args.to_run_options(&cli.prune)?;
     let watch_options = args.to_watch_options()?;
 
@@ -108,7 +95,12 @@ fn watch(cli: &Cli, args: &voom::cli::WatchArgs) -> anyhow::Result<i32> {
 }
 
 fn prune(cli: &Cli) -> anyhow::Result<i32> {
-    note_caches_without_clean(&cli.prune);
+    if cli.prune.list_caches {
+        let mut out = anstream::stdout().lock();
+        voom::cli::render_caches(&mut out).context("writing the cache table")?;
+        return Ok(exit::SUCCESS);
+    }
+
     let options = cli.prune.to_run_options()?;
     let result = voom::run::run(&options).context("scanning")?;
 

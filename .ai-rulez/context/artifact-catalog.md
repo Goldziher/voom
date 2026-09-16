@@ -75,8 +75,9 @@ Machine-global tool caches and installed toolchains (`~/.cargo/registry`, `~/.np
 `~/google-cloud-sdk`) are likewise not catalog entries. They are excluded by *location* instead,
 in `CACHE_DIRS` (`src/caches.rs`), because marker anchoring cannot tell an installed program
 from a project that was built in place — an installed pnpm really does sit beside a real
-`package.json`. `--caches` opts back in. That list is append-only for the same reason the
-protected-path denylist is; see the ADR 0001 amendment.
+`package.json`. The skip is unconditional: nothing re-opens those locations, and a removable
+cache is reached by `--clean-caches[=<ids>]` or `[caches] enable`. That list is append-only for
+the same reason the protected-path denylist is; see the ADR 0001 amendment.
 
 ## Invariants the tests enforce
 

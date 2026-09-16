@@ -7,6 +7,24 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
+## [0.6.0] - 2026-09-16
+
+### Changed
+
+- **The cache surface is now two flags.** `--clean-caches` gained a bare form that removes
+  every cache the table knows about; `--clean-caches=<ids>` keeps its named form (with a
+  required `=`, matching `--one-file-system`, so the flag can never swallow the next path
+  argument). `voom caches` is now `--list-caches`, which prints the table and exits without
+  scanning.
+
+### Removed
+
+- **`--caches` is gone.** It never removed anything — it only let the walk enumerate inside
+  installed toolchains and tool caches, buying incidental debris for hours of scan time (see
+  ADR 0012's context). The location skip is now unconditional, and a cache is reached by
+  `--clean-caches[=<ids>]` or `[caches] enable` rather than by opening the location to the walk.
+  `git-prune` no longer carries a corresponding option either.
+
 ## [0.4.5] - 2026-08-31
 
 ### Fixed

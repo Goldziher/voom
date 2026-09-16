@@ -43,9 +43,6 @@ pub struct RunOptions {
     pub one_file_system: bool,
     /// Retry a failed removal, repairing permissions inside the artifact first.
     pub force: bool,
-    /// Sweep machine-global tool caches and installed toolchains too, which are skipped by
-    /// default (ADR 0001).
-    pub caches: bool,
     /// Record why candidates were passed over.
     pub verbose: bool,
     /// `--config`, which replaces the discovered hierarchy.
@@ -210,7 +207,7 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
         collect_skips: options.verbose,
         exclude: PatternSet::new(at_root.exclude.clone())?,
         include: PatternSet::new(at_root.include.clone())?,
-        caches: CacheRoots::for_root(root, options.caches, &at_root.clean_caches),
+        caches: CacheRoots::for_root(root, &at_root.clean_caches),
         collect_repositories: at_root.git,
         clean_tagged: at_root.clean_tagged,
     };
@@ -304,7 +301,6 @@ fn prune_repositories(
         dry_run: options.dry_run,
         one_file_system: options.one_file_system,
         exclude: PatternSet::new(at_root.exclude.clone())?,
-        caches: options.caches,
         // Deliberately not `jobs`: this runs on the ambient pool, which `run` already built to
         // honour `-j`. Setting it here would nest a second pool inside that one.
         ..crate::git::GitPruneOptions::default()
@@ -499,7 +495,6 @@ mod tests_support {
             jobs: Some(2),
             one_file_system: true,
             force: false,
-            caches: false,
             verbose: true,
             config: None,
             flags: Flags::default(),

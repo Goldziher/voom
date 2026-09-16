@@ -39,11 +39,6 @@ pub enum Command {
     /// This is generated from the same table the classifier reads, so it cannot drift from
     /// what voom will actually do.
     Catalog,
-    /// Print the machine-global tool caches `--clean-caches` can remove.
-    ///
-    /// Generated from the same table the walker reads, and annotated with whether each
-    /// location exists on this machine and whether its marker is there to prove it.
-    Caches,
     /// Inspect configuration.
     Config {
         /// What to show.
@@ -306,15 +301,32 @@ pub struct PruneArgs {
     #[arg(long, value_name = "GLOB", help_heading = "Selection")]
     pub include: Vec<String>,
 
-    /// Remove these named machine-global tool caches. Repeatable, or comma-separated.
+    /// Remove named machine-global tool caches; with no ids, remove every cache the table
+    /// knows about.
     ///
     /// Each is proven the way everything else is — by a marker the tool wrote inside the
-    /// directory, at a location that names the tool — and none is ever on by default. Run
-    /// `voom caches` for the table, what each one costs to lose, and whether it exists here.
+    /// directory, at a location that names the tool — and a cache is never removed unless it
+    /// lies under the tree being swept. A bare `--clean-caches` asks for the whole table; the
+    /// ids form is `--clean-caches=uv,go-build`, repeatable for several. The `=` is required so
+    /// the flag can never swallow the next path argument.
     ///
-    /// Naming a cache reaches it on its own: `--caches` is not also needed.
-    #[arg(long, value_name = "IDS", value_delimiter = ',', help_heading = "Selection")]
+    /// Run `--list-caches` for the table, what each one costs to lose, and whether it exists
+    /// here.
+    #[arg(
+        long,
+        value_name = "IDS",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "all",
+        value_delimiter = ',',
+        help_heading = "Selection"
+    )]
     pub clean_caches: Vec<String>,
+
+    /// Print the machine-global tool caches `--clean-caches` can remove, and exit without
+    /// scanning.
+    #[arg(long, help_heading = "Output")]
+    pub list_caches: bool,
 
     /// Remove directories that declare themselves regenerable with a `CACHEDIR.TAG`.
     ///
@@ -330,18 +342,6 @@ pub struct PruneArgs {
     /// as `[tagged] enabled = true` in `voom.toml`, which this flag overrides.
     #[arg(long, help_heading = "Selection")]
     pub clean_tagged: bool,
-
-    /// Let the walk descend into machine-global tool caches and installed toolchains.
-    ///
-    /// This opens those locations to the walk; it does not make any cache a removal target. What
-    /// it finds is ordinary build output that happens to sit inside one — on a typical machine a
-    /// few megabytes of debris, against a much larger scan. To remove a cache itself, name it:
-    /// `--clean-caches <id>`. Run `voom caches` for the table.
-    ///
-    /// Skipped by default: `~/.cargo/registry`, `~/.pyenv`, `~/google-cloud-sdk` and friends are
-    /// shared across every project or are installed programs, not this tree's build output.
-    #[arg(long, help_heading = "Selection")]
-    pub caches: bool,
 
     /// Use this configuration file instead of the discovered hierarchy.
     #[arg(long, value_name = "PATH", help_heading = "Selection")]
@@ -409,7 +409,6 @@ impl GitPruneArgs {
                 .transpose()?
                 .unwrap_or(crate::git::DEFAULT_TIMEOUT),
             exclude: crate::scan::PatternSet::new(prune.exclude.clone())?,
-            caches: prune.caches,
             remotes: self.remotes,
             worktree_expire: self
                 .expire
@@ -439,20 +438,17 @@ pub fn render_git(
 }
 
 impl PruneArgs {
-    /// The advisory to print when `--caches` was given without naming a cache to remove.
+    /// The ids a bare `--clean-caches` expands to: every cache the table knows about.
     ///
-    /// `--caches` only opens cache locations to the *walk*; removing a cache takes
-    /// `--clean-caches <id>` (ADR 0012). The pair is asymmetric enough that asking for the first
-    /// while meaning the second is the ordinary mistake, and it is an expensive one: the walk
-    /// grows by every file under every toolchain on the machine, and what it finds is incidental
-    /// debris rather than any cache. Said once on stderr, so a piped `--format json` stdout is
-    /// untouched.
+    /// A bare flag supplies the sentinel `all` (see the `default_missing_value` on the field),
+    /// which has no entry in the catalog and would otherwise be rejected as an unknown id. Named
+    /// ids pass through untouched, including an explicit `--clean-caches=all`.
     #[must_use]
-    pub fn caches_without_clean_note(&self) -> Option<&'static str> {
-        (self.caches && self.clean_caches.is_empty()).then_some(
-            "note: --caches only lets the walk enter tool caches; it removes none of them. \
-             To remove a cache, name it with --clean-caches <id> (`voom caches` lists them).",
-        )
+    fn clean_caches_ids(&self) -> Vec<String> {
+        if self.clean_caches.iter().any(|id| id == "all") {
+            return crate::caches::CACHES.iter().map(|cache| cache.id.to_owned()).collect();
+        }
+        self.clean_caches.clone()
     }
 
     /// Turns flags into the overrides that sit above every configuration layer.
@@ -468,7 +464,7 @@ impl PruneArgs {
             keep: self.keep()?,
             exclude: self.exclude.clone(),
             include: self.include.clone(),
-            clean_caches: self.clean_caches.clone(),
+            clean_caches: self.clean_caches_ids(),
             clean_tagged: self.clean_tagged.then_some(true),
             // Only ever `Some(false)`: the flag can turn housekeeping off, and nothing turns it
             // on, because it is already on.
@@ -519,7 +515,6 @@ impl PruneArgs {
             jobs: self.jobs,
             one_file_system: self.one_file_system,
             force: self.force,
-            caches: self.caches,
             // JSON always carries skip detail — a machine consumer has no `--verbose` to reach
             // for and paying for the detail is cheaper than a second run.
             verbose: self.verbose || self.format == Format::Json,
@@ -623,11 +618,13 @@ pub fn render_caches(out: &mut impl io::Write) -> io::Result<()> {
     }
     writeln!(
         out,
-        "None of these is ever removed by default. Name one to remove it: `--clean-caches <id>`,"
+        "None of these is ever removed unless it lies under the tree being swept, and never \
+         without its marker. A bare `--clean-caches` removes every cache; `--clean-caches=<id>` \
+         removes one, comma-separated for several."
     )?;
     writeln!(
         out,
-        "or `[caches] enable = [\"<id>\"]` in voom.toml. A marker still has to prove it."
+        "The same ids can sit in `[caches] enable = [\"<id>\"]` in voom.toml."
     )?;
     writeln!(
         out,

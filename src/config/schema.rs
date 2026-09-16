@@ -57,7 +57,7 @@ pub struct TaggedSection {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CachesSection {
-    /// Cache ids this configuration enables, as `voom caches` lists them.
+    /// Cache ids this configuration enables, as `voom --list-caches` lists them.
     ///
     /// Additive across the hierarchy, like `include`: a repository config may add one, and
     /// nothing removes one, because a cache is machine-global and a per-repository file has no
