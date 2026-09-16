@@ -16,7 +16,10 @@ fi
 VERSION="$1"
 SUMS="$2"
 
-[[ -f "$SUMS" ]] || { echo "checksums file not found: $SUMS" >&2; exit 1; }
+[[ -f "$SUMS" ]] || {
+  echo "checksums file not found: $SUMS" >&2
+  exit 1
+}
 
 BASE="https://github.com/Goldziher/voom/releases/download/v${VERSION}"
 
@@ -30,7 +33,7 @@ LINUX_ARM="$(sha_for aarch64-unknown-linux-gnu)"
 LINUX_X64="$(sha_for x86_64-unknown-linux-gnu)"
 
 for pair in "aarch64-apple-darwin:$MAC_ARM" "x86_64-apple-darwin:$MAC_X64" \
-            "aarch64-unknown-linux-gnu:$LINUX_ARM" "x86_64-unknown-linux-gnu:$LINUX_X64"; do
+  "aarch64-unknown-linux-gnu:$LINUX_ARM" "x86_64-unknown-linux-gnu:$LINUX_X64"; do
   triple="${pair%%:*}"
   sum="${pair#*:}"
   if [[ -z "$sum" ]]; then
