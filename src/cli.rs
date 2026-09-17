@@ -208,7 +208,8 @@ pub struct PruneArgs {
     #[arg(long, help_heading = "Behaviour")]
     pub force: bool,
 
-    /// Explain every candidate that was passed over.
+    /// Explain every candidate that was passed over, and expand `--list-caches` to the whole
+    /// table rather than only the caches present on this machine.
     #[arg(short, long, help_heading = "Output")]
     pub verbose: bool,
 
@@ -306,7 +307,8 @@ pub struct PruneArgs {
     ///
     /// Each is proven the way everything else is — by a marker the tool wrote inside the
     /// directory, at a location that names the tool — and a cache is never removed unless it
-    /// lies under the tree being swept. A bare `--clean-caches` asks for the whole table; the
+    /// lies under the tree being swept. A bare `--clean-caches` (also spelled
+    /// `--clear-caches`) asks for the whole table, the same list `--clean-caches=all` names; the
     /// ids form is `--clean-caches=uv,go-build`, repeatable for several. The `=` is required so
     /// the flag can never swallow the next path argument.
     ///
@@ -314,6 +316,7 @@ pub struct PruneArgs {
     /// here.
     #[arg(
         long,
+        visible_alias = "clear-caches",
         value_name = "IDS",
         num_args = 0..=1,
         require_equals = true,
@@ -325,6 +328,9 @@ pub struct PruneArgs {
 
     /// Print the machine-global tool caches `--clean-caches` can remove, and exit without
     /// scanning.
+    ///
+    /// By default only the caches present on this machine, each with its path and size;
+    /// `--verbose` prints the whole table, absent locations and markers included.
     #[arg(long, help_heading = "Output")]
     pub list_caches: bool,
 
@@ -589,48 +595,123 @@ pub fn render_suggestions(suggestions: &[crate::suggest::Suggestion], out: &mut 
 
 /// Prints the cache table, resolved against this machine.
 ///
+/// By default only the caches that actually exist here: one line per location, the path and how
+/// much of the disk it holds. `--verbose` prints the whole table — every known location with
+/// whether it is present and whether a marker proves it, the markers themselves, and what
+/// removing each cache costs.
+///
 /// # Errors
 ///
 /// Propagates write failures.
-pub fn render_caches(out: &mut impl io::Write) -> io::Result<()> {
+pub fn render_caches(out: &mut impl io::Write, verbose: bool) -> io::Result<()> {
     use owo_colors::OwoColorize;
 
     let home = dirs::home_dir();
-    for cache in crate::caches::CACHES {
-        writeln!(out, "{} {}", cache.name.bold(), format_args!("({})", cache.id).dimmed())?;
-        for location in cache.locations {
-            // The state is resolved against this machine rather than described in the
-            // abstract, because the question a reader actually has is whether the entry is
-            // worth naming *here* — and "present but unproven" is a real answer that a table
-            // of paths alone could not give.
-            let resolved = home.as_ref().map(|home| home.join(location));
-            let state = match resolved.as_deref() {
-                Some(path) if !path.is_dir() => "not on this machine".dimmed().to_string(),
-                Some(path) if cache.proven_in(path) => "present".green().to_string(),
-                Some(_) => "present, but no marker proves it".yellow().to_string(),
-                None => "home directory unknown".dimmed().to_string(),
-            };
-            writeln!(out, "  ~/{location}  {state}")?;
+    let sizes = present_cache_sizes(home.as_deref());
+
+    if verbose {
+        for cache in crate::caches::CACHES {
+            writeln!(out, "{} {}", cache.name.bold(), format_args!("({})", cache.id).dimmed())?;
+            for location in cache.locations {
+                // The state is resolved against this machine rather than described in the
+                // abstract, because the question a reader actually has is whether the entry is
+                // worth naming *here* — and "present but unproven" is a real answer that a table
+                // of paths alone could not give.
+                let resolved = home.as_ref().map(|home| home.join(location));
+                let (size, state) = match resolved.as_deref() {
+                    Some(path) if !path.is_dir() => (String::new(), "not on this machine".dimmed().to_string()),
+                    Some(path) => {
+                        let size = humansize::format_size(sizes.get(path).copied().unwrap_or(0), humansize::DECIMAL);
+                        let state = if cache.proven_in(path) {
+                            "present".green().to_string()
+                        } else {
+                            "present, but no marker proves it".yellow().to_string()
+                        };
+                        (size, state)
+                    }
+                    None => (String::new(), "home directory unknown".dimmed().to_string()),
+                };
+                let size = if size.is_empty() {
+                    String::new()
+                } else {
+                    format!("{size:>12}")
+                };
+                writeln!(out, "  ~/{location}  {size}  {state}")?;
+            }
+            writeln!(out, "  markers: {} (inside)", cache.markers.join(", "))?;
+            writeln!(out, "  {}", cache.note.dimmed())?;
+            writeln!(out)?;
         }
-        writeln!(out, "  markers: {} (inside)", cache.markers.join(", "))?;
-        writeln!(out, "  {}", cache.note.dimmed())?;
+        writeln!(
+            out,
+            "None of these is ever removed unless it lies under the tree being swept, and never \
+             without its marker. A bare `--clean-caches` removes every cache; `--clean-caches=<id>` \
+             removes one, comma-separated for several."
+        )?;
+        writeln!(
+            out,
+            "The same ids can sit in `[caches] enable = [\"<id>\"]` in voom.toml."
+        )?;
+        writeln!(
+            out,
+            "{}",
+            "A cache is only reachable when it lies under the tree being swept.".dimmed()
+        )
+    } else {
+        let mut rows: Vec<(&str, String)> = Vec::new();
+        for cache in crate::caches::CACHES {
+            for location in cache.locations {
+                let Some(path) = home.as_ref().map(|home| home.join(location)) else {
+                    continue;
+                };
+                if !path.is_dir() {
+                    continue;
+                }
+                let size = humansize::format_size(sizes.get(&path).copied().unwrap_or(0), humansize::DECIMAL);
+                rows.push((location, size));
+            }
+        }
+        if rows.is_empty() {
+            writeln!(out, "{}", "No known tool caches found on this machine.".bold())?;
+        } else {
+            // The path column is padded to its longest row so the sizes line up.
+            let width = rows
+                .iter()
+                .map(|(location, _)| location.chars().count())
+                .max()
+                .unwrap_or(0);
+            for (location, size) in rows {
+                writeln!(out, "  {}  {size:>12}", format!("~/{location:<width$}").dimmed())?;
+            }
+        }
         writeln!(out)?;
+        writeln!(
+            out,
+            "{}",
+            "Only caches present on this machine are listed. None is removed unless it lies under \
+             the swept tree and its marker proves it — `--verbose` for the whole table."
+                .dimmed()
+        )
     }
-    writeln!(
-        out,
-        "None of these is ever removed unless it lies under the tree being swept, and never \
-         without its marker. A bare `--clean-caches` removes every cache; `--clean-caches=<id>` \
-         removes one, comma-separated for several."
-    )?;
-    writeln!(
-        out,
-        "The same ids can sit in `[caches] enable = [\"<id>\"]` in voom.toml."
-    )?;
-    writeln!(
-        out,
-        "{}",
-        "A cache is only reachable when it lies under the tree being swept.".dimmed()
-    )
+}
+
+/// The size of every known cache location that exists on this machine.
+///
+/// Measured once, in parallel, with the same [`crate::size`] walker the sweep uses, so the
+/// figure is what `--clean-caches` would actually reclaim.
+fn present_cache_sizes(home: Option<&Path>) -> std::collections::HashMap<PathBuf, u64> {
+    let paths: Vec<PathBuf> = crate::caches::CACHES
+        .iter()
+        .flat_map(|cache| cache.locations)
+        .filter_map(|location| home.map(|home| home.join(location)))
+        .filter(|path| path.is_dir())
+        .collect();
+    let measured = crate::size::measure_all(&paths);
+    paths
+        .into_iter()
+        .zip(measured)
+        .map(|(path, measured)| (path, measured.bytes))
+        .collect()
 }
 
 /// Prints the built-in catalog.

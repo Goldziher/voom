@@ -559,25 +559,78 @@ fn should_accept_force_and_leave_a_dry_run_byte_identical() {
     );
 }
 
-/// `--list-caches` prints the cache table and exits without ever scanning, so it must leave a
-/// tree untouched regardless of what it holds.
+/// `--list-caches` lists only the caches present on this machine, each with its path and size,
+/// and exits without ever scanning — a tree must stay untouched regardless of what it holds.
+/// Driven with a fake `HOME`, so a machine that happens to lack, say, a Cargo registry does not
+/// change what the command prints.
 #[test]
-fn should_list_caches_without_scanning() {
+#[cfg(unix)]
+fn should_list_only_present_caches_with_their_sizes() {
+    let home = TempDir::new().unwrap();
+
+    let registry = home.path().join(".cargo/registry");
+    fs::create_dir_all(registry.join("src")).unwrap();
+    fs::write(registry.join("CACHEDIR.TAG"), b"Signature: 8e477066c4a3e6a4\n").unwrap();
+    fs::write(registry.join("src/lib.rs"), vec![0xA5; 1_500_000]).unwrap();
+
+    // A present-but-unproven location is still on the machine, so it is listed too.
+    let cacache = home.path().join(".npm/_cacache");
+    fs::create_dir_all(&cacache).unwrap();
+    fs::write(cacache.join("blob"), b"x").unwrap();
+
     let tree = mixed_tree();
     let before = snapshot(tree.path());
 
     voom()
+        .env("HOME", home.path())
         .args(["--list-caches"])
         .arg(tree.path())
         .assert()
         .success()
-        .stdout(contains("cargo-registry"));
+        .stdout(contains("~/.cargo/registry"))
+        .stdout(contains("~/.npm/_cacache"))
+        // The registry holds ~1.5 MB, so the size column proves it measured rather than counted.
+        .stdout(contains("1.5"))
+        .stdout(contains("~/.cache/uv").not());
 
     assert_eq!(
         snapshot(tree.path()),
         before,
         "listing the cache table must not scan or remove"
     );
+}
+
+/// `--verbose` prints the whole table — every known location with its state, the markers, and
+/// what removing each cache costs — including the locations this machine does not have.
+#[test]
+#[cfg(unix)]
+fn should_list_the_whole_table_when_verbose() {
+    let home = TempDir::new().unwrap();
+
+    let registry = home.path().join(".cargo/registry");
+    fs::create_dir_all(registry.join("src")).unwrap();
+    fs::write(registry.join("CACHEDIR.TAG"), b"Signature: 8e477066c4a3e6a4\n").unwrap();
+    fs::write(registry.join("src/lib.rs"), vec![0xA5; 1_500_000]).unwrap();
+
+    let cacache = home.path().join(".npm/_cacache");
+    fs::create_dir_all(&cacache).unwrap();
+    fs::write(cacache.join("blob"), b"x").unwrap();
+
+    voom()
+        .env("HOME", home.path())
+        .args(["--list-caches", "--verbose"])
+        .assert()
+        .success()
+        .stdout(contains("Cargo registry"))
+        .stdout(contains("(cargo-registry)"))
+        .stdout(contains("~/.cargo/registry"))
+        .stdout(contains("1.5"))
+        .stdout(contains("present"))
+        .stdout(contains("~/.npm/_cacache"))
+        .stdout(contains("present, but no marker proves it"))
+        .stdout(contains("~/.cache/uv"))
+        .stdout(contains("not on this machine"))
+        .stdout(contains("markers: CACHEDIR.TAG"));
 }
 
 /// A bare `--clean-caches` means "every cache the table knows about": both the proven survivors
@@ -605,6 +658,53 @@ fn should_clean_every_proven_cache_with_a_bare_flag() {
 
     assert!(!registry.exists(), "a proven cache is removed by a bare --clean-caches");
     assert!(cacache.exists(), "an unproven cache is left alone");
+}
+
+/// `--clear-caches` is an alias for `--clean-caches`, because "clear" is how people reach for
+/// it; the bare alias means the whole table, exactly like the spelled-out flag.
+#[test]
+#[cfg(unix)]
+fn should_treat_clear_caches_as_an_alias_for_clean_caches() {
+    let home = TempDir::new().unwrap();
+
+    let registry = home.path().join(".cargo/registry");
+    fs::create_dir_all(registry.join("src")).unwrap();
+    fs::write(registry.join("CACHEDIR.TAG"), b"Signature: 8e477066c4a3e6a4\n").unwrap();
+
+    voom()
+        .env("HOME", home.path())
+        .args(["--clear-caches"])
+        .arg(home.path())
+        .assert()
+        .success();
+
+    assert!(!registry.exists(), "a proven cache is removed by a bare --clear-caches");
+}
+
+/// An explicit `--clean-caches=all` is the same request as the bare flag, spelled out for a
+/// script that wants to say what it means.
+#[test]
+#[cfg(unix)]
+fn should_clean_every_proven_cache_with_an_explicit_all() {
+    let home = TempDir::new().unwrap();
+
+    for cache in [".cargo/registry", ".cargo/git"] {
+        let dir = home.path().join(cache);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("CACHEDIR.TAG"), b"Signature: 8e477066c4a3e6a4\n").unwrap();
+    }
+
+    voom()
+        .env("HOME", home.path())
+        .args(["--clean-caches=all"])
+        .arg(home.path())
+        .assert()
+        .success();
+
+    assert!(
+        !home.path().join(".cargo/registry").exists() && !home.path().join(".cargo/git").exists(),
+        "--clean-caches=all removes every proven cache, exactly as the bare flag does"
+    );
 }
 
 /// `--clean-caches=<ids>` removes only the named caches, so the command can stay explicit about

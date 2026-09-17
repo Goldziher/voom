@@ -7,6 +7,21 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
+## [0.6.1] - 2026-09-17
+
+### Added
+
+- **`--clear-caches` is an accepted spelling of `--clean-caches`.** `clear` is the verb people
+  reach for; it is a visible alias, so both appear in help and behave identically. The deletion
+  rails are unchanged.
+
+### Changed
+
+- **`--list-caches` now lists this machine's caches by default.** It prints only the cache
+  locations that exist on this machine, each with its path and how much disk it holds — measured
+  with the same sizer a sweep uses, so the figure is what `--clean-caches` would reclaim.
+  `--verbose` prints the whole table, absent locations, per-entry state and markers included.
+
 ## [0.6.0] - 2026-09-16
 
 ### Changed

@@ -97,7 +97,7 @@ fn watch(cli: &Cli, args: &voom::cli::WatchArgs) -> anyhow::Result<i32> {
 fn prune(cli: &Cli) -> anyhow::Result<i32> {
     if cli.prune.list_caches {
         let mut out = anstream::stdout().lock();
-        voom::cli::render_caches(&mut out).context("writing the cache table")?;
+        voom::cli::render_caches(&mut out, cli.prune.verbose).context("writing the cache table")?;
         return Ok(exit::SUCCESS);
     }
 

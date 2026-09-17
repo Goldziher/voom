@@ -194,10 +194,16 @@ tool wrote *inside* it, most often the cross-tool [`CACHEDIR.TAG`](https://bford
 None is ever removed without that marker, and unless it lies under the tree being swept:
 
 ```bash
-voom --list-caches                      # the table, resolved against this machine
+voom --list-caches                      # the caches on this machine, each with its size
+voom --list-caches --verbose            # ... and every location, marker and note the table knows
 voom --dry-run --clean-caches ~         # a bare flag: every proven cache under the root
+voom --dry-run --clear-caches ~         # `--clear-caches` is the same flag, spelled that way
 voom --dry-run --clean-caches=uv,go-build ~   # or the ones you name, comma-separated with `=`
 ```
+
+By default `--list-caches` prints only the cache locations that actually exist here, each with
+its path and how much disk it holds; `--verbose` shows the whole table — every location the
+table knows about, whether it is present here, and the marker that would prove it.
 
 A cache whose contents are only shard directories — sccache, zig, NuGet, Maven — is deliberately
 absent: the marker would prove nothing the path had not already said. See

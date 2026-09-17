@@ -18,7 +18,7 @@ The `Group` column matches `voom --help`'s own grouping.
 | Behaviour | `--no-git` | | off | Skip `git worktree prune` and `git gc --auto` in every repository walked. Also `[git] enabled = false`; the flag wins. |
 | Behaviour | `--force` | | off | Retry a failed removal, first clearing read-only bits (and, on macOS, the immutable flag) on paths already inside a proven artifact. Never relaxes a rail, follows a symlink, or touches the artifact's parent. A repair that does not go on to succeed is not undone. |
 | Behaviour | `--jobs <N>` | `-j` | every core | Worker threads for the walk, sizing and removal. Lower on spinning disks or network filesystems. |
-| Output | `--verbose` | `-v` | off | Explain every candidate that was passed over. |
+| Output | `--verbose` | `-v` | off | Explain every candidate that was passed over. Also expands `--list-caches` to the whole table rather than only the caches present on this machine. |
 | Output | `--summary` | | off | Print only the totals footer. |
 | Output | `--format <human\|json>` | | `human` | See [JSON output](#json-output). |
 | Output | `--color <auto\|always\|never>` | | `auto` | `auto` colorizes when stdout is a terminal, honouring `NO_COLOR` and `CLICOLOR_FORCE`. |
@@ -28,9 +28,9 @@ The `Group` column matches `voom --help`'s own grouping.
 | Selection | `--clean-dependencies` | | off | Also remove `node_modules/`, Rust, composer and Go `vendor/`, mix `deps/` and Python virtualenvs. Sugar over `--enable`-ing each. |
 | Selection | `--exclude <GLOB>` | | | Never scan this path. Repeatable. Relative to the tree being swept. |
 | Selection | `--include <GLOB>` | | | Remove this path whether or not a marker proves it. Repeatable. Outranks every prune, cannot reach inside a pruned directory, and `--exclude` still wins. |
-| Selection | `--clean-caches[=<IDS>]` | | empty | Remove tool caches under the swept tree, each still on its marker. Bare `--clean-caches` removes every cache the table knows about; `--clean-caches=uv,go-build` removes named ones, repeatable or comma-separated. The `=` is required or clap reads the next argument as a path. See `--list-caches`. |
+| Selection | `--clean-caches[=<IDS>]` | | empty | Remove tool caches under the swept tree, each still on its marker. A bare `--clean-caches` (alias `--clear-caches`) removes every cache the table knows about; `--clean-caches=uv,go-build` removes named ones, repeatable or comma-separated. The `=` is required or clap reads the next argument as a path. See `--list-caches`. |
 | Selection | `--clean-tagged` | | off | Remove any directory carrying a valid `CACHEDIR.TAG`, on that declaration alone. Reaches relocated and renamed build directories the catalog cannot name. Also `[tagged] enabled`. |
-| Output | `--list-caches` | | | Print the tool-cache table, resolved against this machine, and exit without scanning. Always exits `0`. |
+| Output | `--list-caches` | | | Print the cache table and exit without scanning. By default only the caches present on this machine, each with its path and size; `--verbose` shows every location the table knows about, its state, and the marker that would prove it. Always exits `0`. |
 | Selection | `--config <PATH>` | | discovered hierarchy | Use this configuration file instead of resolving `voom.toml` from the tree. |
 | Keep policies | `--min-age <DURATION>` | | unset | Never remove an artifact modified more recently, e.g. `7d`. |
 | Keep policies | `--min-size <SIZE>` | | unset | Skip artifacts smaller than this, e.g. `1MB`. |

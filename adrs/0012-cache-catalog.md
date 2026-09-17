@@ -201,3 +201,20 @@ of it was load-bearing nothing. 0.6.0 removes it:
   renders from the same code. It exits `0` and never scans.
 - **`git-prune` gained nothing and kept something:** it never had a `--caches` flag of its own,
   and its discovery walk always skipped `CACHE_DIRS` by default, which is now the only behaviour.
+
+## Amendment — the table becomes a listing of this machine, and `clear` is accepted — 2026-09-17
+
+Where 0.6.0's `--list-caches` printed the whole table for skimming, 0.6.1's is something to run
+for its own sake:
+
+- **The default listing is what is on this machine.** Only cache locations that exist here are
+  printed, each with its path and how much disk it holds — measured with the same sizer the
+  sweep uses, so the figure is what `--clean-caches` would actually reclaim. Blank for a machine
+  with none.
+- **`--verbose` is the whole table again.** Absent locations (in "not on this machine" form),
+  per-entry state — `present`, or `present, but no marker proves it` — the markers, and the
+  notes. The sweep's verbosity flag now also governs the cache listing; henceforth "the table"
+  means the verbose form.
+- **`--clear-caches` is an accepted spelling of `--clean-caches`.** `clear` is the verb people
+  reach for and grep for first; it is a clap `visible_alias`, so both spellings appear in help
+  and behave identically. The deletion rails are untouched.
