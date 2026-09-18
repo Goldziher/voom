@@ -19,6 +19,11 @@ which is the safety rule the rest of the tool is built around.
 | [0008](0008-watch-mode.md) | Watch Mode: Debounced `notify` Pruning | Accepted |
 | [0009](0009-git-hook-integration.md) | Git Hook Integration: pre-commit and poly Catalogs | Accepted |
 | [0010](0010-distribution-and-naming.md) | Distribution and Naming: Five Channels, One Binary | Accepted |
+| [0011](0011-git-housekeeping.md) | Git Housekeeping: Delegated, Local, and On by Default | Accepted |
+| [0012](0012-cache-catalog.md) | The Cache Catalog: Proof From Inside, Opt-In by Name | Accepted |
+| [0013](0013-tagged-directories.md) | Tagged Directories: The Tool's Own Declaration, Opt-In by Flag | Accepted |
+| [0014](0014-bazel-output-base-housekeeping.md) | Bazel Output-Base Housekeeping: Orphans Proven by Bazel's Own Marker | Accepted |
+| [0015](0015-claude-code-job-scratch.md) | Claude Code Job Scratch: Age-Gated, Never Trusted on State Alone | Accepted |
 
 ## Conventions
 

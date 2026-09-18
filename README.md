@@ -271,7 +271,7 @@ key, for when you already know the name.
 | --- | --- | --- |
 | Rust | `Cargo.toml` | `target/`, `vendor/`† |
 | Node / TypeScript | `package.json` | `dist/`, `.next/`, `.nuxt/`, `.svelte-kit/`, `.astro/`, `.turbo/`, `.parcel-cache/`, `.vite/`, `.nyc_output/`, `*.tsbuildinfo`, `build/`†, `node_modules/`† |
-| Python | `pyproject.toml`, `setup.py`, `setup.cfg` | `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `*.egg-info/`, `htmlcov/`, `.coverage`, `dist/`, `.tox/`†, `build/`†, `.venv/`† |
+| Python | `pyproject.toml`, `setup.py`, `setup.cfg`, `BUILD`, `BUILD.bazel` | `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `*.egg-info/`, `htmlcov/`, `.coverage`, `dist/`, `.tox/`†, `build/`†, `.venv/`† |
 | Go | `go.mod` | `bin/`†, `vendor/`† |
 | Zig | `build.zig` | `.zig-cache/`, `zig-cache/`, `zig-out/` |
 | Swift | `Package.swift` | `.build/` |
@@ -292,7 +292,7 @@ key, for when you already know the name.
 | Nim | `*.nimble` | `nimcache/` |
 | Elm | `elm.json` | `elm-stuff/` |
 | Terraform | `*.tf` | `.terraform/` |
-| Bazel | `WORKSPACE`, `WORKSPACE.bazel`, `MODULE.bazel` | `bazel-bin/`, `bazel-out/`, `bazel-testlogs/` |
+| Bazel | `WORKSPACE`, `WORKSPACE.bazel`, `MODULE.bazel` | `bazel-bin/`, `bazel-out/`, `bazel-testlogs/`, `__pycache__/`§, `.pytest_cache/`§, `.mypy_cache/`§, `.ruff_cache/`§ |
 | alef | `CACHEDIR.TAG` | `.alef/`‡ |
 | basemind | `agent-id` | `.basemind/`†‡ |
 
@@ -301,6 +301,12 @@ creates the index, so the directory declares itself rather than relying on a sib
 that is usually absent. Every other row looks for its marker beside or above the artifact.
 A tool that wants its caches swept can do the same with the cross-tool
 [`CACHEDIR.TAG`](https://bford.info/cachedir/).
+
+§ Proven by a `WORKSPACE`/`WORKSPACE.bazel`/`MODULE.bazel` anywhere above, with no level bound
+— these four are Python's own artifacts, declared a second time here for the tree that has no
+Python manifest anywhere near them, only Bazel's per-directory `BUILD` files. The Python row's
+`Ancestor(1)` still proves the common case faster; this is what reaches the rest. See
+[ADR 0002](adrs/0002-marker-anchored-classification.md)'s `Anchor::WorkspaceRoot` amendment.
 
 † Off by default — the name is also a plausible source directory in that ecosystem, or removal is
 expensive rather than cheap. Turn one on for a single run with `--enable python.venv`, or per
@@ -374,6 +380,50 @@ voom git-prune --format json ~/projects   # machine-readable, same shape embedde
 
 A repository whose housekeeping fails or times out makes `git-prune` exit `1`; a skip is a rail
 doing its job and exits `0`.
+
+## Bazel output-base housekeeping
+
+Every workspace path that has run Bazel gets its own output base, and nothing removes it when
+the workspace goes away — not `git worktree prune`, which never sees it, and not the cache
+catalog above, which proves one fixed location rather than one of however many a user has
+pointed Bazel at. Bazel writes `DO_NOT_BUILD_HERE` into an output base's root naming the
+workspace that owns it, and that is proof enough to answer the one question that matters: is
+the owner still there?
+
+```bash
+voom bazel-prune                          # search the conventional locations
+voom bazel-prune -n /var/tmp/_bazel_you    # what would be removed, without removing it
+voom bazel-prune --format json             # machine-readable
+```
+
+Given no path, it searches `/tmp/_bazel_<user>`, `/var/tmp/_bazel_<user>` and
+`~/.cache/bazel/_bazel_<user>`, and finds nothing at whichever do not exist on this machine —
+that absence is never a usage error, whether the root was defaulted or named. An output base
+whose recorded owner no longer exists anywhere on disk is removed; one whose owner still
+exists is left alone and named in the report regardless, since existence is not the same claim
+as "one of the workspaces this invocation was told about." Not part of a sweep — an output base
+never lives under the tree it was built from, so there is nothing to discover for free the way
+`git-prune`'s repositories are. See [ADR 0014](adrs/0014-bazel-output-base-housekeeping.md).
+
+## Claude Code job scratch
+
+`~/.claude/jobs/<id>/tmp/` is free-form scratch a background job writes to, and nothing reaps
+it once the job is done. Nothing on disk says reliably whether a job is done, though — a
+`state.json` that says "stopped" can lag a job resumed later outside its own daemon by more
+than a week, which is exactly what motivated this command's caution.
+
+```bash
+voom claude-prune                     # report only — every job found, nothing removed
+voom claude-prune --remove            # actually reclaim eligible jobs' scratch
+voom claude-prune --remove -n         # what --remove would do, without doing it
+voom claude-prune --min-age 30d       # a longer quiet period than the 14-day default
+```
+
+A job is eligible only when **all** hold: no process on this machine right now has its
+recorded session on its command line, it has been quiet longer than `--min-age` (14 days by
+default), and `--remove` was given. `voom claude-prune` with no flags at all only ever reports
+— read what it found, and decide. Only `tmp/` is ever removed; `state.json` and a job's own
+record survive. See [ADR 0015](adrs/0015-claude-code-job-scratch.md).
 
 ## Watch mode
 
