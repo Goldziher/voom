@@ -23,6 +23,8 @@ pub mod error;
 pub mod names;
 pub mod scan;
 
+pub mod bazel;
+pub mod claude;
 pub mod cli;
 pub mod config;
 pub mod delete;

@@ -5,6 +5,10 @@ use std::path::{Path, PathBuf};
 
 use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 
+mod housekeeping;
+
+pub use housekeeping::{BazelPruneArgs, ClaudePruneArgs, GitPruneArgs, render_bazel, render_claude, render_git};
+
 use crate::catalog::CATALOG;
 use crate::config::resolve::Flags;
 use crate::error::Result;
@@ -59,6 +63,19 @@ pub enum Command {
     /// An ordinary sweep already does the local half of this; the subcommand is for running it
     /// alone, and for the network step a sweep will not do (`--remotes`).
     GitPrune(GitPruneArgs),
+    /// Remove orphaned Bazel output bases — one per workspace path that ever ran Bazel, and
+    /// nothing else ever reclaims one once the workspace is gone.
+    ///
+    /// Not part of a sweep: an output base never lives under the tree it was built from, so
+    /// there is no walk to discover it for free. See
+    /// `adrs/0014-bazel-output-base-housekeeping.md`.
+    BazelPrune(BazelPruneArgs),
+    /// Reclaim scratch left behind by Claude Code's background jobs, once a job has been quiet
+    /// long enough and nothing on this machine is still running it.
+    ///
+    /// Reports only, unless `--remove` is given: nothing on disk reliably says a job is done,
+    /// only how long it has been quiet. See `adrs/0015-claude-code-job-scratch.md`.
+    ClaudePrune(ClaudePruneArgs),
 }
 
 /// `voom suggest` arguments.
@@ -75,47 +92,6 @@ pub struct SuggestArgs {
     /// Worker threads.
     #[arg(short, long, value_name = "N")]
     pub jobs: Option<usize>,
-}
-
-/// `voom git-prune` arguments.
-#[derive(Debug, Args)]
-pub struct GitPruneArgs {
-    /// Trees to search for repositories.
-    #[arg(value_name = "PATH", default_value = ".")]
-    pub paths: Vec<PathBuf>,
-
-    /// Report what git would prune, without letting it repack.
-    #[arg(short = 'n', long)]
-    pub dry_run: bool,
-
-    /// Output format.
-    ///
-    /// Duplicated from the top-level flag rather than inherited: `args_conflicts_with_subcommands`
-    /// makes `voom --format json git-prune .` a usage error, so without this the subcommand has
-    /// no route to JSON at all.
-    #[arg(long, value_enum, default_value_t = Format::Human)]
-    pub format: Format,
-
-    /// Also prune remote-tracking branches whose upstream is gone.
-    ///
-    /// Off by default, and deliberately not part of a sweep, because it contacts the remote: one
-    /// network round trip per remote per repository, which hangs without connectivity and can
-    /// block on a credential prompt.
-    #[arg(long)]
-    pub remotes: bool,
-
-    /// How long one repository's housekeeping may take, e.g. `30s`.
-    #[arg(long, value_name = "DURATION")]
-    pub timeout: Option<String>,
-
-    /// How old a worktree's administration must be before git may prune it.
-    ///
-    /// Defaults to git's own `gc.worktreePruneExpire` policy, three months, rather than
-    /// `git worktree prune`'s much more aggressive one — which removes the administration for
-    /// every absent worktree at any age, an unmounted disk included, and with it the reflog that
-    /// is the recovery path for anything committed there.
-    #[arg(long, value_name = "TIME")]
-    pub expire: Option<String>,
 }
 
 /// `voom config` actions.
@@ -392,54 +368,6 @@ impl WatchArgs {
             debounce: parse_duration(&self.debounce)?,
             quiet_period: parse_duration(&self.quiet_period)?,
         })
-    }
-}
-
-impl GitPruneArgs {
-    /// The options for an explicit `voom git-prune`.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::InvalidDuration`] for an unparseable timeout, or [`Error::CatalogPattern`] for
-    /// an `--exclude` glob that will not compile.
-    pub fn to_git_options(&self, prune: &PruneArgs) -> Result<crate::git::GitPruneOptions> {
-        Ok(crate::git::GitPruneOptions {
-            roots: self.paths.clone(),
-            dry_run: self.dry_run,
-            jobs: prune.jobs,
-            one_file_system: prune.one_file_system,
-            timeout: self
-                .timeout
-                .as_deref()
-                .map(parse_duration)
-                .transpose()?
-                .unwrap_or(crate::git::DEFAULT_TIMEOUT),
-            exclude: crate::scan::PatternSet::new(prune.exclude.clone())?,
-            remotes: self.remotes,
-            worktree_expire: self
-                .expire
-                .clone()
-                .unwrap_or_else(|| crate::git::WORKTREE_PRUNE_EXPIRE.to_owned()),
-            // The explicit surface says what a withheld repack would have had to work with; a
-            // sweep does not, because the census is a question nobody asked it.
-            count_objects: true,
-        })
-    }
-}
-
-/// Renders a finished `git-prune` in the requested format.
-///
-/// # Errors
-///
-/// Propagates write failures from `out`.
-pub fn render_git(
-    result: &crate::git::GitPruneResult,
-    args: &GitPruneArgs,
-    out: &mut impl io::Write,
-) -> io::Result<()> {
-    match args.format {
-        Format::Human => crate::git::render_human(result, out),
-        Format::Json => crate::git::render_json(result, out),
     }
 }
 
@@ -734,6 +662,7 @@ pub fn render_catalog(out: &mut impl io::Write) -> io::Result<()> {
             crate::catalog::Anchor::Sibling => "sibling".to_owned(),
             crate::catalog::Anchor::Ancestor(levels) => format!("ancestor({levels})"),
             crate::catalog::Anchor::Inside => "inside".to_owned(),
+            crate::catalog::Anchor::WorkspaceRoot => "workspace-root".to_owned(),
         };
         writeln!(out, "  anchor:  {anchor}")?;
         for artifact in ecosystem.artifacts {
