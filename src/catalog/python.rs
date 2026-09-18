@@ -2,10 +2,18 @@
 
 use super::{Anchor, Artifact, Ecosystem};
 
+// `BUILD`/`BUILD.bazel` sit beside this ecosystem's own manifests in a repository built with
+// Bazel's `rules_python`: a package gets a `BUILD` file declaring its `py_library`/`py_test`
+// targets in the same directory a `pyproject.toml` would occupy in a manifest-per-package
+// layout, and `__pycache__` et al. are proven the same way either convention names its package.
+// This is the smaller half of `adrs/0002-marker-anchored-classification.md`'s `WorkspaceRoot`
+// amendment — the `WorkspaceRoot` anchor in `infra::BAZEL` catches what this cannot reach, but
+// most packages have a `BUILD` file close enough that they never need the unbounded climb at
+// all.
 pub(super) const PYTHON: Ecosystem = Ecosystem {
     id: "python",
     name: "Python",
-    markers: &["pyproject.toml", "setup.py", "setup.cfg"],
+    markers: &["pyproject.toml", "setup.py", "setup.cfg", "BUILD", "BUILD.bazel"],
     anchor: Anchor::Sibling,
     artifacts: &[
         // `__pycache__/` sits inside package directories rather than beside the manifest, so

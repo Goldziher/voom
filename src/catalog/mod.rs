@@ -37,7 +37,21 @@ mod web;
 /// weaker — the tool declared the directory regenerable itself — and it costs one `read_dir`
 /// of a directory the walker prunes and never enumerates anyway.
 ///
-/// `#[non_exhaustive]` because a fourth position is plausible and adding one to a bare enum
+/// [`WorkspaceRoot`](Anchor::WorkspaceRoot) climbs with no fixed bound, all the way to the
+/// scan root, looking for the *same* markers an `Ancestor(n)` climb would look for at a fixed
+/// depth. That sounds like exactly the unbounded search ADR 0002 warns against, and for a
+/// per-package manifest it would be: a `pyproject.toml` proves its own package, not everything
+/// beneath an unrelated one three directories over. A monorepo build root is a different kind
+/// of marker. `WORKSPACE`/`MODULE.bazel` does not scope a package — by Bazel's own contract it
+/// governs every directory beneath it, however deep, which is the entire reason a single one
+/// sits at the top of a tree with thousands of `BUILD` files and no per-directory manifest at
+/// all. A bound tuned for manifest-scoped ecosystems is not merely too small for this one, it
+/// is measuring the wrong thing: 0 of 45 sampled `__pycache__` directories in one such tree
+/// (armis) had a Python manifest anywhere above them, at any depth, and no `Ancestor(n)` — the
+/// catalog caps every one at 8 — would have reached them. See `adrs/0002-marker-anchored-classification.md`'s
+/// `Anchor::WorkspaceRoot` amendment.
+///
+/// `#[non_exhaustive]` because a fifth position is plausible and adding one to a bare enum
 /// would break every downstream `match` without a wildcard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -48,16 +62,22 @@ pub enum Anchor {
     Ancestor(u8),
     /// The marker sits inside the candidate directory.
     Inside,
+    /// The marker sits anywhere above the anchor directory, up to the scan root.
+    WorkspaceRoot,
 }
 
 impl Anchor {
-    /// How many levels above the anchor directory the marker search may climb.
+    /// How many levels above the anchor directory a bounded climb may reach.
     ///
-    /// Zero for [`Inside`](Anchor::Inside), which does not climb at all — it looks down.
+    /// Zero for [`Inside`](Anchor::Inside), which does not climb at all — it looks down. Zero
+    /// for [`WorkspaceRoot`](Anchor::WorkspaceRoot) too: it climbs, but not by a level count —
+    /// [`ancestor_anchors_are_bounded`](tests::ancestor_anchors_are_bounded) is a bound on
+    /// per-package manifest anchoring specifically, and this is deliberately exempt from it,
+    /// not an unusually large instance of it.
     #[must_use]
     pub const fn levels(self) -> u8 {
         match self {
-            Self::Sibling | Self::Inside => 0,
+            Self::Sibling | Self::Inside | Self::WorkspaceRoot => 0,
             Self::Ancestor(n) => n,
         }
     }
@@ -66,6 +86,12 @@ impl Anchor {
     #[must_use]
     pub const fn is_inside(self) -> bool {
         matches!(self, Self::Inside)
+    }
+
+    /// Whether the marker is looked for anywhere above the candidate, without a level bound.
+    #[must_use]
+    pub const fn is_workspace_root(self) -> bool {
+        matches!(self, Self::WorkspaceRoot)
     }
 }
 
