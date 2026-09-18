@@ -49,8 +49,34 @@ fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
         }
         Some(Command::Watch(args)) => watch(cli, args),
         Some(Command::GitPrune(args)) => git_prune(cli, args),
+        Some(Command::BazelPrune(args)) => bazel_prune(args),
+        Some(Command::ClaudePrune(args)) => claude_prune(args),
         None => prune(cli),
     }
+}
+
+/// `voom claude-prune`: Claude Code job scratch, run on its own.
+fn claude_prune(args: &voom::cli::ClaudePruneArgs) -> anyhow::Result<i32> {
+    let options = args.to_claude_options()?;
+    let result = voom::claude::prune(&options).context("pruning job scratch")?;
+
+    let mut out = anstream::stdout().lock();
+    voom::cli::render_claude(&result, args, &mut out).context("writing the report")?;
+    out.flush().context("flushing the report")?;
+
+    Ok(result.exit_code())
+}
+
+/// `voom bazel-prune`: orphaned Bazel output bases, run on their own.
+fn bazel_prune(args: &voom::cli::BazelPruneArgs) -> anyhow::Result<i32> {
+    let options = args.to_bazel_options();
+    let result = voom::bazel::prune(&options).context("pruning output bases")?;
+
+    let mut out = anstream::stdout().lock();
+    voom::cli::render_bazel(&result, args, &mut out).context("writing the report")?;
+    out.flush().context("flushing the report")?;
+
+    Ok(result.exit_code())
 }
 
 /// `voom git-prune`: git's own housekeeping, run on its own.
