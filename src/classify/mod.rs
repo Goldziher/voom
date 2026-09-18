@@ -273,6 +273,28 @@ impl Classifier {
             };
         }
 
+        // `WorkspaceRoot` climbs with no level bound, all the way to the scan root. Unlike the
+        // bounded loop below, running out of climb here always means the marker genuinely is
+        // not above this candidate within the scanned tree — there is no bound left to report
+        // as reached, because none was imposed. See `Anchor::WorkspaceRoot`'s doc comment.
+        if anchor.is_workspace_root() {
+            let mut dir = anchor_dir;
+            let mut unreadable = false;
+            loop {
+                let facts = self.facts(dir);
+                if facts.markers & bit != 0 {
+                    return Proof::Found(dir.to_path_buf());
+                }
+                unreadable |= !facts.readable;
+                if dir == root {
+                    break;
+                }
+                let Some(parent) = dir.parent() else { break };
+                dir = parent;
+            }
+            return if unreadable { Proof::Unreadable } else { Proof::Missing };
+        }
+
         let levels = anchor.levels();
         let mut dir = anchor_dir;
         let mut unreadable = false;

@@ -150,3 +150,54 @@ Two consequences worth recording:
   `should_prove_a_basemind_index_only_from_a_marker_inside_it` is the one that carries this
   amendment — it asserts both halves, that a marker within proves the directory and that the
   same marker *beside* it does not.
+
+## Amendment — `Anchor::WorkspaceRoot` — 2026-09-18
+
+`Ancestor(n)`'s bound is right for a marker that scopes a package — a `pyproject.toml` proves
+its own directory tree, not an unrelated one three levels over, so a small bound is the point,
+not a limitation to raise. A survey of one real monorepo (armis) found this assumption simply
+false for its Python code: of 1,557 `__pycache__` directories, a spread sample of 45 had **zero**
+with a `pyproject.toml`/`setup.py`/`setup.cfg` anywhere above them, at *any* depth, up to the
+repository root. The repository has 13 such manifests total, in a handful of standalone tools
+and personal scratch trees, and governs everything else with 5,917 per-directory Bazel `BUILD`
+files instead. No `Ancestor(n)` — the catalog caps every one at 8 — was ever going to reach this;
+the search was climbing toward a marker that was never going to exist at any distance the bound
+could name.
+
+A `WORKSPACE`/`WORKSPACE.bazel`/`MODULE.bazel`, unlike a package manifest, is not scoped to a
+package at all — by Bazel's own contract it governs *everything* beneath it, however deep, which
+is exactly why one such file sits at the top of a tree with thousands of `BUILD` files and no
+per-directory manifest anywhere. Climbing to it with no bound is therefore not a bigger instance
+of the mistake `Ancestor(n)` guards against; it is applying the same rule this ADR states —
+prove position with a marker, not a name — to a marker whose scope really is unbounded, rather
+than pretending it is package-scoped and picking a number that will always be wrong for it.
+
+So `Anchor` gains a fourth position, alongside `Sibling`, `Ancestor(n)` and `Inside`:
+`WorkspaceRoot`, which climbs from the anchor directory to the scan root with no level bound,
+looking for the same markers any other anchor would. It is `Anchor::levels()`'s own report of
+zero climbable levels that keeps `ancestor_anchors_are_bounded` true of it without exempting it
+by name — the bound that test polices is a property of `Ancestor(n)` specifically, and
+`WorkspaceRoot`'s climb is not expressed as a level count at all.
+
+The first user of it is not a new ecosystem: `infra::BAZEL` gains a second declaration of
+`python::PYTHON`'s own four cache artifacts (`__pycache__/`, `.pytest_cache/`, `.mypy_cache/`,
+`.ruff_cache/`), anchored `WorkspaceRoot` to the markers `bazel` is already keyed on, proven
+independently of whichever ecosystem's own anchor reaches a given directory first. This is not
+a special case bent into the Bazel entry — it is what the classifier already does for any name
+two ecosystems both declare (`target/` is Rust's and Maven's, resolved by which marker is
+actually present), extended to a fourth anchor kind rather than a third ecosystem.
+
+`python::PYTHON` also gained `BUILD` and `BUILD.bazel` to its own marker list, sibling-anchored
+like its existing three. This is the smaller, cheaper half of the same fix: a `BUILD` file sits
+beside an enormous fraction of this repository's source directories, including many holding a
+`__pycache__` within `Ancestor(1)`'s existing reach, so most of the 1,557 directories in the
+survey above never need the unbounded climb at all — only the ones a `BUILD` file does not sit
+close enough to. Measured together against the same repository: 1,555 of 1,579 candidates
+skipped `marker_out_of_reach` before either change; 16 skipped after, with 1,563 artifacts and
+183.27 MB reclaimable where 4 artifacts and 16.36 MB were before.
+
+Nothing about the rest of this ADR changes. A `WorkspaceRoot` candidate is still rejected by
+name first, a tree with no such marker anywhere above still leaves the candidate alone (`Missing`,
+never a bound exhausted — there is no bound to exhaust), and every deletion rail applies exactly
+as it does to every other anchor position. See `adrs/0014-bazel-output-base-housekeeping.md` for
+the unrelated Bazel-output-base finding the same survey turned up.

@@ -31,6 +31,18 @@ pub(super) const TERRAFORM: Ecosystem = Ecosystem {
 // `bazel-<workspace-name>` is the fourth convenience symlink and is deliberately absent: its
 // name depends on the WORKSPACE's declared name, so no literal covers it and a glob is what
 // caused the problem.
+//
+// The four cache artifacts below are Python's own — `__pycache__/`, `.pytest_cache/`,
+// `.mypy_cache/`, `.ruff_cache/` are declared again here, under Bazel rather than under
+// `python::PYTHON`, anchored `WorkspaceRoot` instead of `Sibling`/`Ancestor(1)`. That is not
+// duplication for its own sake: a directory can be proven by either ecosystem's entry, and a
+// `pyproject.toml` a level up is still the faster, narrower proof when it is there. This entry
+// exists for the tree that has no such manifest anywhere — the WORKSPACE/MODULE.bazel this
+// ecosystem is already keyed on covers it, at any depth, which the bounded Ancestor(1) in
+// `python::PYTHON` cannot. See `adrs/0002-marker-anchored-classification.md`'s `WorkspaceRoot`
+// amendment for the measurement (0 of 45 sampled `__pycache__` directories in a real Bazel
+// monorepo had a Python manifest anywhere above them) and for why an unbounded climb is safe
+// for *this* marker specifically and would not be for a per-package one.
 pub(super) const BAZEL: Ecosystem = Ecosystem {
     id: "bazel",
     name: "Bazel",
@@ -40,5 +52,9 @@ pub(super) const BAZEL: Ecosystem = Ecosystem {
         Artifact::on("bazel-bin/"),
         Artifact::on("bazel-out/"),
         Artifact::on("bazel-testlogs/"),
+        Artifact::on("__pycache__/").at(Anchor::WorkspaceRoot),
+        Artifact::on(".pytest_cache/").at(Anchor::WorkspaceRoot),
+        Artifact::on(".mypy_cache/").at(Anchor::WorkspaceRoot),
+        Artifact::on(".ruff_cache/").at(Anchor::WorkspaceRoot),
     ],
 };
