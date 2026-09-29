@@ -3,7 +3,7 @@ name = "voom"
 description = "Fast, safe, parallel build-artifact pruning across every major language ecosystem — a single pure-Rust binary that recursively finds and removes build output anywhere in a tree, proving every candidate against an ecosystem marker file before it deletes."
 gitignore = true
 
-presets = ["claude", "codex"]
+presets = ["claude", "codex", "opencode"]
 
 # `testing` is auto-included and explicitly excluded here. Its six rules restate the
 # hand-written `tdd-and-hooks` rule, which carries this project's actual testing policy, and
