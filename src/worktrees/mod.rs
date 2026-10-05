@@ -9,9 +9,12 @@
 //! - its `HEAD` is an ancestor of the repository's default branch, so every commit is reachable
 //!   from somewhere else;
 //! - its working tree holds nothing but deletions of tracked build output (a `dist/` that was
-//!   cleaned), which is the only local change that is regenerable by definition — any modified,
-//!   staged, added, renamed or untracked path keeps it, reported as merged-with-local-changes;
-//! - it is not the main worktree, not locked, not missing, and not where voom was started.
+//!   cleaned) and ignored build-output trees (`target/`, `node_modules/`); any modified, staged,
+//!   added, renamed or untracked path, and any ignored file that is not build output, keeps it,
+//!   reported as merged-with-local-changes;
+//! - it is not the main worktree, not locked, not missing, not where voom was started, and
+//!   stored strictly below a path voom was told to sweep — a worktree elsewhere on disk is
+//!   reported and kept, so nothing outside the scanned tree is ever its target;
 //!
 //! The default branch is read from the local remote-tracking ref and voom never fetches, so a
 //! stale ref errs toward keeping. `git worktree remove` does the removal and the branch is left
@@ -63,6 +66,9 @@ pub enum State {
     Missing,
     /// Its `HEAD` is not in the default branch.
     NotMerged,
+    /// Its directory resolves outside every scan root. voom removes only what the walk covered,
+    /// so a worktree stored elsewhere is reported and kept.
+    OutsideRoot,
     /// Merged, but something in the working tree is not regenerable build output.
     LocalChanges {
         /// How many paths are changed, staged or untracked.
@@ -170,10 +176,15 @@ impl WorktreePruneResult {
 /// `work_trees` may name the main checkout or any linked one; repositories are deduplicated by
 /// git's common directory, so a repository reached through three of its worktrees is handled
 /// once. A path that is not a repository is ignored.
+///
+/// A worktree is removed only when its canonical path resolves strictly below one of `roots`:
+/// the repositories are found by the walk, but a linked worktree can live anywhere on disk, and
+/// voom removes nothing the tree it was told to sweep does not cover.
 #[must_use]
-pub fn prune(work_trees: &[PathBuf], options: WorktreeOptions) -> WorktreePruneResult {
+pub fn prune(work_trees: &[PathBuf], roots: &[PathBuf], options: WorktreeOptions) -> WorktreePruneResult {
     let started = Instant::now();
     let current = std::env::current_dir().ok().and_then(|cwd| cwd.canonicalize().ok());
+    let roots: Vec<PathBuf> = roots.iter().filter_map(|root| root.canonicalize().ok()).collect();
 
     let mut seen = std::collections::BTreeSet::new();
     let repositories: Vec<PathBuf> = work_trees
@@ -186,7 +197,7 @@ pub fn prune(work_trees: &[PathBuf], options: WorktreeOptions) -> WorktreePruneR
 
     let mut found: Vec<RepositoryWorktrees> = repositories
         .par_iter()
-        .map(|work_tree| examine(work_tree, current.as_deref(), options))
+        .map(|work_tree| examine(work_tree, &roots, current.as_deref(), options))
         .collect();
     found.retain(|repository| !repository.worktrees.is_empty() || repository.error.is_some());
     found.sort_by(|left, right| left.repository.cmp(&right.repository));
@@ -198,7 +209,12 @@ pub fn prune(work_trees: &[PathBuf], options: WorktreeOptions) -> WorktreePruneR
     }
 }
 
-fn examine(work_tree: &Path, current: Option<&Path>, options: WorktreeOptions) -> RepositoryWorktrees {
+fn examine(
+    work_tree: &Path,
+    roots: &[PathBuf],
+    current: Option<&Path>,
+    options: WorktreeOptions,
+) -> RepositoryWorktrees {
     let mut repository = RepositoryWorktrees {
         repository: work_tree.to_path_buf(),
         default_branch: None,
@@ -227,13 +243,20 @@ fn examine(work_tree: &Path, current: Option<&Path>, options: WorktreeOptions) -
         .par_iter()
         .skip(1)
         .filter(|entry| !entry.bare)
-        .map(|entry| judge(entry, &repository.repository, &default_sha, current, options))
+        .map(|entry| judge(entry, &repository.repository, &default_sha, roots, current, options))
         .collect();
     repository.worktrees.sort_by(|left, right| left.path.cmp(&right.path));
     repository
 }
 
-fn judge(entry: &Entry, main: &Path, default_sha: &str, current: Option<&Path>, options: WorktreeOptions) -> Worktree {
+fn judge(
+    entry: &Entry,
+    main: &Path,
+    default_sha: &str,
+    roots: &[PathBuf],
+    current: Option<&Path>,
+    options: WorktreeOptions,
+) -> Worktree {
     let mut worktree = Worktree {
         path: entry.path.clone(),
         branch: entry.branch.clone(),
@@ -249,6 +272,13 @@ fn judge(entry: &Entry, main: &Path, default_sha: &str, current: Option<&Path>, 
         return worktree;
     }
     let canonical = entry.path.canonicalize().unwrap_or_else(|_| entry.path.clone());
+    if !roots
+        .iter()
+        .any(|root| canonical != *root && canonical.starts_with(root))
+    {
+        worktree.state = State::OutsideRoot;
+        return worktree;
+    }
     if current.is_some_and(|cwd| cwd.starts_with(&canonical)) {
         worktree.state = State::Current;
         return worktree;
@@ -263,7 +293,16 @@ fn judge(entry: &Entry, main: &Path, default_sha: &str, current: Option<&Path>, 
     }
     let Some(status) = git_bytes(
         &entry.path,
-        &["status", "--porcelain=v1", "-z", "--untracked-files=normal"],
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=normal",
+            // Ignored files are invisible without this, and `git worktree remove` deletes them:
+            // a worktree whose only content is a gitignored `.env` otherwise looks clean and is
+            // removed. They are reported so a non-build-output one can keep the worktree.
+            "--ignored=matching",
+        ],
     ) else {
         worktree.state = State::Unchecked("`git status` failed".to_owned());
         return worktree;
@@ -299,6 +338,11 @@ fn classify_status(status: &[u8]) -> (usize, usize) {
             fields.next();
         }
         if index == b' ' && tree == b'D' && is_build_output(&path) {
+            discarded += 1;
+        } else if index == b'!' && tree == b'!' && is_build_output(&path) {
+            // An ignored build-output tree (target/, node_modules/) is regenerable and goes with
+            // the worktree. Any other ignored file — a `.env`, a local database, notes — is not,
+            // and keeps it.
             discarded += 1;
         } else {
             changed += 1;
@@ -397,12 +441,14 @@ fn parse_listing(listing: &str) -> Vec<Entry> {
     entries
 }
 
-/// A git command that cannot run repository hooks or prompt.
+/// A git command that cannot run repository hooks or prompt, and cannot be made to run arbitrary
+/// code from repository config: `core.fsmonitor` names a hook `git status` would otherwise
+/// execute, and this code runs `status` in a checkout voom does not own.
 fn base_command(dir: &Path) -> Command {
     let mut command = Command::new("git");
     command
         .current_dir(dir)
-        .args(["-c", "core.hooksPath="])
+        .args(["-c", "core.hooksPath=", "-c", "core.fsmonitor=false"])
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null());
     command

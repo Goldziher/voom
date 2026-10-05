@@ -45,8 +45,9 @@ pub struct GitPruneArgs {
 
     /// Also remove linked worktrees whose work is already merged into the default branch.
     ///
-    /// The same rules as the top-level `--remove-merged-worktrees`: merged, clean apart from
-    /// deleted build output, not locked, not the current directory. Reports only under `-n`.
+    /// The same rules as the top-level `--remove-merged-worktrees`: merged, not locked or the
+    /// current directory, below a searched path, and clean apart from deleted tracked build
+    /// output or ignored build-output trees. Reports only under `-n`.
     #[arg(long)]
     pub remove_merged_worktrees: bool,
 
@@ -182,6 +183,9 @@ impl BazelPruneArgs {
                 .transpose()?
                 .unwrap_or(crate::bazel::DEFAULT_MAX_AGE),
             clear_all: self.all,
+            // An explicit `bazel-prune` walks the shared cache; a sweep (via `bazel_options`)
+            // does not.
+            shared_cache: true,
         })
     }
 }

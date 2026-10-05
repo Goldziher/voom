@@ -25,21 +25,25 @@ is not one of them.
 1. its `HEAD` is an ancestor of the default branch — the local `refs/remotes/origin/HEAD`,
    else `origin/main`, `origin/master`, `main`, `master`. voom never fetches, so a stale ref
    makes fewer worktrees look merged, the safe direction;
-2. `git status --porcelain` reports nothing except unstaged deletions of tracked files under a
-   build-output directory (`dist`, `build`, `target`, `out`, `node_modules`, `__pycache__`).
-   Those are regenerable by definition and the only change removal discards; `--force` is passed
-   to git only in that case. Any modified, staged, added, renamed or untracked path keeps the
-   worktree, reported as merged-with-local-changes with a count;
+2. `git status --porcelain --ignored=matching` reports nothing except unstaged deletions of
+   tracked files under a build-output directory (`dist`, `build`, `target`, `out`, `node_modules`,
+   `__pycache__`) and ignored trees under those names. Those are regenerable and the only content
+   removal discards; `--force` is passed to git only in that case. Any modified, staged, added,
+   renamed, untracked, or ignored non-build-output path — a gitignored `.env`, a local database,
+   notes — keeps the worktree, reported as merged-with-local-changes with a count;
 3. it is not the main worktree, not locked, not missing (`git worktree prune` owns that), and
-   voom was not started inside it.
+   voom was not started inside it;
+4. it resolves strictly below a path voom was told to sweep. Repositories come from the walk the
+   sweep already does (or `git-prune`'s discovery) and are deduplicated by git's common directory,
+   but a linked worktree can live anywhere on disk; one stored outside every scan root is reported
+   and kept, so the containment rail holds for a deletion target the walker did not produce.
 
 Branches are never deleted. The flag is off by default, has no `voom.toml` key, and is not
 implied by `--clear-caches`: every other voom default can be wrong only in disk or rebuild
 time, and this one can be wrong in lost work. `-n` runs every check and removes nothing.
 
 Repositories come from the walk the sweep already does (or `git-prune`'s discovery), are
-deduplicated by git's common directory, and each is examined from its main checkout, so a
-worktree stored outside the swept tree is still found through its repository.
+deduplicated by git's common directory, and each is examined from its main checkout.
 
 Order matters in a sweep: worktrees are removed before the Bazel stage, so the output bases of
 the worktrees just removed are orphans and go in the same run (ADR 0014).

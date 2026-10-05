@@ -332,12 +332,19 @@ fn parse_utc_timestamp(text: &str) -> Option<SystemTime> {
     if time_parts.next().is_some() {
         return None;
     }
+    // Bound the clock fields before arithmetic: a malformed file could otherwise overflow the
+    // u64 multiply below (a debug-build panic) or silently wrap. A leap second is allowed.
+    if hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
     let millis: u64 = format!("{fraction:0<3}").get(..3)?.parse().ok()?;
 
     let days = days_from_civil(year, month, day)?;
-    let seconds = days
-        .checked_mul(86400)?
-        .checked_add((hour * 3600 + minute * 60 + second).cast_signed())?;
+    let time_of_day = hour
+        .checked_mul(3600)?
+        .checked_add(minute.checked_mul(60)?)?
+        .checked_add(second)?;
+    let seconds = days.checked_mul(86400)?.checked_add(time_of_day.cast_signed())?;
     if seconds < 0 {
         return None;
     }

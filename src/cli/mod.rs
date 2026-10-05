@@ -173,18 +173,19 @@ pub struct PruneArgs {
     /// Off by default and not settable from `voom.toml`: unlike the rest of git housekeeping,
     /// removing a checkout can lose work. A worktree goes only when its `HEAD` is in the default
     /// branch (the local `origin/HEAD`, `main` or `master`; voom never fetches), it is not
-    /// locked or the current directory, and its working tree holds nothing but deleted tracked
-    /// build output such as `dist/`. A merged worktree with any other local change is reported
-    /// and kept. Branches are never deleted. With `-n`, only reports.
+    /// locked or the current directory, it sits below a path being swept, and its working tree
+    /// holds nothing but deleted tracked build output such as `dist/` or ignored build-output
+    /// trees. A merged worktree with any other local change, including an ignored `.env`, is
+    /// reported and kept. Branches are never deleted. With `-n`, only reports.
     #[arg(long, help_heading = "Behaviour")]
     pub remove_merged_worktrees: bool,
 
     /// Skip Bazel housekeeping: output bases that are orphaned, abandoned or idle for longer
-    /// than `--bazel-max-age`, install bases nothing uses, and stale downloads.
+    /// than `--bazel-max-age`, and install bases nothing uses.
     ///
     /// Runs after the sweep, over the conventional output-user-roots, and is silent when there
-    /// is nothing to do. A base with a running server is never touched. `--clear-caches` clears
-    /// Bazel completely instead; `voom bazel-prune` runs the same housekeeping on its own.
+    /// is nothing to do. A base with a running server is never touched. A sweep leaves the shared
+    /// download cache to `bazel-prune`; `--clear-caches` clears Bazel completely instead.
     #[arg(long, help_heading = "Behaviour")]
     pub no_bazel: bool,
 
@@ -429,6 +430,9 @@ impl PruneArgs {
             options.max_age = age;
         }
         options.clear_all = resolved.clean_caches.iter().any(|id| id == crate::caches::BAZEL_ID);
+        // A sweep does not walk the shared download cache file by file; `bazel-prune` does, and
+        // `--clear-caches` (`clear_all`) removes it wholesale.
+        options.shared_cache = false;
         Some(options)
     }
 

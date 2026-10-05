@@ -271,7 +271,7 @@ key, for when you already know the name.
 | --- | --- | --- |
 | Rust | `Cargo.toml` | `target/`, `vendor/`† |
 | Node / TypeScript | `package.json` | `dist/`, `.next/`, `.nuxt/`, `.svelte-kit/`, `.astro/`, `.turbo/`, `.parcel-cache/`, `.vite/`, `.nyc_output/`, `*.tsbuildinfo`, `build/`†, `node_modules/`† |
-| Python | `pyproject.toml`, `setup.py`, `setup.cfg`, `BUILD`, `BUILD.bazel` | `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `*.egg-info/`, `htmlcov/`, `.coverage`, `dist/`, `.tox/`†, `build/`†, `.venv/`† |
+| Python | `pyproject.toml`, `setup.py`, `setup.cfg` | `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `*.egg-info/`, `htmlcov/`, `.coverage`, `dist/`, `.tox/`†, `build/`†, `.venv/`† |
 | Go | `go.mod` | `bin/`†, `vendor/`† |
 | Zig | `build.zig` | `.zig-cache/`, `zig-cache/`, `zig-out/` |
 | Swift | `Package.swift` | `.build/` |
@@ -304,8 +304,8 @@ A tool that wants its caches swept can do the same with the cross-tool
 
 § Proven by a `WORKSPACE`/`WORKSPACE.bazel`/`MODULE.bazel` anywhere above, with no level bound
 — these four are Python's own artifacts, declared a second time here for the tree that has no
-Python manifest anywhere near them, only Bazel's per-directory `BUILD` files. The Python row's
-`Ancestor(1)` still proves the common case faster; this is what reaches the rest. See
+Python manifest anywhere near them. The Python row's `Ancestor(1)` still proves the common case
+faster; this is what reaches the rest. See
 [ADR 0002](adrs/0002-marker-anchored-classification.md)'s `Anchor::WorkspaceRoot` amendment.
 
 † Off by default — the name is also a plausible source directory in that ecosystem, or removal is
@@ -394,8 +394,10 @@ voom --remove-merged-worktrees ~/code             # remove them; Bazel orphans g
 
 A worktree is removed only when its `HEAD` is an ancestor of the default branch (the local
 `origin/HEAD`, else `main`/`master` — voom never fetches, so a stale ref errs toward keeping),
-it is not locked or the current directory, and its working tree holds nothing but deleted
-tracked build output such as `dist/`. One with any modified, staged or untracked path is
+it is not locked or the current directory, it is stored under a path you asked voom to sweep (one
+elsewhere on disk is reported and kept), and its working tree holds nothing but deleted tracked
+build output such as `dist/` and ignored build-output trees such as `target/`. One with any
+modified, staged, untracked, or ignored non-build-output path — a `.env`, a local database — is
 reported as merged-with-local-changes and kept. Branches are never deleted. It is off by
 default and cannot be turned on from `voom.toml`, because unlike the rest of git housekeeping it
 can lose work. See [ADR 0016](adrs/0016-merged-worktree-removal.md).
@@ -430,11 +432,13 @@ on this machine — that absence is never a usage error. An output base is remov
 
 Removing a base also unlinks the owner's dangling `bazel-*` convenience symlinks. A base with a
 running server is never touched. Install bases no surviving output base points at, and files in
-the shared download cache not used within the age limit, go the same way.
+the shared download cache not used within the age limit, go the same way — the cache only from
+this command, not from a sweep.
 
 A sweep runs this same housekeeping after the artifacts, over the conventional roots, and says
-nothing when there is nothing to do; `--no-bazel` skips it and `--bazel-max-age` sets the age.
-`--clear-caches` is the exception to age: it clears Bazel completely — every output base,
+nothing when there is nothing to do; `--no-bazel` skips it and `--bazel-max-age` sets the age. It
+leaves the shared download cache to `bazel-prune`, because that prune is a full recursive walk and
+a sweep must not pay for one. `--clear-caches` is the exception to age: it clears Bazel completely — every output base,
 install base and cached download, live workspaces included, after stopping their servers. The
 next build starts cold. See [ADR 0014](adrs/0014-bazel-output-base-housekeeping.md).
 

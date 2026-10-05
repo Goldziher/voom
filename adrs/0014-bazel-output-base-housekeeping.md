@@ -19,7 +19,7 @@ all — a monorepo checked out, built, and removed dozens of times over, at roug
 This is the same shape of waste ADR 0011 found in git worktree administration — and it is not
 that problem. `git worktree prune` cannot see it: an output base is not underneath the `.git`
 directory a sweep or `git-prune` ever walks, and it is not addressed by any git command. It also
-is not a [`CACHES`](adrs/0012-cache-catalog.md) entry: that table proves a *fixed, single*
+is not a [`CACHES`](0012-cache-catalog.md) entry: that table proves a *fixed, single*
 location relative to `$HOME` regenerable in its own right — `~/.cache/bazel` as a whole, if a
 user wants the entire build cache gone. An output base is neither fixed nor single: it is one of
 however many a user has ever pointed Bazel at, discovered by walking a *different* directory
@@ -218,9 +218,10 @@ The workspace itself is never touched.
 
 - **Install bases** (`install/<hash>`, roughly 200 MB each) are removed when no output base
   that survives this run links to them. Bazel re-extracts one on demand.
-- **The shared cache** (`cache/`) is pruned per file: anything not modified within the age
-  limit, since Bazel touches an entry each time it is served, and directories left empty by that
-  afterwards.
+- **The shared cache** (`cache/`) is pruned per file by `bazel-prune`: anything not modified
+  within the age limit, since Bazel touches an entry each time it is served, and directories left
+  empty by that afterwards. A sweep deliberately skips this: it is a full recursive walk, and the
+  sweep's cost budget is the reason the rest of this stage was allowed into it at all.
 - The conventional roots gain `~/Library/Caches/bazel/_bazel_<user>`, which held output bases
   on the measured machine and was missing from the original list. `VOOM_BAZEL_ROOTS` (a path
   list, empty for none) replaces the guess entirely.

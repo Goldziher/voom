@@ -84,6 +84,7 @@ fn state_code(state: &State) -> &'static str {
         State::Current => "current",
         State::Missing => "missing",
         State::NotMerged => "not_merged",
+        State::OutsideRoot => "outside_root",
         State::LocalChanges { .. } => "local_changes",
         State::Merged { .. } => "merged",
         State::Unchecked(_) => "unchecked",

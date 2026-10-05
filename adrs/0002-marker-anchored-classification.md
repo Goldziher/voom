@@ -187,13 +187,14 @@ a special case bent into the Bazel entry — it is what the classifier already d
 two ecosystems both declare (`target/` is Rust's and Maven's, resolved by which marker is
 actually present), extended to a fourth anchor kind rather than a third ecosystem.
 
-`python::PYTHON` also gained `BUILD` and `BUILD.bazel` to its own marker list, sibling-anchored
-like its existing three. This is the smaller, cheaper half of the same fix: a `BUILD` file sits
-beside an enormous fraction of this repository's source directories, including many holding a
-`__pycache__` within `Ancestor(1)`'s existing reach, so most of the 1,557 directories in the
-survey above never need the unbounded climb at all — only the ones a `BUILD` file does not sit
-close enough to. Measured together against the same repository: 1,555 of 1,579 candidates
-skipped `marker_out_of_reach` before either change; 16 skipped after, with 1,563 artifacts and
+A simpler candidate was to add `BUILD` and `BUILD.bazel` to `python::PYTHON`'s own marker list,
+sibling-anchored like its existing three. It was rejected: a `BUILD` file proves Bazel, not
+Python, and Python's artifact set includes on-by-default removals (`dist/`, `*.egg-info/`,
+`htmlcov/`, `.coverage`) that a JavaScript or Java Bazel package can legitimately hold as tracked,
+committable content. Treating every Bazel package directory as Python would delete a committed
+`dist/` in a package that never ran Python. The `WorkspaceRoot` declaration above is the fix that
+does not broaden an ecosystem's marker past what actually proves it. Measured against the same
+repository, 16 candidates skipped `marker_out_of_reach` after the change, with 1,563 artifacts and
 183.27 MB reclaimable where 4 artifacts and 16.36 MB were before.
 
 Nothing about the rest of this ADR changes. A `WorkspaceRoot` candidate is still rejected by

@@ -286,7 +286,10 @@ impl Classifier {
                     return Proof::Found(dir.to_path_buf());
                 }
                 unreadable |= !facts.readable;
-                if dir == root {
+                // Stop at the scan root, and never climb past it: a root spelling that does not
+                // compare equal to `dir` must not let the climb walk above the scanned tree and
+                // prove an artifact from a marker outside it.
+                if dir == root || !dir.starts_with(root) {
                     break;
                 }
                 let Some(parent) = dir.parent() else { break };

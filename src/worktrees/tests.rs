@@ -40,7 +40,8 @@ fn add_worktree(main: &Path, name: &str) -> PathBuf {
 }
 
 fn prune_real(main: &Path, dry_run: bool) -> WorktreePruneResult {
-    prune(&[main.to_path_buf()], WorktreeOptions { dry_run })
+    let root = main.parent().expect("a parent").to_path_buf();
+    prune(&[main.to_path_buf()], &[root], WorktreeOptions { dry_run })
 }
 
 fn state_of<'a>(result: &'a WorktreePruneResult, path: &Path) -> &'a Worktree {
@@ -111,6 +112,37 @@ fn should_keep_a_merged_worktree_with_an_untracked_file() {
 }
 
 #[test]
+fn should_keep_a_merged_worktree_with_an_ignored_file() {
+    let (_fixture, main) = repository();
+    std::fs::write(main.join(".gitignore"), "*.env\n").unwrap();
+    run(&main, &["add", ".gitignore"]);
+    run(&main, &["commit", "-q", "-m", "ignore"]);
+    let path = add_worktree(&main, "env");
+    std::fs::write(path.join("local.env"), "SECRET=1").unwrap();
+
+    let result = prune_real(&main, false);
+
+    assert!(matches!(state_of(&result, &path).state, State::LocalChanges { .. }));
+    assert!(path.join("local.env").exists(), "an ignored file is not discarded");
+}
+
+#[test]
+fn should_keep_a_worktree_outside_every_scan_root() {
+    let (_fixture, main) = repository();
+    let path = add_worktree(&main, "elsewhere");
+
+    // Only the main checkout is inside the root; the sibling worktree resolves outside it.
+    let result = prune(
+        std::slice::from_ref(&main),
+        std::slice::from_ref(&main),
+        WorktreeOptions { dry_run: false },
+    );
+
+    assert_eq!(state_of(&result, &path).state, State::OutsideRoot);
+    assert!(path.exists());
+}
+
+#[test]
 fn should_keep_a_worktree_whose_commits_are_not_in_the_default_branch() {
     let (_fixture, main) = repository();
     let path = add_worktree(&main, "ahead");
@@ -144,6 +176,7 @@ fn should_handle_a_repository_reached_through_several_of_its_worktrees_once() {
 
     let result = prune(
         &[main.clone(), first.clone(), second.clone()],
+        &[main.parent().expect("a parent").to_path_buf()],
         WorktreeOptions { dry_run: true },
     );
 

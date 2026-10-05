@@ -89,6 +89,10 @@ pub struct BazelPruneOptions {
     /// Remove everything under a `_bazel_<user>` root — live workspaces, install bases and the
     /// shared cache included — stopping any running server first.
     pub clear_all: bool,
+    /// Whether to age-prune the shared download cache (`<root>/cache`) file by file. On for an
+    /// explicit `bazel-prune`, off for a sweep: it is a full recursive walk, and a sweep must not
+    /// pay for one. `clear_all` removes the cache wholesale regardless of this flag.
+    pub shared_cache: bool,
 }
 
 impl BazelPruneOptions {
@@ -102,6 +106,7 @@ impl BazelPruneOptions {
             one_file_system,
             max_age: DEFAULT_MAX_AGE,
             clear_all: false,
+            shared_cache: true,
         }
     }
 }
@@ -277,11 +282,10 @@ impl BazelPruneResult {
 
 /// The conventional output-user-roots to search when none were named.
 ///
-/// A guess informed by one machine and Bazel's documented default locations, not a survey —
-/// which is exactly why this feature is an explicit subcommand and not a sweep default. A root
-/// that does not exist here is the ordinary case, not a usage error — and [`prune`] treats a
-/// root named explicitly the same way, since every one of these names a convention rather than
-/// a tree the caller has confirmed exists.
+/// A guess informed by one machine and Bazel's documented default locations, not a survey. A
+/// root that does not exist here is the ordinary case, not a usage error — and [`prune`] treats
+/// a root named explicitly the same way, since every one of these names a convention rather
+/// than a tree the caller has confirmed exists.
 ///
 /// `VOOM_BAZEL_ROOTS`, a platform path list (`:` on Unix), replaces the guess entirely; set
 /// empty it names no roots at all. A sweep runs this stage unasked and `--clear-caches` makes it
@@ -376,11 +380,15 @@ pub fn prune(options: &BazelPruneOptions) -> Result<BazelPruneResult> {
             .into_iter()
             .map(|path| handle_install_base(path, &referenced, options, &guard, removal)),
     );
-    found.extend(
-        caches
-            .into_iter()
-            .map(|path| handle_cache(path, options, &guard, removal)),
-    );
+    // The shared cache is a full recursive walk; a sweep skips it and leaves it to `bazel-prune`
+    // or `--clear-caches`. A clear removes it wholesale and is not gated by `shared_cache`.
+    if options.clear_all || options.shared_cache {
+        found.extend(
+            caches
+                .into_iter()
+                .map(|path| handle_cache(path, options, &guard, removal)),
+        );
+    }
 
     found.sort_by(|left, right| left.path.cmp(&right.path));
 
@@ -394,18 +402,31 @@ pub fn prune(options: &BazelPruneOptions) -> Result<BazelPruneResult> {
 
 /// One root's immediate subdirectories, with `install/` expanded one level: its children are
 /// the install bases, and `cache/` is the shared download cache rather than an output base.
+///
+/// `install/` and `cache/` are Bazel's only under a Bazel output-user-root (`_bazel_<user>`);
+/// under any other directory those names are ordinary directories, and a name alone never
+/// proves an ecosystem. This is what lets `bazel-prune --all` be pointed at an unrelated
+/// directory without clearing its `cache/` or `install/`.
 fn candidates_in(root: &Path) -> Vec<Candidate> {
     let mut candidates = Vec::new();
+    let bazel_root = is_bazel_user_root(root);
     for path in immediate_subdirectories(root) {
         match path.file_name().and_then(|name| name.to_str()) {
-            Some("install") => {
+            Some("install") if bazel_root => {
                 candidates.extend(immediate_subdirectories(&path).into_iter().map(Candidate::InstallBase));
             }
-            Some("cache") => candidates.push(Candidate::Cache(path)),
+            Some("cache") if bazel_root => candidates.push(Candidate::Cache(path)),
             _ => candidates.push(Candidate::OutputBase(path)),
         }
     }
     candidates
+}
+
+/// Whether `root` is itself a Bazel output-user-root, named `_bazel_<user>` by Bazel.
+fn is_bazel_user_root(root: &Path) -> bool {
+    root.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("_bazel_"))
 }
 
 /// One root's immediate subdirectories — the only place an output base can be.
@@ -604,7 +625,15 @@ fn unlink_convenience_symlinks(owner: &Path, removed_base: &Path) {
             continue;
         }
         let path = entry.path();
-        let points_into_base = std::fs::read_link(&path).is_ok_and(|target| target.starts_with(removed_base));
+        // Only an absolute target with no `..` can be trusted to sit inside the base by a
+        // lexical prefix check; a relative or dot-dot target is left alone rather than followed.
+        let points_into_base = std::fs::read_link(&path).is_ok_and(|target| {
+            target.is_absolute()
+                && !target
+                    .components()
+                    .any(|component| matches!(component, std::path::Component::ParentDir))
+                && target.starts_with(removed_base)
+        });
         if points_into_base {
             let _ = std::fs::remove_file(&path);
         }

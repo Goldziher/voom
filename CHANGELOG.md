@@ -7,6 +7,74 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
+## [0.8.0] - 2026-10-05
+
+### Added
+
+- **Bazel housekeeping now runs as part of an ordinary sweep, and reclaims idle output bases as
+  well as orphaned ones.** An output base is removed when its recorded owner is gone, when its
+  owner is a linked git worktree whose administrative directory has vanished, or when nothing has
+  built there for longer than `--max-age` (default `7d`). "Built there" is the newest modification
+  among the files Bazel touches on every invocation, so a base still in use refreshes and is kept,
+  and a base with a running server is never touched. Reclaiming one also unlinks the owner's
+  dangling `bazel-*` convenience symlinks. Install bases no surviving output base points at go the
+  same way; entries in the shared download cache untouched within the age limit are pruned by
+  `bazel-prune`, not by a sweep, because that prune is a full recursive walk. `--no-bazel` skips the
+  stage, `--bazel-max-age` and `[bazel] max_age` set the age, and `[bazel] enabled = false` turns it
+  off for a tree. Because a sweep now reaches outside the swept tree, anything driving the binary
+  against a scratch tree sets `VOOM_BAZEL_ROOTS` to nothing.
+- **`--remove-merged-worktrees` removes linked git worktrees whose work is already merged.** A
+  worktree goes only when its `HEAD` is an ancestor of the default branch (the local `origin/HEAD`,
+  else `main`/`master`; voom never fetches, so a stale ref errs toward keeping), it is not the main
+  worktree, locked, missing, the directory voom was started in, or stored outside the scanned paths,
+  and its working tree holds nothing but unstaged deletions of tracked build output or ignored
+  build-output trees such as `target/`. Any modified, staged, added, renamed or untracked path, and
+  any ignored non-build-output file such as a `.env`, keeps it, reported as merged-with-local-changes.
+  The flag is off by default, has no `voom.toml` key, and never deletes a branch; `-n` runs every
+  check and removes nothing. It works on a sweep and on `voom git-prune`, and runs before the Bazel
+  stage so the output bases of the worktrees just removed are reclaimed in the same run.
+- **`~/Library/Caches/bazel/_bazel_<user>` is a conventional output-user-root**, and
+  `VOOM_BAZEL_ROOTS` (a path list) replaces the whole guess.
+
+### Changed
+
+- **`--clean-caches` clears Bazel completely.** `bazel` is a reserved id it accepts, and a bare
+  `--clean-caches`/`--clear-caches` includes it: every output base, install base and cached download
+  under the roots is removed, live workspaces included, after any running server is sent `SIGTERM`
+  and given ten seconds to exit. Without the flag, a sweep only prunes what is stale.
+- **A sweep always collects the repositories its walk passes**, so `--remove-merged-worktrees`
+  finds them whether or not git housekeeping is enabled.
+
+### Fixed
+
+- **`BUILD`/`BUILD.bazel` are no longer Python markers.** They prove Bazel, not Python; treating
+  every Bazel package directory as Python let a committed `dist/`, `*.egg-info/`, `htmlcov/` or
+  `.coverage` be removed by default. The `WorkspaceRoot`-anchored Bazel entry still proves Python's
+  cache artifacts in a Bazel repository.
+- **`bazel-prune <dir>` no longer reads any `cache/` or `install/` child as Bazel's.** Those names
+  are special only under a `_bazel_<user>` root, so an unrelated directory passed explicitly is
+  left alone as ADR 0014 promises.
+
+## [0.7.0] - 2026-09-18
+
+### Added
+
+- **A `WorkspaceRoot` marker anchor** lets an ecosystem be proven from the scan root down for a
+  repository that governs packages with per-directory build files rather than a per-package
+  manifest — Bazel's monorepo layout, where a 45-directory sample of 1,557 `__pycache__`
+  directories found not one `pyproject.toml`/`setup.py`/`setup.cfg` anywhere above it. Python's four
+  cache artifacts gain a second declaration, under the Bazel markers, proven that way, and
+  `BUILD`/`BUILD.bazel` join Python's sibling markers as the cheaper fix for the common case.
+- **`voom bazel-prune` reclaims orphaned Bazel output bases.** It reads the `DO_NOT_BUILD_HERE`
+  marker Bazel writes into every output base, naming the workspace that owns it, and removes a base
+  whose recorded owner no longer exists on disk; one whose owner survives is left alone and named.
+  A shared, sequentially-reused output-user-root is recognised by its nested marker and never
+  mistaken for a per-workspace base.
+- **`voom claude-prune` age-gates and reports Claude Code job scratch** (`~/.claude/jobs/<id>/tmp`).
+  It never trusts `state.json`'s own `state` field: it reads `lastTerminalAt` for age and checks the
+  process list for the recorded session as a hard block, and removes nothing regardless of
+  `--dry-run` unless the age gate, the liveness check and an explicit `--remove` all agree.
+
 ## [0.6.1] - 2026-09-17
 
 ### Added

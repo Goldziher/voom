@@ -93,6 +93,7 @@ fn git_prune(cli: &Cli, args: &voom::cli::GitPruneArgs) -> anyhow::Result<i32> {
         let repositories = voom::git::discover_repositories(&options);
         let worktrees = voom::worktrees::prune(
             &repositories,
+            &options.roots,
             voom::worktrees::WorktreeOptions { dry_run: args.dry_run },
         );
         let mut out = anstream::stdout().lock();
@@ -156,7 +157,7 @@ fn prune(cli: &Cli) -> anyhow::Result<i32> {
 
     // Before Bazel: a removed worktree's output base is then an orphan in the same run.
     let worktree_code = if cli.prune.remove_merged_worktrees {
-        merged_worktrees(cli, &result.repositories)?
+        merged_worktrees(cli, &result.repositories, &options.roots)?
     } else {
         exit::SUCCESS
     };
@@ -211,7 +212,11 @@ fn bazel_housekeeping(cli: &Cli, run_options: &voom::run::RunOptions) -> anyhow:
 
 /// `--remove-merged-worktrees` after a sweep: human output follows the sweep report, JSON gets a
 /// one-line summary on stderr so stdout stays a single document.
-fn merged_worktrees(cli: &Cli, repositories: &[std::path::PathBuf]) -> anyhow::Result<i32> {
+fn merged_worktrees(
+    cli: &Cli,
+    repositories: &[std::path::PathBuf],
+    roots: &[std::path::PathBuf],
+) -> anyhow::Result<i32> {
     if repositories.is_empty() {
         // Not "0 removed": the walk passed no repository at all, which is a different claim. An
         // `--exclude` covering `.git` is the usual cause, since repositories are found by it.
@@ -224,6 +229,7 @@ fn merged_worktrees(cli: &Cli, repositories: &[std::path::PathBuf]) -> anyhow::R
     }
     let result = voom::worktrees::prune(
         repositories,
+        roots,
         voom::worktrees::WorktreeOptions {
             dry_run: cli.prune.dry_run,
         },

@@ -9,6 +9,7 @@ fn options(root: &Path) -> BazelPruneOptions {
         one_file_system: true,
         max_age: DEFAULT_MAX_AGE,
         clear_all: false,
+        shared_cache: true,
     }
 }
 
@@ -193,6 +194,7 @@ fn should_keep_a_base_owned_by_a_worktree_whose_administration_exists() {
     assert!(matches!(&result.output_bases[0].state, OutputBaseState::Owned { .. }));
 }
 
+#[cfg(unix)]
 #[test]
 fn should_unlink_the_convenience_symlinks_a_removed_base_leaves_in_its_workspace() {
     let fixture = tree(&[
@@ -220,6 +222,7 @@ fn should_unlink_the_convenience_symlinks_a_removed_base_leaves_in_its_workspace
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn should_remove_only_install_bases_no_surviving_base_uses() {
     let fixture = tree(&[
@@ -257,6 +260,24 @@ fn should_prune_only_old_files_from_the_shared_cache() {
     assert!(root.join("cache/repos/v1/new/blob").exists());
 }
 
+/// A sweep does not walk the shared cache: with `shared_cache` off, even an old entry survives.
+#[test]
+fn should_leave_the_shared_cache_alone_when_shared_cache_is_off() {
+    let fixture = tree(&["_bazel_dev/cache/repos/v1/old/blob"]);
+    let root = fixture.path().join("_bazel_dev");
+    age(&root.join("cache/repos/v1/old/blob"), 30);
+
+    let mut sweep = options(&root);
+    sweep.shared_cache = false;
+    prune(&sweep).expect("the root resolves");
+
+    assert!(
+        root.join("cache/repos/v1/old/blob").exists(),
+        "a sweep leaves the shared cache to a `bazel-prune`"
+    );
+}
+
+#[cfg(unix)]
 #[test]
 fn should_clear_everything_under_a_bazel_root_when_asked() {
     let fixture = tree(&[
@@ -291,4 +312,30 @@ fn should_not_clear_an_unmarked_directory_outside_a_bazel_root() {
     prune(&clear).expect("the root resolves");
 
     assert!(root.join("notes/keep.txt").exists());
+}
+
+/// `cache/` and `install/` are Bazel's only under a `_bazel_<user>` root. Pointing the command
+/// at an unrelated directory must not read those names as Bazel's and clear them — the failure
+/// mode ADR 0014 promises cannot happen.
+#[test]
+fn should_not_clear_a_cache_or_install_directory_outside_a_bazel_root() {
+    let fixture = tree(&[
+        "projects/cache/repos/v1/old/blob",
+        "projects/install/spare/A-server.jar",
+    ]);
+    let root = fixture.path().join("projects");
+    age(&root.join("cache/repos/v1/old/blob"), 30);
+
+    let mut clear = options(&root);
+    clear.clear_all = true;
+    prune(&clear).expect("the root resolves");
+
+    assert!(
+        root.join("cache/repos/v1/old/blob").exists(),
+        "an unrelated `cache/` is not Bazel's"
+    );
+    assert!(
+        root.join("install/spare/A-server.jar").exists(),
+        "an unrelated `install/` is not Bazel's"
+    );
 }
