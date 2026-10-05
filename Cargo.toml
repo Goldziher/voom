@@ -87,7 +87,7 @@ libc = "0.2"
 
 [dev-dependencies]
 assert_cmd = "2.2"
-insta = { version = "1.48", features = ["json"] }
+insta = { version = "1.49", features = ["json"] }
 predicates = "3.1"
 pretty_assertions = "1.4"
 # The crate depending on itself is how an integration test reaches a feature-gated helper:
