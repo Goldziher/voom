@@ -37,7 +37,10 @@ fn mixed_tree() -> TempDir {
 }
 
 fn voom() -> Command {
-    Command::cargo_bin("voom").expect("the binary builds")
+    let mut command = Command::cargo_bin("voom").expect("the binary builds");
+    // The sweep runs Bazel housekeeping over the real machine's output roots unless told not to.
+    command.env(voom::bazel::ROOTS_ENV, "");
+    command
 }
 
 #[test]

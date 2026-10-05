@@ -467,3 +467,39 @@ fn should_not_let_a_path_rule_release_an_artifact_a_flag_held() {
 
     assert_eq!(snapshot(fixture.path()), before, "the flag still holds it");
 }
+
+/// `[bazel]` resolves like `[git]`: the nearest file wins, and `--no-bazel` beats every file.
+#[test]
+fn should_resolve_the_bazel_section_with_the_flag_above_every_file() {
+    let root = tree(&["Cargo.toml"]);
+    write(root.path(), "voom.toml", "[bazel]\nenabled = true\nmax_age = \"14d\"\n");
+
+    let mut run_options = options(root.path());
+    let resolved = voom::run::resolver_for(root.path(), &run_options)
+        .and_then(|resolver| resolver.root_config())
+        .expect("the configuration resolves");
+    assert!(resolved.bazel);
+    assert_eq!(resolved.bazel_max_age, Some(Duration::from_secs(14 * 86_400)));
+
+    run_options.flags.bazel = Some(false);
+    let resolved = voom::run::resolver_for(root.path(), &run_options)
+        .and_then(|resolver| resolver.root_config())
+        .expect("the configuration resolves");
+    assert!(!resolved.bazel, "--no-bazel beats `enabled = true`");
+}
+
+#[test]
+fn should_reject_an_unparseable_bazel_max_age_and_name_the_file() {
+    let root = tree(&["Cargo.toml"]);
+    write(root.path(), "voom.toml", "[bazel]\nmax_age = \"soon\"\n");
+
+    let error = voom::run::resolver_for(root.path(), &options(root.path()))
+        .and_then(|resolver| resolver.root_config())
+        .expect_err("a bad duration is a configuration error");
+
+    let message = error.to_string();
+    assert!(
+        message.contains("voom.toml") && message.contains("max_age"),
+        "{message}"
+    );
+}

@@ -1,4 +1,5 @@
-//! Bazel output-base housekeeping — orphaned per-workspace scratch that nothing else reclaims.
+//! Bazel output-base housekeeping — orphaned and stale per-workspace scratch that nothing else
+//! reclaims.
 //!
 //! Every distinct workspace path that has run Bazel gets its own output base, and nothing
 //! removes it when the workspace goes away: not `git worktree prune` (the output base is not
@@ -8,8 +9,13 @@
 //!
 //! Bazel already answers the question that matters — is the workspace this output base belongs
 //! to still there — by writing `DO_NOT_BUILD_HERE` into the output base's root, containing the
-//! absolute path of the owner. [`prune`] reads it, checks that one path, and removes only the
-//! output bases whose owner no longer exists. Rendering lives in [`report`].
+//! absolute path of the owner. [`prune`] reads it and removes an output base when its owner is
+//! gone, when the owner is a git worktree whose administration is gone (`git worktree remove`
+//! run from elsewhere, or a `.git` file pointing nowhere), or when nothing has built there for
+//! longer than [`BazelPruneOptions::max_age`]. A base with a live server is never touched unless
+//! `clear_all` asks for the whole lot, in which case the server is stopped first. Install bases
+//! no surviving output base points at, and shared-cache entries older than the age, go the same
+//! way. Rendering lives in [`report`].
 
 mod report;
 
@@ -26,18 +32,48 @@ use crate::size::measure_fully;
 /// document sharing only the envelope.
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// How long an output base may go unbuilt-in before it is stale, when nobody says otherwise.
+///
+/// A week: long enough that a worktree parked over a weekend keeps its warm analysis cache,
+/// short enough that the fortnight-old ticket branches a monorepo accumulates do not each hold
+/// on to several gigabytes.
+pub const DEFAULT_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
 /// The file Bazel writes into an output base's root, naming the workspace that owns it.
 ///
 /// Read from the output base's own root first, and failing that from
 /// `<output base>/execroot/DO_NOT_BUILD_HERE` — where a shared, sequentially-reused
 /// output-user-root (one Docker-wrapping build tool measured for this ADR points every
 /// workspace's build at the same output base in turn) puts it *instead of* the root location.
-/// Not following that nesting is what excludes a shared root without a separate rule naming it:
-/// it has no marker at the position this reads, only one a level further in.
 const OWNER_MARKER: &str = "DO_NOT_BUILD_HERE";
+
+/// Entries Bazel touches on every invocation; the newest modification time among them (and the
+/// output base's own) is when the base was last built in.
+const ACTIVITY_MARKERS: &[&str] = &[
+    "command.log",
+    "lock",
+    "action_cache",
+    "execroot",
+    "external",
+    "server",
+    "java.log",
+];
+
+/// Overrides [`conventional_roots`].
+pub const ROOTS_ENV: &str = "VOOM_BAZEL_ROOTS";
+
+/// Where Bazel records a running server's process id, inside the output base.
+const SERVER_PID_FILE: &str = "server/server.pid.txt";
+
+/// How long `clear_all` waits for a stopped server to exit.
+const SERVER_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// What to search, and how.
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "these mirror command-line flags, which are bools by nature"
+)]
 pub struct BazelPruneOptions {
     /// Output-user-roots to search. Each candidate is one of this root's immediate
     /// subdirectories — an output base is never nested any deeper than that.
@@ -48,35 +84,113 @@ pub struct BazelPruneOptions {
     pub force: bool,
     /// Whether removal stays on the root's filesystem.
     pub one_file_system: bool,
+    /// How long an output base, or a shared-cache entry, may sit unused before it is stale.
+    pub max_age: Duration,
+    /// Remove everything under a `_bazel_<user>` root — live workspaces, install bases and the
+    /// shared cache included — stopping any running server first.
+    pub clear_all: bool,
 }
 
-/// What the owner marker proved about one output base.
+impl BazelPruneOptions {
+    /// Options for the conventional roots with the default age, the shape a sweep uses.
+    #[must_use]
+    pub fn conventional(dry_run: bool, one_file_system: bool) -> Self {
+        Self {
+            roots: conventional_roots(),
+            dry_run,
+            force: false,
+            one_file_system,
+            max_age: DEFAULT_MAX_AGE,
+            clear_all: false,
+        }
+    }
+}
+
+/// What was proven about one candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputBaseState {
     /// No marker was readable at either location. The same rule as everywhere else in the
     /// catalog: no marker, no claim, nothing removed.
     Unproven,
-    /// The marker names a workspace that still exists. Left alone and reported by the path it
-    /// named — existence is not the same claim as membership, and a workspace nobody named to
-    /// this invocation might still be somebody's.
+    /// The marker names a workspace that still exists and was built in recently. Left alone and
+    /// reported by the path it named.
     Owned {
         /// The path the marker recorded.
         owner: PathBuf,
     },
-    /// The marker names a workspace that no longer exists anywhere on disk. The one state a
-    /// marker Bazel wrote at build time can prove outright.
+    /// A Bazel server is still running against it. Never removed by age or orphaning.
+    Running {
+        /// The path the marker recorded, if any.
+        owner: Option<PathBuf>,
+    },
+    /// The marker names a workspace that no longer exists anywhere on disk.
     Orphaned {
         /// The path the marker recorded.
         owner: PathBuf,
     },
+    /// The marker names a directory that exists but is a git worktree whose administration is
+    /// gone, so `git` no longer considers it a checkout of anything.
+    Abandoned {
+        /// The path the marker recorded.
+        owner: PathBuf,
+    },
+    /// The workspace exists, but nothing has built there for longer than the age limit.
+    Stale {
+        /// The path the marker recorded, if the base has one. An unmarked child of a
+        /// `_bazel_<user>` directory is Bazel's, and ages out the same way.
+        owner: Option<PathBuf>,
+        /// How long since the base was last built in.
+        idle: Duration,
+    },
+    /// Removed because a full clear was asked for.
+    Cleared {
+        /// The path the marker recorded, if any.
+        owner: Option<PathBuf>,
+    },
+    /// An extracted Bazel install (`<root>/install/<hash>`).
+    InstallBase {
+        /// Whether a surviving output base still points at it.
+        in_use: bool,
+    },
+    /// The shared download cache (`<root>/cache`); entries older than the age limit go.
+    Cache {
+        /// How many files were old enough to remove.
+        files: usize,
+    },
+}
+
+impl OutputBaseState {
+    /// Whether this state is one a removal was attempted against.
+    #[must_use]
+    pub fn is_removable(&self) -> bool {
+        match self {
+            Self::Orphaned { .. }
+            | Self::Abandoned { .. }
+            | Self::Stale { .. }
+            | Self::Cleared { .. }
+            | Self::InstallBase { in_use: false } => true,
+            Self::Cache { files } => *files > 0,
+            Self::Unproven | Self::Owned { .. } | Self::Running { .. } | Self::InstallBase { in_use: true } => false,
+        }
+    }
+
+    /// The workspace the marker named, if it named one.
+    #[must_use]
+    pub fn owner(&self) -> Option<&Path> {
+        match self {
+            Self::Owned { owner } | Self::Orphaned { owner } | Self::Abandoned { owner } => Some(owner),
+            Self::Running { owner } | Self::Cleared { owner } | Self::Stale { owner, .. } => owner.as_deref(),
+            Self::Unproven | Self::InstallBase { .. } | Self::Cache { .. } => None,
+        }
+    }
 }
 
 /// One candidate output base and what became of it.
 #[derive(Debug, Clone)]
 pub struct OutputBase {
-    /// The output base's own directory — `<output_user_root>/_bazel_<user>/<hash>`.
+    /// The candidate's own directory — `<output_user_root>/_bazel_<user>/<hash>`.
     pub path: PathBuf,
-    /// What the marker proved.
+    /// What was proven.
     pub state: OutputBaseState,
     /// Its size, measured only for a state removal was attempted against.
     pub bytes: Option<u64>,
@@ -85,24 +199,24 @@ pub struct OutputBase {
 }
 
 impl OutputBase {
-    /// Whether this output base was found to be a removable orphan, whatever became of the
-    /// removal attempt.
+    /// Whether this output base was found to be removable, whatever became of the removal
+    /// attempt.
     #[must_use]
-    pub fn is_orphaned(&self) -> bool {
-        matches!(self.state, OutputBaseState::Orphaned { .. })
+    pub fn is_removable(&self) -> bool {
+        self.state.is_removable()
     }
 }
 
 /// The footer's numbers.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Totals {
-    /// Output bases found across every root.
+    /// Candidates found across every root.
     pub found: usize,
-    /// Orphaned, and actually removed.
+    /// Removable, and actually removed.
     pub removed: usize,
-    /// Orphaned, but a rail refused the removal.
+    /// Removable, but a rail refused the removal.
     pub refused: usize,
-    /// Not orphaned — owned, or unproven.
+    /// Not removable — owned, running, in use, or unproven.
     pub kept: usize,
     /// Bytes reclaimed, or that would be.
     pub bytes: u64,
@@ -115,7 +229,7 @@ pub struct BazelPruneResult {
     /// which is the ordinary case for at least some of the conventional defaults — is silently
     /// absent rather than listed, since absence there is not a usage error.
     pub roots: Vec<PathBuf>,
-    /// Output bases, sorted by path.
+    /// Candidates, sorted by path.
     pub output_bases: Vec<OutputBase>,
     /// Whether removal was withheld.
     pub dry_run: bool,
@@ -132,15 +246,13 @@ impl BazelPruneResult {
             ..Totals::default()
         };
         for base in &self.output_bases {
-            match (&base.state, &base.outcome) {
-                (OutputBaseState::Orphaned { .. }, Some(Outcome::Removed | Outcome::WouldRemove)) => {
+            match (base.is_removable(), &base.outcome) {
+                (true, Some(Outcome::Removed | Outcome::WouldRemove)) => {
                     totals.removed += 1;
                     totals.bytes += base.bytes.unwrap_or(0);
                 }
-                (OutputBaseState::Orphaned { .. }, Some(Outcome::Refused(_))) => totals.refused += 1,
-                (OutputBaseState::Orphaned { .. } | OutputBaseState::Owned { .. } | OutputBaseState::Unproven, _) => {
-                    totals.kept += 1;
-                }
+                (true, Some(Outcome::Refused(_))) => totals.refused += 1,
+                _ => totals.kept += 1,
             }
         }
         totals
@@ -170,8 +282,18 @@ impl BazelPruneResult {
 /// that does not exist here is the ordinary case, not a usage error — and [`prune`] treats a
 /// root named explicitly the same way, since every one of these names a convention rather than
 /// a tree the caller has confirmed exists.
+///
+/// `VOOM_BAZEL_ROOTS`, a platform path list (`:` on Unix), replaces the guess entirely; set
+/// empty it names no roots at all. A sweep runs this stage unasked and `--clear-caches` makes it
+/// destructive, so anything that runs the binary against a scratch tree — the test suite above
+/// all — sets it rather than trusting the real machine's `/var/tmp` to be out of reach.
 #[must_use]
 pub fn conventional_roots() -> Vec<PathBuf> {
+    if let Some(roots) = std::env::var_os(ROOTS_ENV) {
+        return std::env::split_paths(&roots)
+            .filter(|root| !root.as_os_str().is_empty())
+            .collect();
+    }
     let Some(user) = current_user() else {
         return Vec::new();
     };
@@ -179,6 +301,7 @@ pub fn conventional_roots() -> Vec<PathBuf> {
     let mut roots = vec![PathBuf::from("/tmp").join(&name), PathBuf::from("/var/tmp").join(&name)];
     if let Some(home) = dirs::home_dir() {
         roots.push(home.join(".cache/bazel").join(&name));
+        roots.push(home.join("Library/Caches/bazel").join(&name));
     }
     roots
 }
@@ -187,7 +310,14 @@ fn current_user() -> Option<String> {
     std::env::var("USER").or_else(|_| std::env::var("USERNAME")).ok()
 }
 
-/// Searches every root for output bases and removes the orphaned ones.
+/// What a root's immediate child is.
+enum Candidate {
+    OutputBase(PathBuf),
+    InstallBase(PathBuf),
+    Cache(PathBuf),
+}
+
+/// Searches every root for output bases and removes the stale ones.
 ///
 /// A root that does not exist or cannot be listed is silently absent from the result rather
 /// than an error — the caller has already decided whether an empty root list is a problem
@@ -207,7 +337,7 @@ pub fn prune(options: &BazelPruneOptions) -> Result<BazelPruneResult> {
         let Ok(canonical) = root.canonicalize() else {
             continue;
         };
-        candidates.extend(immediate_subdirectories(&canonical));
+        candidates.extend(candidates_in(&canonical));
         roots.push(canonical);
     }
 
@@ -217,36 +347,68 @@ pub fn prune(options: &BazelPruneOptions) -> Result<BazelPruneResult> {
         force: options.force,
     };
 
-    let mut output_bases: Vec<OutputBase> = candidates
+    let mut output_bases = Vec::new();
+    let mut install_bases = Vec::new();
+    let mut caches = Vec::new();
+    for candidate in candidates {
+        match candidate {
+            Candidate::OutputBase(path) => output_bases.push(path),
+            Candidate::InstallBase(path) => install_bases.push(path),
+            Candidate::Cache(path) => caches.push(path),
+        }
+    }
+
+    let mut found: Vec<OutputBase> = output_bases
         .into_iter()
-        .map(|path| {
-            let state = state_of(&path);
-            let (bytes, outcome) = if matches!(state, OutputBaseState::Orphaned { .. }) {
-                let measured = measure_fully(&path);
-                (Some(measured.bytes), Some(guard.remove(&path, measured.bytes, removal)))
-            } else {
-                (None, None)
-            };
-            OutputBase {
-                path,
-                state,
-                bytes,
-                outcome,
-            }
-        })
+        .map(|path| handle_output_base(path, options, &guard, removal))
         .collect();
 
-    output_bases.sort_by(|left, right| left.path.cmp(&right.path));
+    // An install base is in use when a base that survived this run still points at it. A dry
+    // run leaves everything on disk, so what *would* be removed is excluded explicitly rather
+    // than by looking.
+    let referenced: Vec<PathBuf> = found
+        .iter()
+        .filter(|base| !base.is_removable() || base.outcome.as_ref().is_some_and(|outcome| !outcome.is_reclaimed()))
+        .filter_map(|base| std::fs::canonicalize(base.path.join("install")).ok())
+        .collect();
+    found.extend(
+        install_bases
+            .into_iter()
+            .map(|path| handle_install_base(path, &referenced, options, &guard, removal)),
+    );
+    found.extend(
+        caches
+            .into_iter()
+            .map(|path| handle_cache(path, options, &guard, removal)),
+    );
+
+    found.sort_by(|left, right| left.path.cmp(&right.path));
 
     Ok(BazelPruneResult {
         roots,
-        output_bases,
+        output_bases: found,
         dry_run: options.dry_run,
         elapsed: started.elapsed(),
     })
 }
 
-/// One output-user-root's immediate subdirectories — the only place an output base can be.
+/// One root's immediate subdirectories, with `install/` expanded one level: its children are
+/// the install bases, and `cache/` is the shared download cache rather than an output base.
+fn candidates_in(root: &Path) -> Vec<Candidate> {
+    let mut candidates = Vec::new();
+    for path in immediate_subdirectories(root) {
+        match path.file_name().and_then(|name| name.to_str()) {
+            Some("install") => {
+                candidates.extend(immediate_subdirectories(&path).into_iter().map(Candidate::InstallBase));
+            }
+            Some("cache") => candidates.push(Candidate::Cache(path)),
+            _ => candidates.push(Candidate::OutputBase(path)),
+        }
+    }
+    candidates
+}
+
+/// One root's immediate subdirectories — the only place an output base can be.
 fn immediate_subdirectories(root: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(root) else {
         return Vec::new();
@@ -258,15 +420,86 @@ fn immediate_subdirectories(root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-fn state_of(output_base: &Path) -> OutputBaseState {
-    let Some(owner) = read_owner(output_base) else {
-        return OutputBaseState::Unproven;
-    };
-    if owner.exists() {
-        OutputBaseState::Owned { owner }
-    } else {
-        OutputBaseState::Orphaned { owner }
+fn handle_output_base(path: PathBuf, options: &BazelPruneOptions, guard: &Guard, removal: Removal) -> OutputBase {
+    let mut state = state_of(&path, options);
+
+    // A full clear takes a live base too, but only after its server has exited: removing an
+    // output base out from under a running server leaves it wedged on a tree that is gone. One
+    // that will not exit is kept and reported as running.
+    if let OutputBaseState::Cleared { owner } = &state
+        && !options.dry_run
+        && !stop_server(&path)
+    {
+        state = OutputBaseState::Running { owner: owner.clone() };
     }
+    finish_removal(path, state, guard, removal)
+}
+
+fn finish_removal(path: PathBuf, state: OutputBaseState, guard: &Guard, removal: Removal) -> OutputBase {
+    if !state.is_removable() {
+        return OutputBase {
+            path,
+            state,
+            bytes: None,
+            outcome: None,
+        };
+    }
+    let measured = measure_fully(&path);
+    let outcome = guard.remove(&path, measured.bytes, removal);
+    if matches!(outcome, Outcome::Removed)
+        && let Some(owner) = state.owner()
+    {
+        unlink_convenience_symlinks(owner, &path);
+    }
+    OutputBase {
+        path,
+        state,
+        bytes: Some(measured.bytes),
+        outcome: Some(outcome),
+    }
+}
+
+fn state_of(output_base: &Path, options: &BazelPruneOptions) -> OutputBaseState {
+    let owner = read_owner(output_base);
+
+    if !options.clear_all && running_server(output_base) {
+        return OutputBaseState::Running { owner };
+    }
+    if options.clear_all && (owner.is_some() || is_bazel_root(output_base)) {
+        return OutputBaseState::Cleared { owner };
+    }
+
+    let Some(owner) = owner else {
+        return match idle_time(output_base) {
+            Some(idle) if is_bazel_root(output_base) && idle > options.max_age => {
+                OutputBaseState::Stale { owner: None, idle }
+            }
+            _ => OutputBaseState::Unproven,
+        };
+    };
+    if !owner.exists() {
+        return OutputBaseState::Orphaned { owner };
+    }
+    if is_dead_worktree(&owner) {
+        return OutputBaseState::Abandoned { owner };
+    }
+    match idle_time(output_base) {
+        Some(idle) if idle > options.max_age => OutputBaseState::Stale {
+            owner: Some(owner),
+            idle,
+        },
+        _ => OutputBaseState::Owned { owner },
+    }
+}
+
+/// Whether the candidate lives directly under a `_bazel_<user>` directory — Bazel's own
+/// naming, which is what makes an unmarked child of it Bazel's to clear.
+fn is_bazel_root(output_base: &Path) -> bool {
+    output_base
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("_bazel_"))
 }
 
 /// Reads the owner marker, at its own root first and then nested under `execroot/` — see
@@ -286,111 +519,200 @@ fn read_owner(output_base: &Path) -> Option<PathBuf> {
     None
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::testing::tree;
+/// Whether the owner is a linked worktree whose git administration no longer exists.
+///
+/// A linked worktree's `.git` is a file reading `gitdir: <path>`; `git worktree remove` and
+/// `git worktree prune` delete the target, and a directory that survives (untracked files,
+/// a build symlink) is then a checkout of nothing. A plain repository has a `.git` directory
+/// and a non-git workspace has neither, both of which are left alone.
+fn is_dead_worktree(owner: &Path) -> bool {
+    let Ok(contents) = std::fs::read_to_string(owner.join(".git")) else {
+        return false;
+    };
+    let Some(target) = contents.trim().strip_prefix("gitdir:") else {
+        return false;
+    };
+    let target = Path::new(target.trim());
+    let resolved = if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        owner.join(target)
+    };
+    !resolved.exists()
+}
 
-    fn options(root: &Path) -> BazelPruneOptions {
-        BazelPruneOptions {
-            roots: vec![root.to_path_buf()],
-            dry_run: false,
-            force: false,
-            one_file_system: true,
+/// How long since Bazel last did anything in this output base.
+fn idle_time(output_base: &Path) -> Option<Duration> {
+    let newest = std::iter::once(output_base.to_path_buf())
+        .chain(ACTIVITY_MARKERS.iter().map(|name| output_base.join(name)))
+        .filter_map(|path| std::fs::metadata(path).and_then(|metadata| metadata.modified()).ok())
+        .max()?;
+    std::time::SystemTime::now().duration_since(newest).ok()
+}
+
+/// The pid of a live Bazel server for this output base, if there is one.
+fn server_pid(output_base: &Path) -> Option<u32> {
+    let pid: u32 = std::fs::read_to_string(output_base.join(SERVER_PID_FILE))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    // A pid file outlives its server, and the pid can be reused: only a process whose command
+    // line names this output base, or is the Bazel server jar, counts.
+    let output = std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let command = String::from_utf8_lossy(&output.stdout);
+    let names_base = command.contains(&*output_base.to_string_lossy());
+    (names_base || command.contains("A-server.jar") || command.contains("bazel(")).then_some(pid)
+}
+
+fn running_server(output_base: &Path) -> bool {
+    server_pid(output_base).is_some()
+}
+
+/// Asks the server to exit and waits for it. `true` once nothing is running against the base.
+fn stop_server(output_base: &Path) -> bool {
+    let Some(pid) = server_pid(output_base) else {
+        return true;
+    };
+    let _ = std::process::Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status();
+    let deadline = Instant::now() + SERVER_STOP_TIMEOUT;
+    while Instant::now() < deadline {
+        if server_pid(output_base).is_none() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    false
+}
+
+/// Removes the `bazel-*` convenience symlinks in a workspace that point into a base that was
+/// just removed, so the workspace is not left holding dangling links.
+fn unlink_convenience_symlinks(owner: &Path, removed_base: &Path) {
+    let Ok(entries) = std::fs::read_dir(owner) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !entry.file_name().to_string_lossy().starts_with("bazel-") {
+            continue;
+        }
+        let path = entry.path();
+        let points_into_base = std::fs::read_link(&path).is_ok_and(|target| target.starts_with(removed_base));
+        if points_into_base {
+            let _ = std::fs::remove_file(&path);
         }
     }
+}
 
-    #[test]
-    fn should_remove_an_output_base_whose_owner_no_longer_exists() {
-        let fixture = tree(&[
-            "_bazel_dev/abc123/execroot/armis/BUILD",
-            "_bazel_dev/abc123/DO_NOT_BUILD_HERE",
-        ]);
-        let root = fixture.path().join("_bazel_dev");
-        std::fs::write(root.join("abc123/DO_NOT_BUILD_HERE"), "/nonexistent/workspace").unwrap();
+fn handle_install_base(
+    path: PathBuf,
+    referenced: &[PathBuf],
+    options: &BazelPruneOptions,
+    guard: &Guard,
+    removal: Removal,
+) -> OutputBase {
+    let in_use = !options.clear_all
+        && path
+            .canonicalize()
+            .is_ok_and(|canonical| referenced.contains(&canonical));
+    finish_removal(path, OutputBaseState::InstallBase { in_use }, guard, removal)
+}
 
-        let result = prune(&options(&root)).expect("the root resolves");
-
-        assert_eq!(result.output_bases.len(), 1);
-        let base = &result.output_bases[0];
-        assert!(
-            matches!(&base.state, OutputBaseState::Orphaned { owner } if owner == Path::new("/nonexistent/workspace"))
-        );
-        assert_eq!(base.outcome, Some(Outcome::Removed));
-        assert!(!base.path.exists(), "the orphan is actually gone");
+/// The shared download cache: whole with `clear_all`, otherwise only files not modified within
+/// the age limit (Bazel touches an entry each time it is served), with directories left empty
+/// by that removed afterwards.
+fn handle_cache(path: PathBuf, options: &BazelPruneOptions, guard: &Guard, removal: Removal) -> OutputBase {
+    if options.clear_all {
+        let files = count_files(&path);
+        return finish_removal(path, OutputBaseState::Cache { files: files.max(1) }, guard, removal);
     }
 
-    #[test]
-    fn should_leave_an_owned_output_base_alone() {
-        let fixture = tree(&["_bazel_dev/abc123/DO_NOT_BUILD_HERE", "workspace/WORKSPACE"]);
-        let root = fixture.path().join("_bazel_dev");
-        let owner = fixture.path().join("workspace");
-        std::fs::write(root.join("abc123/DO_NOT_BUILD_HERE"), owner.display().to_string()).unwrap();
+    let now = std::time::SystemTime::now();
+    let mut aged = Vec::new();
+    collect_aged_files(&path, now, options.max_age, &mut aged);
 
-        let result = prune(&options(&root)).expect("the root resolves");
-
-        let base = &result.output_bases[0];
-        assert!(matches!(&base.state, OutputBaseState::Owned { .. }));
-        assert!(
-            base.outcome.is_none(),
-            "nothing is even attempted against an owned base"
-        );
-        assert!(base.path.exists(), "an owned output base survives");
+    let mut bytes = 0;
+    let mut outcome = None;
+    for (file, size) in &aged {
+        let result = guard.remove(file, *size, removal);
+        if result.is_reclaimed() {
+            bytes += size;
+        }
+        if outcome.is_none() || !result.is_reclaimed() {
+            outcome = Some(result);
+        }
     }
-
-    #[test]
-    fn should_leave_an_unmarked_directory_unproven() {
-        let fixture = tree(&["_bazel_dev/abc123/execroot/armis/BUILD"]);
-        let root = fixture.path().join("_bazel_dev");
-
-        let result = prune(&options(&root)).expect("the root resolves");
-
-        assert_eq!(result.output_bases[0].state, OutputBaseState::Unproven);
+    if !removal.dry_run {
+        remove_empty_directories(&path);
     }
-
-    /// The shared, sequentially-reused root this ADR measured: the marker sits under
-    /// `execroot/` instead of at the output base's own root, which is read — but a root-level
-    /// marker still wins when both exist, since it is the more specific claim.
-    #[test]
-    fn should_read_the_execroot_marker_only_when_no_root_marker_exists() {
-        let fixture = tree(&["_bazel_dev/shared/execroot/DO_NOT_BUILD_HERE"]);
-        let root = fixture.path().join("_bazel_dev");
-        std::fs::write(
-            root.join("shared/execroot/DO_NOT_BUILD_HERE"),
-            "/nonexistent/last-builder",
-        )
-        .unwrap();
-
-        let result = prune(&options(&root)).expect("the root resolves");
-
-        assert!(matches!(
-            &result.output_bases[0].state,
-            OutputBaseState::Orphaned { owner } if owner == Path::new("/nonexistent/last-builder")
-        ));
-    }
-
-    #[test]
-    fn should_leave_a_missing_root_silently_absent() {
-        let fixture = tree(&["keep.txt"]);
-        let missing = fixture.path().join("does-not-exist");
-
-        let result = prune(&options(&missing)).expect("a missing root is not an error");
-
-        assert!(result.roots.is_empty());
-        assert!(result.output_bases.is_empty());
-    }
-
-    #[test]
-    fn should_respect_dry_run_and_leave_the_orphan_on_disk() {
-        let fixture = tree(&["_bazel_dev/abc123/DO_NOT_BUILD_HERE"]);
-        let root = fixture.path().join("_bazel_dev");
-        std::fs::write(root.join("abc123/DO_NOT_BUILD_HERE"), "/nonexistent/workspace").unwrap();
-
-        let mut dry = options(&root);
-        dry.dry_run = true;
-        let result = prune(&dry).expect("the root resolves");
-
-        assert_eq!(result.output_bases[0].outcome, Some(Outcome::WouldRemove));
-        assert!(root.join("abc123").exists(), "a dry run removes nothing");
+    OutputBase {
+        path,
+        state: OutputBaseState::Cache { files: aged.len() },
+        bytes: (!aged.is_empty()).then_some(bytes),
+        outcome,
     }
 }
+
+fn count_files(root: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|entry| match entry.file_type() {
+            Ok(file_type) if file_type.is_dir() => count_files(&entry.path()),
+            Ok(file_type) if file_type.is_file() => 1,
+            _ => 0,
+        })
+        .sum()
+}
+
+fn collect_aged_files(dir: &Path, now: std::time::SystemTime, max_age: Duration, out: &mut Vec<(PathBuf, u64)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            collect_aged_files(&entry.path(), now, max_age, out);
+        } else if file_type.is_file() {
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            let aged = metadata
+                .modified()
+                .ok()
+                .and_then(|modified| now.duration_since(modified).ok())
+                .is_some_and(|age| age > max_age);
+            if aged {
+                out.push((entry.path(), metadata.len()));
+            }
+        }
+    }
+}
+
+/// Removes directories a file removal left empty, deepest first. `remove_dir` refuses a
+/// non-empty directory, which is the whole safety argument.
+fn remove_empty_directories(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_type().is_ok_and(|file_type| file_type.is_dir()) {
+            remove_empty_directories(&entry.path());
+            let _ = std::fs::remove_dir(entry.path());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

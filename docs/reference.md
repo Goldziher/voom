@@ -15,6 +15,9 @@ The `Group` column matches `voom --help`'s own grouping.
 | Behaviour | `--dry-run` | `-n` | off | Report what would be removed, without touching anything. |
 | Behaviour | `--report` | | | Print the per-artifact report. Already the default; accepted so a git hook can name it explicitly. |
 | Behaviour | `--exit-code` | | off | Exit `3` when a dry run finds artifacts, for a hook to fail on. |
+| Behaviour | `--remove-merged-worktrees` | | off | Remove linked git worktrees already merged into the default branch (local `origin/HEAD`, `main` or `master`; never fetches). Kept when locked, current, or holding any change other than deleted tracked build output. Branches are never deleted. Not settable from `voom.toml`. With `-n`, only reports. |
+| Behaviour | `--no-bazel` | | off | Skip the Bazel housekeeping a sweep runs after the artifacts: orphaned, abandoned and stale output bases, unused install bases, old shared-cache files. `--clear-caches` clears Bazel completely instead. |
+| Behaviour | `--bazel-max-age <DURATION>` | | `7d` | How long an output base may go unbuilt in before the sweep treats it as stale. |
 | Behaviour | `--no-git` | | off | Skip `git worktree prune` and `git gc --auto` in every repository walked. Also `[git] enabled = false`; the flag wins. |
 | Behaviour | `--force` | | off | Retry a failed removal, first clearing read-only bits (and, on macOS, the immutable flag) on paths already inside a proven artifact. Never relaxes a rail, follows a symlink, or touches the artifact's parent. A repair that does not go on to succeed is not undone. |
 | Behaviour | `--jobs <N>` | `-j` | every core | Worker threads for the walk, sizing and removal. Lower on spinning disks or network filesystems. |
@@ -45,7 +48,8 @@ The `Group` column matches `voom --help`'s own grouping.
 | `voom config show [PATH]` | Print the fully merged, resolved configuration and the files it came from. `PATH` defaults to `.`. Always exits `0`. |
 | `voom suggest [PATHS]` | Rank repeated directories a `.gitignore` names that the catalog does not cover. Removes nothing. Takes `--one-file-system[=BOOL]` and `-j`/`--jobs <N>`. Always exits `0`. |
 | `voom watch [PATHS]` | Keep a tree pruned continuously. `--debounce <DURATION>` (default `5s`), `--quiet-period <DURATION>` (default `60s`). Sweep flags come from the top-level arguments. |
-| `voom git-prune [PATHS]` | Run git's own housekeeping on its own. `-n`/`--dry-run`, `--remotes`, `--timeout <DURATION>`, `--expire <TIME>` (default git's own three-month `gc.worktreePruneExpire`), `--format <human\|json>`. Exits `1` if a repository's housekeeping failed. |
+| `voom bazel-prune [ROOTS]` | Bazel output-base housekeeping on its own. `-n`/`--dry-run`, `--max-age <DURATION>` (default `7d`), `--all` (clear everything, stopping servers), `--force`, `--format <human\|json>`. Roots default to the conventional output-user-roots, or `VOOM_BAZEL_ROOTS`. Exits `1` if a removal failed. |
+| `voom git-prune [PATHS]` | Run git's own housekeeping on its own. `-n`/`--dry-run`, `--remotes`, `--remove-merged-worktrees`, `--timeout <DURATION>`, `--expire <TIME>` (default git's own three-month `gc.worktreePruneExpire`), `--format <human\|json>`. Exits `1` if a repository's housekeeping failed. |
 
 ## JSON output
 

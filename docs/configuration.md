@@ -26,6 +26,10 @@ disable = ["terraform"]
 [git]
 enabled = false      # skip the housekeeping a sweep otherwise does here
 
+[bazel]
+enabled = false      # skip the Bazel housekeeping a sweep otherwise does
+max_age = "14d"      # how long an output base may go unbuilt in before it is stale (default 7d)
+
 [caches]
 enable = ["uv"]      # opt into a named tool cache — additive across the hierarchy, never subtractive
 

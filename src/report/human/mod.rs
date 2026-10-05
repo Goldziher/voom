@@ -253,14 +253,34 @@ fn skip_lines(result: &RunResult, base: Option<&Path>) -> Vec<Line> {
         .collect()
 }
 
+/// How many walk errors with one and the same message are listed before the rest collapse into a
+/// count. A `$HOME` sweep on macOS meets a hundred-odd privacy-protected directories under
+/// `~/Library`, every one `Operation not permitted`; listing them all buries the artifacts.
+const COLLAPSE_AFTER: usize = 5;
+
 fn failure_lines(result: &RunResult, verbose: bool, base: Option<&Path>) -> Vec<Line> {
-    result
+    let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let mut hidden: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    let mut lines: Vec<Line> = result
         .failures
         .iter()
         // A transient interruption is not something the reader can act on, and a $HOME sweep
         // produces a handful every time. Listing them beside real permission failures is what
         // teaches people to skim the section.
         .filter(|failure| verbose || !failure.transient)
+        .filter(|failure| {
+            if verbose {
+                return true;
+            }
+            let count = seen.entry(failure.message.as_str()).or_default();
+            *count += 1;
+            if *count > COLLAPSE_AFTER {
+                *hidden.entry(failure.message.as_str()).or_default() += 1;
+                false
+            } else {
+                true
+            }
+        })
         .map(|failure| Line {
             label: if failure.transient { "interrupted" } else { "walk error" },
             label_style: if failure.transient {
@@ -277,7 +297,17 @@ fn failure_lines(result: &RunResult, verbose: bool, base: Option<&Path>) -> Vec<
                 .map_or_else(|| "-".to_owned(), |path| shorten(path, base)),
             detail: Some(failure.message.clone()),
         })
-        .collect()
+        .collect();
+    lines.extend(hidden.into_iter().map(|(message, count)| Line {
+        label: "walk error",
+        label_style: palette::failed(),
+        size: None,
+        tag: None,
+        tag_style: palette::quiet(),
+        path: format!("… and {count} more"),
+        detail: Some(format!("{message} (--verbose lists them all)")),
+    }));
+    lines
 }
 
 /// Renders the whole report.
@@ -420,6 +450,36 @@ mod tests {
 
         assert!(text.contains("Permission denied"), "{text}");
         assert!(!text.contains("Interrupted system call"), "{text}");
+    }
+
+    /// `~/Library` on macOS has a hundred-odd privacy-protected directories that all fail the
+    /// same way; the report names a few and counts the rest.
+    #[test]
+    fn should_collapse_many_identical_walk_errors_into_a_count() {
+        let mut result = result(Vec::new(), true);
+        result.failures = (0..40)
+            .map(|index| crate::scan::WalkFailure {
+                path: Some(path(&format!("/home/Library/protected{index}"))),
+                message: "Operation not permitted (os error 1)".to_owned(),
+                transient: false,
+            })
+            .collect();
+
+        let text = render_to_string(&result, HumanOptions::default());
+
+        assert_eq!(
+            text.matches("Operation not permitted").count(),
+            COLLAPSE_AFTER + 1,
+            "{text}"
+        );
+        assert!(text.contains("and 35 more"), "{text}");
+
+        let verbose_text = render_to_string(&result, verbose());
+        assert_eq!(
+            verbose_text.matches("Operation not permitted").count(),
+            40,
+            "{verbose_text}"
+        );
     }
 
     #[test]

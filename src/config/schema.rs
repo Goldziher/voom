@@ -31,6 +31,9 @@ pub struct ConfigFile {
     /// Git housekeeping (ADR 0011), which an ordinary sweep runs.
     #[serde(default)]
     pub git: GitSection,
+    /// Bazel housekeeping (ADR 0014), which an ordinary sweep runs after the artifacts.
+    #[serde(default)]
+    pub bazel: BazelSection,
     /// Named machine-global tool caches to remove (ADR 0012). Empty unless asked.
     #[serde(default)]
     pub caches: CachesSection,
@@ -73,6 +76,18 @@ pub struct GitSection {
     /// Whether an ordinary sweep runs git's own local housekeeping in the repositories it walks
     /// past. Unset inherits the layer above; `--no-git` overrides every layer.
     pub enabled: Option<bool>,
+}
+
+/// `[bazel]`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BazelSection {
+    /// Whether an ordinary sweep runs Bazel housekeeping. Unset inherits the layer above;
+    /// `--no-bazel` overrides every layer.
+    pub enabled: Option<bool>,
+    /// How long an output base may go unbuilt in before it is stale, e.g. `"14d"`. Unset
+    /// inherits the layer above; `--bazel-max-age` overrides every layer.
+    pub max_age: Option<String>,
 }
 
 /// `[ecosystems]`.
