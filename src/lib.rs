@@ -43,3 +43,4 @@ pub mod tagged;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 pub mod watch;
+pub mod worktrees;

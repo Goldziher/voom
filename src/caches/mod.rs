@@ -260,12 +260,20 @@ fn removable_under(home: &Path, root: &Path, clean: &[String]) -> HashMap<PathBu
     resolved
 }
 
+/// The id `--clean-caches` names Bazel by.
+///
+/// Not a [`CACHES`] entry: those are fixed locations under `$HOME` proven by a marker inside
+/// them, and Bazel's state is one directory per workspace, in locations that vary by platform
+/// and by `--output_user_root`. It is cleared by [`crate::bazel`], over the conventional
+/// output-user-roots, and a sweep's scan ignores the id.
+pub const BAZEL_ID: &str = "bazel";
+
 /// The ids in `clean` that no entry declares, so a typo is an error rather than a silent no-op.
 #[must_use]
 pub fn unknown_ids(clean: &[String]) -> Vec<String> {
     clean
         .iter()
-        .filter(|id| !CACHES.iter().any(|cache| cache.id == **id))
+        .filter(|id| **id != BAZEL_ID && !CACHES.iter().any(|cache| cache.id == **id))
         .cloned()
         .collect()
 }

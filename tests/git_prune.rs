@@ -477,7 +477,10 @@ fn subcommand(command: &[String]) -> &[String] {
 
 #[cfg(unix)]
 fn voom() -> assert_cmd::Command {
-    assert_cmd::Command::cargo_bin("voom").expect("the binary builds")
+    let mut command = assert_cmd::Command::cargo_bin("voom").expect("the binary builds");
+    // The sweep runs Bazel housekeeping over the real machine's output roots unless told not to.
+    command.env(voom::bazel::ROOTS_ENV, "");
+    command
 }
 
 /// The wiring, end to end through the real binary: an ordinary sweep prunes what git considers

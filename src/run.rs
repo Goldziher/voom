@@ -62,6 +62,7 @@ struct Collected {
     skipped_count: usize,
     failures: Vec<crate::scan::WalkFailure>,
     git: Option<crate::git::GitPruneResult>,
+    repositories: Vec<PathBuf>,
     // Accumulated across roots: each root runs the whole pipeline, so a two-root run has two
     // scan phases and the user wants the time the stage cost them, not the time one of them did.
     scan: Duration,
@@ -104,6 +105,7 @@ pub fn run(options: &RunOptions) -> Result<RunResult> {
         failures: collected.failures,
         dry_run: options.dry_run,
         git: collected.git,
+        repositories: collected.repositories,
         timings: Timings {
             total: started.elapsed(),
             scan: collected.scan,
@@ -208,7 +210,9 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
         exclude: PatternSet::new(at_root.exclude.clone())?,
         include: PatternSet::new(at_root.include.clone())?,
         caches: CacheRoots::for_root(root, &at_root.clean_caches),
-        collect_repositories: at_root.git,
+        // Always: the walk passes them anyway, and merged-worktree removal (opt-in) needs them
+        // whether or not git housekeeping is on.
+        collect_repositories: true,
         clean_tagged: at_root.clean_tagged,
     };
     // Progress goes to stderr so it never contaminates piped stdout, and only when stderr is a
@@ -228,6 +232,7 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
     // Git's own local housekeeping over the repositories the walk already passed (ADR 0011).
     // It runs on this pool, never fails the sweep — a machine without git simply has nothing to
     // do here — and says nothing in the report when it did nothing.
+    collected.repositories.extend(scanned.repositories.iter().cloned());
     prune_repositories(root, &scanned.repositories, &at_root, options, collected)?;
 
     let selected = select(root, &resolver, scanned.findings, options, collected)?;

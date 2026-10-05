@@ -331,7 +331,7 @@ min_age = "7d"                     # never remove something modified more recent
 enable = ["uv"]                    # opt into a named tool cache
 ```
 
-Keep policies, per-ecosystem and per-path overrides, `[ecosystems]`, `[git]` and the Windows
+Keep policies, per-ecosystem and per-path overrides, `[ecosystems]`, `[git]`, `[bazel]` and the Windows
 quoting rule are in the [configuration reference](docs/configuration.md).
 `voom config show [PATH]` prints the merged result and the files it came from.
 
@@ -381,6 +381,25 @@ voom git-prune --format json ~/projects   # machine-readable, same shape embedde
 A repository whose housekeeping fails or times out makes `git-prune` exit `1`; a skip is a rail
 doing its job and exits `0`.
 
+## Merged worktrees
+
+A worktree checked out for a ticket and left after the merge keeps a full checkout — and a Bazel
+output base — on disk. `--remove-merged-worktrees` (on a sweep, or on `voom git-prune`) removes
+the ones whose work is already in the default branch:
+
+```bash
+voom -n --remove-merged-worktrees ~/code          # what would go
+voom --remove-merged-worktrees ~/code             # remove them; Bazel orphans go in the same run
+```
+
+A worktree is removed only when its `HEAD` is an ancestor of the default branch (the local
+`origin/HEAD`, else `main`/`master` — voom never fetches, so a stale ref errs toward keeping),
+it is not locked or the current directory, and its working tree holds nothing but deleted
+tracked build output such as `dist/`. One with any modified, staged or untracked path is
+reported as merged-with-local-changes and kept. Branches are never deleted. It is off by
+default and cannot be turned on from `voom.toml`, because unlike the rest of git housekeeping it
+can lose work. See [ADR 0016](adrs/0016-merged-worktree-removal.md).
+
 ## Bazel output-base housekeeping
 
 Every workspace path that has run Bazel gets its own output base, and nothing removes it when
@@ -393,17 +412,31 @@ the owner still there?
 ```bash
 voom bazel-prune                          # search the conventional locations
 voom bazel-prune -n /var/tmp/_bazel_you    # what would be removed, without removing it
+voom bazel-prune --max-age 14d             # treat a base as stale after two weeks, not one
+voom bazel-prune --all                     # clear Bazel completely, stopping servers first
 voom bazel-prune --format json             # machine-readable
 ```
 
-Given no path, it searches `/tmp/_bazel_<user>`, `/var/tmp/_bazel_<user>` and
-`~/.cache/bazel/_bazel_<user>`, and finds nothing at whichever do not exist on this machine —
-that absence is never a usage error, whether the root was defaulted or named. An output base
-whose recorded owner no longer exists anywhere on disk is removed; one whose owner still
-exists is left alone and named in the report regardless, since existence is not the same claim
-as "one of the workspaces this invocation was told about." Not part of a sweep — an output base
-never lives under the tree it was built from, so there is nothing to discover for free the way
-`git-prune`'s repositories are. See [ADR 0014](adrs/0014-bazel-output-base-housekeeping.md).
+Given no path, it searches `/tmp/_bazel_<user>`, `/var/tmp/_bazel_<user>`,
+`~/.cache/bazel/_bazel_<user>` and `~/Library/Caches/bazel/_bazel_<user>` (or the
+`VOOM_BAZEL_ROOTS` path list, which replaces them), and finds nothing at whichever do not exist
+on this machine — that absence is never a usage error. An output base is removed when:
+
+- its recorded owner no longer exists on disk;
+- its owner is a git worktree whose administration is gone (`git worktree remove` ran, the
+  directory survived);
+- nothing has built there for longer than `--max-age` (default `7d`) — the stale worktrees a
+  monorepo accumulates, one output base each.
+
+Removing a base also unlinks the owner's dangling `bazel-*` convenience symlinks. A base with a
+running server is never touched. Install bases no surviving output base points at, and files in
+the shared download cache not used within the age limit, go the same way.
+
+A sweep runs this same housekeeping after the artifacts, over the conventional roots, and says
+nothing when there is nothing to do; `--no-bazel` skips it and `--bazel-max-age` sets the age.
+`--clear-caches` is the exception to age: it clears Bazel completely — every output base,
+install base and cached download, live workspaces included, after stopping their servers. The
+next build starts cold. See [ADR 0014](adrs/0014-bazel-output-base-housekeeping.md).
 
 ## Claude Code job scratch
 

@@ -43,6 +43,13 @@ pub struct GitPruneArgs {
     #[arg(long, value_name = "DURATION")]
     pub timeout: Option<String>,
 
+    /// Also remove linked worktrees whose work is already merged into the default branch.
+    ///
+    /// The same rules as the top-level `--remove-merged-worktrees`: merged, clean apart from
+    /// deleted build output, not locked, not the current directory. Reports only under `-n`.
+    #[arg(long)]
+    pub remove_merged_worktrees: bool,
+
     /// How old a worktree's administration must be before git may prune it.
     ///
     /// Defaults to git's own `gc.worktreePruneExpire` policy, three months, rather than
@@ -102,6 +109,10 @@ pub fn render_git(
 }
 
 /// `voom bazel-prune` arguments.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "these mirror command-line flags, which are bools by nature"
+)]
 #[derive(Debug, Args)]
 pub struct BazelPruneArgs {
     /// Output-user-roots to search, each an `_bazel_<user>`-shaped directory whose immediate
@@ -131,13 +142,31 @@ pub struct BazelPruneArgs {
     /// Retry a failed removal, repairing permissions inside the output base first.
     #[arg(long)]
     pub force: bool,
+
+    /// How long an output base may go unbuilt in before it is stale, e.g. `7d`.
+    ///
+    /// Also the age limit for entries in the shared download cache. Defaults to seven days. An
+    /// output base with a running server is never stale, however idle its files look.
+    #[arg(long, value_name = "DURATION")]
+    pub max_age: Option<String>,
+
+    /// Clear Bazel completely: every output base, install base and cached download under the
+    /// roots, live workspaces included. Running servers are stopped first.
+    ///
+    /// The next build in any workspace starts cold. This is what `voom --clear-caches` does for
+    /// Bazel as part of clearing every cache.
+    #[arg(long)]
+    pub all: bool,
 }
 
 impl BazelPruneArgs {
     /// The options for `voom bazel-prune`.
-    #[must_use]
-    pub fn to_bazel_options(&self) -> crate::bazel::BazelPruneOptions {
-        crate::bazel::BazelPruneOptions {
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidDuration`] for an unparseable `--max-age`.
+    pub fn to_bazel_options(&self) -> Result<crate::bazel::BazelPruneOptions> {
+        Ok(crate::bazel::BazelPruneOptions {
             roots: if self.roots.is_empty() {
                 crate::bazel::conventional_roots()
             } else {
@@ -146,7 +175,14 @@ impl BazelPruneArgs {
             dry_run: self.dry_run,
             force: self.force,
             one_file_system: self.one_file_system,
-        }
+            max_age: self
+                .max_age
+                .as_deref()
+                .map(parse_duration)
+                .transpose()?
+                .unwrap_or(crate::bazel::DEFAULT_MAX_AGE),
+            clear_all: self.all,
+        })
     }
 }
 
