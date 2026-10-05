@@ -41,6 +41,10 @@ pub struct Flags {
     pub clean_caches: Vec<String>,
     /// `--no-git`, as `Some(false)`. `None` leaves the decision to configuration.
     pub git: Option<bool>,
+    /// `--no-bazel`, as `Some(false)`. `None` leaves the decision to configuration.
+    pub bazel: Option<bool>,
+    /// `--bazel-max-age`. `None` leaves the age to configuration.
+    pub bazel_max_age: Option<std::time::Duration>,
     /// `--clean-tagged`, as `Some(true)`. `None` leaves the decision to configuration.
     pub clean_tagged: Option<bool>,
 }
@@ -66,6 +70,8 @@ struct Accumulated {
     include: Vec<String>,
     clean_caches: Vec<String>,
     git: Option<bool>,
+    bazel: Option<bool>,
+    bazel_max_age: Option<std::time::Duration>,
     clean_tagged: Option<bool>,
     sources: Vec<PathBuf>,
 }
@@ -92,6 +98,12 @@ pub struct Resolved {
     /// Whether an ordinary sweep runs git housekeeping here (ADR 0011). On unless something
     /// turned it off.
     pub git: bool,
+    /// Whether an ordinary sweep runs Bazel housekeeping (ADR 0014). On unless something turned
+    /// it off.
+    pub bazel: bool,
+    /// How long an output base may go unbuilt in before the sweep treats it as stale. `None`
+    /// means [`crate::bazel::DEFAULT_MAX_AGE`].
+    pub bazel_max_age: Option<std::time::Duration>,
     /// Whether a `CACHEDIR.TAG` alone proves an artifact here (ADR 0013). Off unless asked.
     pub clean_tagged: bool,
     /// The files that contributed, in ascending precedence.
@@ -321,6 +333,8 @@ impl Resolver {
             // scan root may turn housekeeping back on for a run that was invoked with
             // `--no-git`. On by default, which is what makes it ordinary behaviour.
             git: self.flags.git.or(accumulated.git).unwrap_or(true),
+            bazel: self.flags.bazel.or(accumulated.bazel).unwrap_or(true),
+            bazel_max_age: self.flags.bazel_max_age.or(accumulated.bazel_max_age),
             // `--clean-tagged`. Off by default: a tagged directory may carry any name, so
             // nothing about a default run may depend on finding one (ADR 0013).
             clean_tagged: self.flags.clean_tagged.or(accumulated.clean_tagged).unwrap_or(false),
@@ -350,6 +364,15 @@ fn apply(accumulated: &mut Accumulated, layer: &Layer) -> Result<()> {
     }
     if let Some(enabled) = layer.file.git.enabled {
         accumulated.git = Some(enabled);
+    }
+    if let Some(enabled) = layer.file.bazel.enabled {
+        accumulated.bazel = Some(enabled);
+    }
+    if let Some(age) = &layer.file.bazel.max_age {
+        accumulated.bazel_max_age = Some(crate::policy::parse_duration(age).map_err(|error| Error::Config {
+            path: source.clone(),
+            reason: format!("`[bazel] max_age`: {error}"),
+        })?);
     }
 
     accumulated.keep = accumulated.keep.narrow(keep_from(&layer.file.keep.scalars(), source)?);

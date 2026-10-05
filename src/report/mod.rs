@@ -169,6 +169,9 @@ pub struct RunResult {
     /// has no git — three states a reader never needs told apart, because all three mean the
     /// report has nothing to say about git. It renders as JSON `null`, not as an absent key.
     pub git: Option<crate::git::GitPruneResult>,
+    /// The work trees the walk passed, for opt-in follow-up such as merged-worktree removal.
+    /// Not part of the JSON document.
+    pub repositories: Vec<std::path::PathBuf>,
     /// Wall-clock time, for the run and for each stage of it.
     pub timings: Timings,
 }
@@ -371,6 +374,7 @@ pub(crate) mod fixtures {
             failures: Vec::new(),
             dry_run,
             git: None,
+            repositories: Vec::new(),
             timings: Timings {
                 total: Duration::from_millis(1234),
                 scan: Duration::from_millis(900),

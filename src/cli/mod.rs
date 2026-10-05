@@ -168,6 +168,30 @@ pub struct PruneArgs {
     #[arg(long, help_heading = "Behaviour")]
     pub no_git: bool,
 
+    /// Remove linked git worktrees whose work is already merged into the default branch.
+    ///
+    /// Off by default and not settable from `voom.toml`: unlike the rest of git housekeeping,
+    /// removing a checkout can lose work. A worktree goes only when its `HEAD` is in the default
+    /// branch (the local `origin/HEAD`, `main` or `master`; voom never fetches), it is not
+    /// locked or the current directory, and its working tree holds nothing but deleted tracked
+    /// build output such as `dist/`. A merged worktree with any other local change is reported
+    /// and kept. Branches are never deleted. With `-n`, only reports.
+    #[arg(long, help_heading = "Behaviour")]
+    pub remove_merged_worktrees: bool,
+
+    /// Skip Bazel housekeeping: output bases that are orphaned, abandoned or idle for longer
+    /// than `--bazel-max-age`, install bases nothing uses, and stale downloads.
+    ///
+    /// Runs after the sweep, over the conventional output-user-roots, and is silent when there
+    /// is nothing to do. A base with a running server is never touched. `--clear-caches` clears
+    /// Bazel completely instead; `voom bazel-prune` runs the same housekeeping on its own.
+    #[arg(long, help_heading = "Behaviour")]
+    pub no_bazel: bool,
+
+    /// How long an output base may go unbuilt in before the sweep treats it as stale, e.g. `14d`.
+    #[arg(long, value_name = "DURATION", help_heading = "Behaviour")]
+    pub bazel_max_age: Option<String>,
+
     /// Retry a failed removal, repairing permissions inside the artifact first.
     ///
     /// Clears read-only bits, and on macOS the user-immutable flag, on paths *inside* an
@@ -380,9 +404,32 @@ impl PruneArgs {
     #[must_use]
     fn clean_caches_ids(&self) -> Vec<String> {
         if self.clean_caches.iter().any(|id| id == "all") {
-            return crate::caches::CACHES.iter().map(|cache| cache.id.to_owned()).collect();
+            return crate::caches::CACHES
+                .iter()
+                .map(|cache| cache.id.to_owned())
+                .chain(std::iter::once(crate::caches::BAZEL_ID.to_owned()))
+                .collect();
         }
         self.clean_caches.clone()
+    }
+
+    /// The Bazel housekeeping a sweep runs after the artifacts, or `None` when the resolved
+    /// configuration (`--no-bazel`, `[bazel] enabled`) turned it off.
+    ///
+    /// A full clear when `--clear-caches` named Bazel (which a bare flag does), otherwise the
+    /// age-based prune.
+    #[must_use]
+    pub fn bazel_options(&self, resolved: &crate::config::Resolved) -> Option<crate::bazel::BazelPruneOptions> {
+        if !resolved.bazel {
+            return None;
+        }
+        let mut options = crate::bazel::BazelPruneOptions::conventional(self.dry_run, self.one_file_system);
+        options.force = self.force;
+        if let Some(age) = resolved.bazel_max_age {
+            options.max_age = age;
+        }
+        options.clear_all = resolved.clean_caches.iter().any(|id| id == crate::caches::BAZEL_ID);
+        Some(options)
     }
 
     /// Turns flags into the overrides that sit above every configuration layer.
@@ -403,6 +450,8 @@ impl PruneArgs {
             // Only ever `Some(false)`: the flag can turn housekeeping off, and nothing turns it
             // on, because it is already on.
             git: self.no_git.then_some(false),
+            bazel: self.no_bazel.then_some(false),
+            bazel_max_age: self.bazel_max_age.as_deref().map(parse_duration).transpose()?,
         })
     }
 

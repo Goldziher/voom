@@ -22,8 +22,9 @@ which is the safety rule the rest of the tool is built around.
 | [0011](0011-git-housekeeping.md) | Git Housekeeping: Delegated, Local, and On by Default | Accepted |
 | [0012](0012-cache-catalog.md) | The Cache Catalog: Proof From Inside, Opt-In by Name | Accepted |
 | [0013](0013-tagged-directories.md) | Tagged Directories: The Tool's Own Declaration, Opt-In by Flag | Accepted |
-| [0014](0014-bazel-output-base-housekeeping.md) | Bazel Output-Base Housekeeping: Orphans Proven by Bazel's Own Marker | Accepted |
+| [0014](0014-bazel-output-base-housekeeping.md) | Bazel Output-Base Housekeeping: Orphans Proven by Bazel's Own Marker | Accepted, amended |
 | [0015](0015-claude-code-job-scratch.md) | Claude Code Job Scratch: Age-Gated, Never Trusted on State Alone | Accepted |
+| [0016](0016-merged-worktree-removal.md) | Merged-Worktree Removal: Ancestry Is Not Enough | Accepted |
 
 ## Conventions
 

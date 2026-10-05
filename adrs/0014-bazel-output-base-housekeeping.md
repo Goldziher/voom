@@ -1,6 +1,6 @@
 # 0014 — Bazel Output-Base Housekeeping: Orphans Proven by Bazel's Own Marker
 
-- Status: Accepted
+- Status: Accepted; amended 2026-10-04 (see [Amendment](#amendment-2026-10-04-stale-bases-worktrees-sweep-and-full-clear) — it supersedes the "not a sweep" and "age-based removal" positions below)
 - Date: 2026-09-18
 
 ## Context
@@ -131,7 +131,7 @@ Positive:
   file Bazel wrote for its own purposes, not on an inference voom is making about it.
 - The three-state report (removed, owned, unproven) is itself useful independent of removal: a
   user auditing `/var/tmp` sees which output bases are whose without reading a hash.
-- Composes with nothing else. It touches no catalog entry, no `CACHES` row, and no sweep option.
+- Composes with nothing else. It touches no catalog entry and no `CACHES` row. (Amended: it now also runs after a sweep.)
 
 Negative / risks:
 
@@ -170,3 +170,110 @@ Negative / risks:
   rejected outright — this is exactly the name-only-adjacent matching ADR 0002 forbids, applied
   to a directory's age instead of its name. An output base for a workspace still in occasional
   use looks identical to an abandoned one until the next build touches it.
+
+## Amendment 2026-10-04: stale bases, worktrees, sweep, and full clear
+
+The original decision proved exactly one thing — the owner is gone — and that was correct for
+what it measured: orphans. Running it against a workstation that uses disposable worktrees
+showed it was not enough. Thirteen live worktrees under `/var/tmp` held 23 GB of output bases
+and `~/.cache/bazel` another 27 GB; **every owner still existed**, so the command reclaimed
+nothing. The waste is not orphaned bases but *idle* ones: a worktree checked out for a ticket,
+built in for two days, and then left on disk for weeks with its several-gigabyte base. Two
+positions above do not survive that.
+
+### Age is admitted, but only on top of the marker
+
+"Age-based removal" was rejected as name-only-adjacent matching. That objection stands for age
+*alone*, and it is not what is adopted. An output base is now also removable when **all** of
+these hold: the marker was read (or the directory is an unmarked direct child of a
+`_bazel_<user>` directory, which is Bazel's own naming), no Bazel server is running against it,
+and nothing has built there for longer than `--max-age` (default seven days). "Built there" is
+the newest modification time among the entries Bazel touches on every invocation —
+`command.log`, `lock`, `action_cache`, `execroot`, `external`, `server`, `java.log` — and the
+base itself, not the age of the base's creation. A base someone still builds in refreshes all of
+them, so the false-positive cost is a cold rebuild, never lost work, which is the same bar the
+cache catalog (ADR 0012) sets.
+
+Four states are added to the original three; a removable one is always reported with its
+reason:
+
+- **Abandoned** — the owner exists, but it is a linked git worktree whose `.git` file names an
+  administrative directory that is gone (`git worktree remove` or `prune` ran, the directory
+  survived on untracked files or a build symlink). A checkout of nothing. Checked with one
+  read and one existence test.
+- **Stale** — owner alive, idle past the age limit.
+- **Running** — `server/server.pid.txt` names a live process whose command line names this
+  output base or is the Bazel server. Never removed by age or orphaning, however idle its files
+  look. A pid file outlives its server and the pid can be reused, so the file alone proves
+  nothing; the process check is the proof.
+- **Cleared** — removed because a full clear was asked for (below).
+
+Worktrees are the reason the hash is per-path: every worktree is a distinct workspace with its
+own base, and the owner marker is what ties each one back to a directory voom can ask git
+about. Removing a base also unlinks the owner's `bazel-*` convenience symlinks, but only those
+whose target lies inside the base just removed — a link that points anywhere else is not ours.
+The workspace itself is never touched.
+
+### The rest of `_bazel_<user>`
+
+- **Install bases** (`install/<hash>`, roughly 200 MB each) are removed when no output base
+  that survives this run links to them. Bazel re-extracts one on demand.
+- **The shared cache** (`cache/`) is pruned per file: anything not modified within the age
+  limit, since Bazel touches an entry each time it is served, and directories left empty by that
+  afterwards.
+- The conventional roots gain `~/Library/Caches/bazel/_bazel_<user>`, which held output bases
+  on the measured machine and was missing from the original list. `VOOM_BAZEL_ROOTS` (a path
+  list, empty for none) replaces the guess entirely.
+
+### Part of the sweep, and never silent about it
+
+The original reasoning for keeping this out of a sweep — discovery is not free because the tree
+being swept is never the tree being built from — is still true, and is not why it moves. It
+moves because an opt-in nobody runs reclaims nothing, and the measured cost is one `read_dir`
+per root plus a file read per base, with no tree walk. So an ordinary `voom` run now ends with
+the same housekeeping over the conventional roots, printing a section only when it removed (or
+would remove) something. `--no-bazel` and `[bazel] enabled = false` turn it off; `--bazel-max-age`
+and `[bazel] max_age` set the age; the flag beats every file, as `--no-git` does. A JSON run gets
+a one-line summary on stderr so stdout stays one document. The explicit `voom bazel-prune`
+remains, and is where `--format json` lives for this data.
+
+Because a sweep now reaches outside the swept tree, **anything that runs the binary against a
+scratch tree must set `VOOM_BAZEL_ROOTS`**. This was learned the expensive way: the first
+version of the integration ran the test suite's `--clean-caches` cases against the real
+machine's `/var/tmp`, and cleared live output bases. The test helpers now set it empty.
+
+### `--clear-caches` means all of it
+
+The rejected alternative "a `CACHES` entry for `~/.cache/bazel` as a whole" was right that
+force-a-full-rebuild is a different request from reclaiming the stale part. It is now served
+without a `CACHES` row, because those rows are fixed locations under `$HOME` proven by an
+inside marker and Bazel's state is neither. `bazel` is a reserved id accepted by
+`--clean-caches`, included in a bare `--clean-caches`/`--clear-caches`, and handled here:
+
+- every output base, install base and cached download under the roots is removed, live
+  workspaces included;
+- a running server is sent `SIGTERM` and given ten seconds to exit first — removing a base from
+  under a live server wedges it on a tree that is gone. A server that will not exit keeps its
+  base, reported as running;
+- unmarked children are cleared only under a directory named `_bazel_*`, so pointing
+  `bazel-prune --all` at an unrelated directory clears nothing;
+- a dry run stops nothing and removes nothing.
+
+Without the flag, nothing above runs: a sweep only prunes what is stale.
+
+### Consequences
+
+- The command now reclaims real space on the machine that motivated it, where it previously
+  reclaimed none. The seven-day default is a judgment, not a measurement: on a machine where
+  every base was built in within four days it correctly reclaims nothing.
+- The staleness threshold is the first voom removal rule whose correctness is a *trade*
+  (cold-build cost against disk) rather than a proof. It is kept honest by never applying to a
+  running server, by reporting the idle time it acted on, and by `--max-age` being a per-run
+  and per-repository setting.
+- A dead-worktree check reads `.git` as a file, so a bare clone, a submodule and a non-git
+  workspace are all left to the age rule and never classed as abandoned.
+- The shared, sequentially-reused root (`dazel`) is handled by age alone: its marker names the
+  last builder, so it ages out only when nothing has built in it at all.
+- Not solved: a worktree whose branch has merged but which is still being built in will not be
+  flagged; nothing on disk says it is done, and guessing from `git branch --merged` would be
+  the inference this ADR exists to avoid.

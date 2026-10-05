@@ -6,11 +6,12 @@
 //! The house style is the sweep's (ADR 0007): an aligned em dash before a reason, colour as a
 //! second channel and never the only one, every state named in words, and a deterministic
 //! order. `voom bazel-prune` names every output base it found, including the ones it left
-//! alone — there is no sweep-integrated form to stay quiet on the user's behalf, since this is
-//! always the explicit subcommand (`adrs/0014-bazel-output-base-housekeeping.md`).
+//! alone (`adrs/0014-bazel-output-base-housekeeping.md`). A sweep prints the same report only
+//! when it removed something.
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use owo_colors::{OwoColorize, Style};
 use serde_json::{Value, json};
@@ -72,43 +73,36 @@ fn shorten(path: &Path, base: Option<&Path>) -> String {
 }
 
 fn row(base: &OutputBase, dry_run: bool, root_base: Option<&Path>) -> Row {
-    let (label, style, detail) = match (&base.state, &base.outcome) {
-        (OutputBaseState::Orphaned { owner }, Some(Outcome::Removed)) => {
-            (removed_label(false), palette::removed(), Some(owned_detail(owner)))
-        }
-        (OutputBaseState::Orphaned { owner }, Some(Outcome::WouldRemove)) => (
-            removed_label(dry_run),
-            palette::would_remove(),
-            Some(owned_detail(owner)),
-        ),
-        (OutputBaseState::Orphaned { owner }, Some(Outcome::Refused(refusal))) => (
+    let (label, style, detail) = match (&base.outcome, base.is_removable()) {
+        (Some(Outcome::Removed), true) => (removed_label(false), palette::removed(), reason(&base.state)),
+        (Some(Outcome::WouldRemove), true) => (removed_label(dry_run), palette::would_remove(), reason(&base.state)),
+        (Some(Outcome::Refused(refusal)), true) => (
             "refused",
             palette::refused(),
-            Some(format!("{refusal} — owner {} is gone", owner.display())),
+            format!("{refusal} — {}", reason(&base.state)),
         ),
-        (OutputBaseState::Orphaned { owner }, Some(Outcome::Failed(failure))) => (
+        (Some(Outcome::Failed(failure)), true) => (
             "failed",
             palette::refused(),
-            Some(format!("{failure} — owner {} is gone", owner.display())),
+            format!("{failure} — {}", reason(&base.state)),
         ),
-        (OutputBaseState::Orphaned { owner }, Some(Outcome::PartiallyRemoved { failure, .. })) => (
+        (Some(Outcome::PartiallyRemoved { failure, .. }), true) => (
             "partially removed",
             palette::refused(),
-            Some(format!("{failure} — owner {} is gone", owner.display())),
+            format!("{failure} — {}", reason(&base.state)),
         ),
-        (OutputBaseState::Orphaned { owner }, None) => (
+        (None, true) => (
             "kept",
             palette::kept(),
-            Some(format!("owner {} is gone, but nothing was attempted", owner.display())),
+            format!("{}, but nothing was attempted", reason(&base.state)),
         ),
-        (OutputBaseState::Owned { owner }, _) => ("kept", palette::kept(), Some(owned_detail(owner))),
-        (OutputBaseState::Unproven, _) => ("kept", palette::kept(), Some("no owner marker found".to_owned())),
+        _ => ("kept", palette::kept(), keep_reason(&base.state)),
     };
     Row {
         label,
         style,
         path: shorten(&base.path, root_base),
-        detail,
+        detail: Some(detail),
     }
 }
 
@@ -116,8 +110,52 @@ fn removed_label(dry_run: bool) -> &'static str {
     if dry_run { "would remove" } else { "removed" }
 }
 
-fn owned_detail(owner: &Path) -> String {
-    format!("owner {}", owner.display())
+/// Why a removable candidate is removable.
+fn reason(state: &OutputBaseState) -> String {
+    match state {
+        OutputBaseState::Orphaned { owner } => format!("owner {} is gone", owner.display()),
+        OutputBaseState::Abandoned { owner } => {
+            format!("owner {} is a worktree git no longer tracks", owner.display())
+        }
+        OutputBaseState::Stale {
+            owner: Some(owner),
+            idle,
+        } => {
+            format!("owner {}, not built in for {}", owner.display(), format_idle(*idle))
+        }
+        OutputBaseState::Stale { owner: None, idle } => {
+            format!("no owner marker, not built in for {}", format_idle(*idle))
+        }
+        OutputBaseState::Cleared { owner: Some(owner) } => format!("cleared on request, owner {}", owner.display()),
+        OutputBaseState::Cleared { owner: None } => "cleared on request".to_owned(),
+        OutputBaseState::InstallBase { .. } => "install base no output base uses".to_owned(),
+        OutputBaseState::Cache { files } => format!("{files} cached files past the age limit"),
+        OutputBaseState::Unproven | OutputBaseState::Owned { .. } | OutputBaseState::Running { .. } => {
+            keep_reason(state)
+        }
+    }
+}
+
+/// Why a candidate that was not removable was left alone.
+fn keep_reason(state: &OutputBaseState) -> String {
+    match state {
+        OutputBaseState::Unproven => "no owner marker found".to_owned(),
+        OutputBaseState::Owned { owner } => format!("owner {}", owner.display()),
+        OutputBaseState::Running { owner: Some(owner) } => format!("server running, owner {}", owner.display()),
+        OutputBaseState::Running { owner: None } => "server running".to_owned(),
+        OutputBaseState::InstallBase { .. } => "in use by an output base".to_owned(),
+        OutputBaseState::Cache { .. } => "nothing past the age limit".to_owned(),
+        _ => reason(state),
+    }
+}
+
+fn format_idle(idle: Duration) -> String {
+    let days = idle.as_secs() / 86_400;
+    if days > 0 {
+        format!("{days}d")
+    } else {
+        format!("{}h", idle.as_secs() / 3_600)
+    }
 }
 
 /// Renders the subcommand's human report.
@@ -230,15 +268,26 @@ pub fn document(result: &BazelPruneResult) -> Value {
 }
 
 fn output_base_value(base: &OutputBase) -> Value {
-    let (state, owner) = match &base.state {
-        OutputBaseState::Unproven => ("unproven", None),
-        OutputBaseState::Owned { owner } => ("owned", Some(owner)),
-        OutputBaseState::Orphaned { owner } => ("orphaned", Some(owner)),
+    let state = match &base.state {
+        OutputBaseState::Unproven => "unproven",
+        OutputBaseState::Owned { .. } => "owned",
+        OutputBaseState::Running { .. } => "running",
+        OutputBaseState::Orphaned { .. } => "orphaned",
+        OutputBaseState::Abandoned { .. } => "abandoned",
+        OutputBaseState::Stale { .. } => "stale",
+        OutputBaseState::Cleared { .. } => "cleared",
+        OutputBaseState::InstallBase { .. } => "install_base",
+        OutputBaseState::Cache { .. } => "cache",
+    };
+    let idle_seconds = match &base.state {
+        OutputBaseState::Stale { idle, .. } => Some(idle.as_secs()),
+        _ => None,
     };
     json!({
         "path": base.path.display().to_string(),
         "state": state,
-        "owner": owner.map(|owner| owner.display().to_string()),
+        "owner": base.state.owner().map(|owner| owner.display().to_string()),
+        "idle_seconds": idle_seconds,
         "bytes": base.bytes,
         "outcome": base.outcome.as_ref().map(outcome_code),
     })
