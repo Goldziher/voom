@@ -18,6 +18,10 @@ pub struct Layer {
     pub source: PathBuf,
     /// What it said.
     pub file: ConfigFile,
+    /// Whether this is the user's own configuration or an explicit `--config`, as opposed to a
+    /// repository's committed `voom.toml`. Machine-global settings are accepted only from here,
+    /// so cloning a repository can never let it clear the machine's caches or Bazel state.
+    pub user_level: bool,
 }
 
 /// The layers that apply to a run, in ascending precedence.
@@ -58,6 +62,7 @@ pub fn read(path: &Path) -> Result<Layer> {
     Ok(Layer {
         source: path.to_path_buf(),
         file,
+        user_level: false,
     })
 }
 
@@ -76,8 +81,10 @@ pub fn read(path: &Path) -> Result<Layer> {
 /// there is not an error; a file that is there and is broken always is.
 pub fn discover(root: &Path, explicit: Option<&Path>) -> Result<Sources> {
     if let Some(path) = explicit {
+        let mut layer = read(path)?;
+        layer.user_level = true;
         return Ok(Sources {
-            layers: vec![read(path)?],
+            layers: vec![layer],
             explicit: true,
         });
     }
@@ -86,7 +93,9 @@ pub fn discover(root: &Path, explicit: Option<&Path>) -> Result<Sources> {
     if let Some(path) = user_config_path()
         && path.is_file()
     {
-        layers.push(read(&path)?);
+        let mut layer = read(&path)?;
+        layer.user_level = true;
+        layers.push(layer);
     }
 
     // The scan root's own `voom.toml` is deliberately *not* read here. The resolver walks the

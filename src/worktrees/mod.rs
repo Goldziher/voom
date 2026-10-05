@@ -8,10 +8,12 @@
 //!
 //! - its `HEAD` is an ancestor of the repository's default branch, so every commit is reachable
 //!   from somewhere else;
-//! - its working tree holds nothing but deletions of tracked build output (a `dist/` that was
-//!   cleaned) and ignored build-output trees (`target/`, `node_modules/`); any modified, staged,
-//!   added, renamed or untracked path, and any ignored file that is not build output, keeps it,
-//!   reported as merged-with-local-changes;
+//! - its working tree holds nothing but deletions of tracked build output in a **top-level**
+//!   build-output directory (a `dist/` that was cleaned) and ignored build-output trees
+//!   (`target/`, `node_modules/`) anywhere; any modified, staged, added, renamed or untracked
+//!   path, any ignored file that is not build output, and a deleted tracked file under a deeper
+//!   directory that merely shares a build-output name, keep it, reported as
+//!   merged-with-local-changes;
 //! - it is not the main worktree, not locked, not missing, not where voom was started, and
 //!   stored strictly below a path voom was told to sweep — a worktree elsewhere on disk is
 //!   reported and kept, so nothing outside the scanned tree is ever its target;
@@ -238,12 +240,24 @@ fn examine(
 
     // Fanned out per worktree: ancestry is cheap and settles most of them, but a status over a
     // monorepo checkout with tens of thousands of changes is not, and one repository can own
-    // a hundred worktrees.
+    // a hundred worktrees. The removal itself is serialised per repository by `removal_lock`,
+    // because concurrent `git worktree remove` runs mutate the same `worktrees/` bookkeeping.
+    let removal_lock = std::sync::Mutex::new(());
     repository.worktrees = entries
         .par_iter()
         .skip(1)
         .filter(|entry| !entry.bare)
-        .map(|entry| judge(entry, &repository.repository, &default_sha, roots, current, options))
+        .map(|entry| {
+            judge(
+                entry,
+                &repository.repository,
+                &default_sha,
+                roots,
+                current,
+                options,
+                &removal_lock,
+            )
+        })
         .collect();
     repository.worktrees.sort_by(|left, right| left.path.cmp(&right.path));
     repository
@@ -256,6 +270,7 @@ fn judge(
     roots: &[PathBuf],
     current: Option<&Path>,
     options: WorktreeOptions,
+    removal_lock: &std::sync::Mutex<()>,
 ) -> Worktree {
     let mut worktree = Worktree {
         path: entry.path.clone(),
@@ -316,6 +331,7 @@ fn judge(
     worktree.outcome = Some(if options.dry_run {
         Outcome::WouldRemove
     } else {
+        let _serialised = removal_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         remove(main, &entry.path, discarded > 0)
     });
     worktree
@@ -337,7 +353,7 @@ fn classify_status(status: &[u8]) -> (usize, usize) {
         if matches!(index, b'R' | b'C') || matches!(tree, b'R' | b'C') {
             fields.next();
         }
-        if index == b' ' && tree == b'D' && is_build_output(&path) {
+        if index == b' ' && tree == b'D' && is_top_level_build_output(&path) {
             discarded += 1;
         } else if index == b'!' && tree == b'!' && is_build_output(&path) {
             // An ignored build-output tree (target/, node_modules/) is regenerable and goes with
@@ -351,8 +367,19 @@ fn classify_status(status: &[u8]) -> (usize, usize) {
     (discarded, changed)
 }
 
+/// Any path component naming build output. Used for an *ignored* tree, which is regenerable by
+/// the user's own `.gitignore` declaration wherever it sits.
 fn is_build_output(path: &str) -> bool {
     path.split('/').any(|part| BUILD_OUTPUT_DIRS.contains(&part))
+}
+
+/// A top-level build-output directory. Used for a deleted *tracked* file, where a deeper match
+/// could be source — `src/build/`, `internal/out/` — and the deletion is worth keeping. The
+/// tracked file's content survives in `HEAD`, but the deletion is a choice removal would undo.
+fn is_top_level_build_output(path: &str) -> bool {
+    path.split('/')
+        .next()
+        .is_some_and(|first| BUILD_OUTPUT_DIRS.contains(&first))
 }
 
 fn remove(main: &Path, path: &Path, force: bool) -> Outcome {

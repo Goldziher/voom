@@ -87,6 +87,24 @@ fn should_discard_only_deleted_build_output() {
     assert!(!path.exists());
 }
 
+/// A deleted *tracked* file under a deeper directory that merely shares a build-output name is
+/// source, not build output, and keeps the worktree.
+#[test]
+fn should_keep_a_deleted_tracked_source_file_under_a_nested_build_directory() {
+    let (_fixture, main) = repository();
+    std::fs::create_dir_all(main.join("src/build")).unwrap();
+    std::fs::write(main.join("src/build/gen.rs"), "source").unwrap();
+    run(&main, &["add", "src/build/gen.rs"]);
+    run(&main, &["commit", "-q", "-m", "source"]);
+    let path = add_worktree(&main, "nested");
+    std::fs::remove_file(path.join("src/build/gen.rs")).unwrap();
+
+    let result = prune_real(&main, false);
+
+    assert!(matches!(state_of(&result, &path).state, State::LocalChanges { .. }));
+    assert!(path.exists());
+}
+
 #[test]
 fn should_keep_a_merged_worktree_with_a_modified_file() {
     let (_fixture, main) = repository();

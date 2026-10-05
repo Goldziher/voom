@@ -26,11 +26,11 @@ disable = ["terraform"]
 [git]
 enabled = false      # skip the housekeeping a sweep otherwise does here
 
-[bazel]
+[bazel]              # machine-global: user config or --config only
 enabled = false      # skip the Bazel housekeeping a sweep otherwise does
 max_age = "14d"      # how long an output base may go unbuilt in before it is stale (default 7d)
 
-[caches]
+[caches]             # machine-global: user config or --config only
 enable = ["uv"]      # opt into a named tool cache — additive across the hierarchy, never subtractive
 
 [keep]
@@ -56,6 +56,11 @@ them `"source": "config-include"`. `exclude` always wins over `include`, and `in
 matches paths the walk actually visits: it cannot reach outside the roots you named, and it
 cannot reach *inside* a directory the walk skips whole. For a dependency directory prefer
 `--clean-dependencies` or `--enable`, which still prove the marker.
+
+`[bazel]` and `[caches]` are **machine-global**: they act on state outside the tree being swept
+(Bazel output bases, tool caches). They are read only from `~/.config/voom/config.toml` or an
+explicit `--config`, never from a repository's `voom.toml`, so cloning a repository can never let
+it clear your machine's caches. A repository that sets one is a hard error, not a silent no-op.
 
 **On Windows, write paths in single quotes.** TOML basic strings take escapes, so
 `exclude = ["C:\Users\me\work\**"]` fails to parse — `\U` starts a unicode escape. Use a TOML

@@ -365,14 +365,37 @@ fn apply(accumulated: &mut Accumulated, layer: &Layer) -> Result<()> {
     if let Some(enabled) = layer.file.git.enabled {
         accumulated.git = Some(enabled);
     }
-    if let Some(enabled) = layer.file.bazel.enabled {
-        accumulated.bazel = Some(enabled);
-    }
-    if let Some(age) = &layer.file.bazel.max_age {
-        accumulated.bazel_max_age = Some(crate::policy::parse_duration(age).map_err(|error| Error::Config {
+
+    // `[bazel]` and `[caches]` drive removal outside the swept tree — machine-global Bazel
+    // output bases and tool caches. Only the user's own configuration or an explicit `--config`
+    // may set them; a repository's committed `voom.toml` cannot, so cloning a repository can
+    // never let it clear the machine's caches or Bazel state. A repository that tries is a hard
+    // error rather than a silent no-op, so the file and the behaviour never disagree.
+    if layer.user_level {
+        if let Some(enabled) = layer.file.bazel.enabled {
+            accumulated.bazel = Some(enabled);
+        }
+        if let Some(age) = &layer.file.bazel.max_age {
+            accumulated.bazel_max_age = Some(crate::policy::parse_duration(age).map_err(|error| Error::Config {
+                path: source.clone(),
+                reason: format!("`[bazel] max_age`: {error}"),
+            })?);
+        }
+        // Ids rather than paths, so nothing is expanded and nothing is per-directory: a cache is
+        // machine-global and its location comes from the table, not from where the file sits.
+        for id in &layer.file.caches.enable {
+            accumulated.clean_caches.push(id.clone());
+        }
+    } else if layer.file.bazel.enabled.is_some()
+        || layer.file.bazel.max_age.is_some()
+        || !layer.file.caches.enable.is_empty()
+    {
+        return Err(Error::Config {
             path: source.clone(),
-            reason: format!("`[bazel] max_age`: {error}"),
-        })?);
+            reason: "`[bazel]` and `[caches]` are machine-global and are read only from the user \
+                     configuration or `--config`, never from a repository's `voom.toml`"
+                .to_owned(),
+        });
     }
 
     accumulated.keep = accumulated.keep.narrow(keep_from(&layer.file.keep.scalars(), source)?);
@@ -393,11 +416,6 @@ fn apply(accumulated: &mut Accumulated, layer: &Layer) -> Result<()> {
     }
     for pattern in &layer.file.include {
         accumulated.include.push(expand(pattern, dir));
-    }
-    // Ids rather than paths, so nothing is expanded and nothing is per-directory: a cache is
-    // machine-global and its location comes from the table, not from where the file sits.
-    for id in &layer.file.caches.enable {
-        accumulated.clean_caches.push(id.clone());
     }
 
     for rule in &layer.file.paths {

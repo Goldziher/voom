@@ -23,6 +23,8 @@ pub mod error;
 pub mod names;
 pub mod scan;
 
+mod io;
+
 pub mod bazel;
 pub mod claude;
 pub mod cli;

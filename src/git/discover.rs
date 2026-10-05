@@ -24,6 +24,10 @@ use crate::classify::is_dependency_dir;
 use crate::delete::{PROTECTED_PATHS, paths_equal};
 use crate::scan::NEVER_DESCEND;
 
+/// A git control file (`.git`, `commondir`) is a short path or a `gitdir:` line; anything larger
+/// is not one, and a FIFO or an enormous file at that path must not block or exhaust the read.
+const CONTROL_FILE_MAX_BYTES: u64 = 4096;
+
 /// Files and directories inside a git directory that mean an operation is half-finished.
 ///
 /// Running `gc` under somebody's paused rebase is the avoidable harm here: these are exactly the
@@ -325,7 +329,7 @@ fn resolve_store(git_dir: PathBuf, work_tree: PathBuf, linked: bool) -> Located 
 ///
 /// `None` for a main git directory, which has no `commondir` file and is its own store.
 fn common_dir_of(git_dir: &Path) -> Option<PathBuf> {
-    let contents = std::fs::read_to_string(git_dir.join("commondir")).ok()?;
+    let contents = crate::io::read_capped_text(&git_dir.join("commondir"), CONTROL_FILE_MAX_BYTES)?;
     let named = contents.trim();
     if named.is_empty() {
         return None;
@@ -339,7 +343,8 @@ fn common_dir_of(git_dir: &Path) -> Option<PathBuf> {
 }
 
 fn read_gitdir(dot_git: &Path, work_tree: &Path) -> Result<PathBuf, String> {
-    let contents = std::fs::read_to_string(dot_git).map_err(|error| error.to_string())?;
+    let contents = crate::io::read_capped_text(dot_git, CONTROL_FILE_MAX_BYTES)
+        .ok_or_else(|| "its `.git` is not a readable regular file".to_owned())?;
     let gitdir = contents
         .lines()
         .find_map(|line| line.trim().strip_prefix("gitdir:"))

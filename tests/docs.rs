@@ -191,6 +191,10 @@ fn readme_config_examples() -> Vec<String> {
 /// ordering is the other trap — a top-level key written after a `[table]` silently becomes a
 /// key *of* that table, which is how `exclude` once stopped being an exclusion.
 ///
+/// Loaded as the *user* configuration (`--config`), which is the permissive level: it accepts
+/// every key, including the machine-global `[bazel]`/`[caches]` sections a repository may not
+/// set. `should_refuse_machine_global_sections_in_a_repository_config` covers that boundary.
+///
 /// Run through the real pipeline rather than against the schema directly, because that is what
 /// a reader copying the block actually does.
 #[test]
@@ -200,10 +204,12 @@ fn every_readme_configuration_example_loads() {
 
     for example in examples {
         let fixture = TempDir::new().expect("a temp dir");
-        fs::write(fixture.path().join("voom.toml"), &example).expect("a config file");
+        let config = fixture.path().join("config.toml");
+        fs::write(&config, &example).expect("a config file");
 
         let options = RunOptions {
             dry_run: true,
+            config: Some(config),
             ..support::options(fixture.path())
         };
         if let Err(error) = run(&options) {

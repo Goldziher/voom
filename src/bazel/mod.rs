@@ -59,6 +59,11 @@ const ACTIVITY_MARKERS: &[&str] = &[
     "java.log",
 ];
 
+/// A control file voom reads (`DO_NOT_BUILD_HERE`, a `.git` file, a pid) is a path or a number,
+/// never large. Anything bigger is not one of those, and a FIFO or an enormous file at that path
+/// must not block or exhaust the process, so it is refused rather than read.
+const CONTROL_FILE_MAX_BYTES: u64 = 4096;
+
 /// Overrides [`conventional_roots`].
 pub const ROOTS_ENV: &str = "VOOM_BAZEL_ROOTS";
 
@@ -486,13 +491,13 @@ fn state_of(output_base: &Path, options: &BazelPruneOptions) -> OutputBaseState 
     if !options.clear_all && running_server(output_base) {
         return OutputBaseState::Running { owner };
     }
-    if options.clear_all && (owner.is_some() || is_bazel_root(output_base)) {
+    if options.clear_all && (owner.is_some() || is_a_bazel_base(output_base)) {
         return OutputBaseState::Cleared { owner };
     }
 
     let Some(owner) = owner else {
         return match idle_time(output_base) {
-            Some(idle) if is_bazel_root(output_base) && idle > options.max_age => {
+            Some(idle) if is_a_bazel_base(output_base) && idle > options.max_age => {
                 OutputBaseState::Stale { owner: None, idle }
             }
             _ => OutputBaseState::Unproven,
@@ -523,6 +528,15 @@ fn is_bazel_root(output_base: &Path) -> bool {
         .is_some_and(|name| name.starts_with("_bazel_"))
 }
 
+/// Whether a directory carries Bazel's own structure, not merely a `_bazel_`-named parent.
+///
+/// Bazel creates `execroot/` in every output base, so an unmarked directory without it is not
+/// Bazel's and is left alone. This keeps the unmarked-child case from being a deletion decided
+/// by a directory's name — the rule ADR 0002 forbids everywhere else.
+fn is_a_bazel_base(output_base: &Path) -> bool {
+    is_bazel_root(output_base) && output_base.join("execroot").is_dir()
+}
+
 /// Reads the owner marker, at its own root first and then nested under `execroot/` — see
 /// [`OWNER_MARKER`] for why the second location is checked and not followed further.
 fn read_owner(output_base: &Path) -> Option<PathBuf> {
@@ -530,7 +544,7 @@ fn read_owner(output_base: &Path) -> Option<PathBuf> {
         output_base.join(OWNER_MARKER),
         output_base.join("execroot").join(OWNER_MARKER),
     ] {
-        if let Ok(contents) = std::fs::read_to_string(&candidate) {
+        if let Some(contents) = crate::io::read_capped_text(&candidate, CONTROL_FILE_MAX_BYTES) {
             let trimmed = contents.trim();
             if !trimmed.is_empty() {
                 return Some(PathBuf::from(trimmed));
@@ -547,7 +561,7 @@ fn read_owner(output_base: &Path) -> Option<PathBuf> {
 /// a build symlink) is then a checkout of nothing. A plain repository has a `.git` directory
 /// and a non-git workspace has neither, both of which are left alone.
 fn is_dead_worktree(owner: &Path) -> bool {
-    let Ok(contents) = std::fs::read_to_string(owner.join(".git")) else {
+    let Some(contents) = crate::io::read_capped_text(&owner.join(".git"), CONTROL_FILE_MAX_BYTES) else {
         return false;
     };
     let Some(target) = contents.trim().strip_prefix("gitdir:") else {
@@ -572,14 +586,17 @@ fn idle_time(output_base: &Path) -> Option<Duration> {
 }
 
 /// The pid of a live Bazel server for this output base, if there is one.
+///
+/// A pid file outlives its server and the pid can be reused, so the file alone proves nothing:
+/// only a process whose command line names this output base counts. A Bazel server's arguments
+/// carry `--output_base=<path>`, so a match is the server and not an unrelated process that
+/// merely mentions Bazel.
+#[cfg(unix)]
 fn server_pid(output_base: &Path) -> Option<u32> {
-    let pid: u32 = std::fs::read_to_string(output_base.join(SERVER_PID_FILE))
-        .ok()?
+    let pid: u32 = crate::io::read_capped_text(&output_base.join(SERVER_PID_FILE), CONTROL_FILE_MAX_BYTES)?
         .trim()
         .parse()
         .ok()?;
-    // A pid file outlives its server, and the pid can be reused: only a process whose command
-    // line names this output base, or is the Bazel server jar, counts.
     let output = std::process::Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", "command="])
         .output()
@@ -588,8 +605,18 @@ fn server_pid(output_base: &Path) -> Option<u32> {
         return None;
     }
     let command = String::from_utf8_lossy(&output.stdout);
-    let names_base = command.contains(&*output_base.to_string_lossy());
-    (names_base || command.contains("A-server.jar") || command.contains("bazel(")).then_some(pid)
+    command.contains(&*output_base.to_string_lossy()).then_some(pid)
+}
+
+/// Without a portable process check, a recorded pid is treated as live: removing a base from
+/// under a running server wedges it, so the conservative answer is "running". This makes a
+/// sweep and `--clear-caches` more conservative on Windows, never less safe.
+#[cfg(not(unix))]
+fn server_pid(output_base: &Path) -> Option<u32> {
+    crate::io::read_capped_text(&output_base.join(SERVER_PID_FILE), CONTROL_FILE_MAX_BYTES)?
+        .trim()
+        .parse()
+        .ok()
 }
 
 fn running_server(output_base: &Path) -> bool {
@@ -597,6 +624,7 @@ fn running_server(output_base: &Path) -> bool {
 }
 
 /// Asks the server to exit and waits for it. `true` once nothing is running against the base.
+#[cfg(unix)]
 fn stop_server(output_base: &Path) -> bool {
     let Some(pid) = server_pid(output_base) else {
         return true;
@@ -611,6 +639,13 @@ fn stop_server(output_base: &Path) -> bool {
         }
         std::thread::sleep(Duration::from_millis(200));
     }
+    false
+}
+
+/// Without a way to stop a server, never claim one stopped: `handle_output_base` keeps and
+/// reports the base as running, which is the safe outcome.
+#[cfg(not(unix))]
+fn stop_server(_output_base: &Path) -> bool {
     false
 }
 

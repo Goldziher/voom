@@ -314,7 +314,9 @@ pub struct PruneArgs {
     /// the flag can never swallow the next path argument.
     ///
     /// Run `--list-caches` for the table, what each one costs to lose, and whether it exists
-    /// here.
+    /// here. `bazel` is a reserved id, not a table row: `--clean-caches=bazel` (or a bare
+    /// `--clean-caches`) clears Bazel's output bases, install bases and download cache
+    /// machine-wide, stopping running servers first.
     #[arg(
         long,
         visible_alias = "clear-caches",
@@ -637,6 +639,12 @@ pub fn render_caches(out: &mut impl io::Write, verbose: bool) -> io::Result<()> 
             out,
             "{}",
             "A cache is only reachable when it lies under the tree being swept.".dimmed()
+        )?;
+        writeln!(
+            out,
+            "`bazel` is a reserved id, not a row here: a bare `--clean-caches` or \
+             `--clean-caches=bazel` clears Bazel's output bases, install bases and download cache \
+             machine-wide, stopping running servers first."
         )
     } else {
         let mut rows: Vec<(&str, String)> = Vec::new();
@@ -671,6 +679,13 @@ pub fn render_caches(out: &mut impl io::Write, verbose: bool) -> io::Result<()> 
             "{}",
             "Only caches present on this machine are listed. None is removed unless it lies under \
              the swept tree and its marker proves it — `--verbose` for the whole table."
+                .dimmed()
+        )?;
+        writeln!(
+            out,
+            "{}",
+            "`bazel` is also clearable: a bare `--clean-caches` or `--clean-caches=bazel` clears \
+             Bazel's output bases machine-wide, stopping running servers first."
                 .dimmed()
         )
     }

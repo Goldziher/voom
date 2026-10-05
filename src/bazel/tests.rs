@@ -302,6 +302,23 @@ fn should_clear_everything_under_a_bazel_root_when_asked() {
     assert!(owner.exists());
 }
 
+/// A `_bazel_`-named parent is not proof on its own: an unmarked child with none of Bazel's
+/// structure is left alone even by a full clear, so nothing is deleted on its name alone.
+#[test]
+fn should_not_clear_an_unmarked_child_without_bazel_structure() {
+    let fixture = tree(&["_bazel_dev/scratch/keep.txt"]);
+    let root = fixture.path().join("_bazel_dev");
+
+    let mut clear = options(&root);
+    clear.clear_all = true;
+    prune(&clear).expect("the root resolves");
+
+    assert!(
+        root.join("scratch/keep.txt").exists(),
+        "a name alone does not make a directory Bazel's"
+    );
+}
+
 #[test]
 fn should_not_clear_an_unmarked_directory_outside_a_bazel_root() {
     let fixture = tree(&["projects/notes/keep.txt"]);

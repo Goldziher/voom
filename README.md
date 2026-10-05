@@ -326,10 +326,11 @@ include = ["~/scratch/build-junk"] # swept without a marker — explicit intent
 
 [keep]
 min_age = "7d"                     # never remove something modified more recently
-
-[caches]
-enable = ["uv"]                    # opt into a named tool cache
 ```
+
+`[caches]` and `[bazel]` drive removal outside the swept tree, so they are read only from
+`~/.config/voom/config.toml` or an explicit `--config`, never from a repository's `voom.toml`; a
+repository that sets one is a hard error rather than a silent no-op.
 
 Keep policies, per-ecosystem and per-path overrides, `[ecosystems]`, `[git]`, `[bazel]` and the Windows
 quoting rule are in the [configuration reference](docs/configuration.md).

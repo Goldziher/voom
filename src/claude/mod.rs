@@ -35,6 +35,10 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// `lastTerminalAt` — `state` is deliberately never read; see the module doc.
 const STATE_FILE_NAME: &str = "state.json";
 
+/// `state.json` holds a handful of fields; a file larger than this is not one, and reading it
+/// whole could exhaust memory on a hostile or corrupt path.
+const STATE_FILE_MAX_BYTES: u64 = 64 * 1024;
+
 /// The only thing removed from a job directory. `state.json` and the rest of a job's own
 /// record are kilobytes against `tmp/`'s gigabytes, and are worth keeping regardless.
 const SCRATCH_DIR_NAME: &str = "tmp";
@@ -284,7 +288,7 @@ fn state_of(job_dir: &Path, min_age: Duration, now: SystemTime) -> JobState {
 }
 
 fn read_state(job_dir: &Path) -> Option<State> {
-    let contents = std::fs::read_to_string(job_dir.join(STATE_FILE_NAME)).ok()?;
+    let contents = crate::io::read_capped_text(&job_dir.join(STATE_FILE_NAME), STATE_FILE_MAX_BYTES)?;
     serde_json::from_str(&contents).ok()
 }
 

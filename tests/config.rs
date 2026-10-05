@@ -468,13 +468,18 @@ fn should_not_let_a_path_rule_release_an_artifact_a_flag_held() {
     assert_eq!(snapshot(fixture.path()), before, "the flag still holds it");
 }
 
-/// `[bazel]` resolves like `[git]`: the nearest file wins, and `--no-bazel` beats every file.
+/// `[bazel]` is machine-global: it is read from `--config` (or the user config), and
+/// `--no-bazel` beats it.
 #[test]
 fn should_resolve_the_bazel_section_with_the_flag_above_every_file() {
     let root = tree(&["Cargo.toml"]);
-    write(root.path(), "voom.toml", "[bazel]\nenabled = true\nmax_age = \"14d\"\n");
+    let config = root.path().join("machine.toml");
+    std::fs::write(&config, "[bazel]\nenabled = true\nmax_age = \"14d\"\n").expect("a config file");
 
-    let mut run_options = options(root.path());
+    let mut run_options = RunOptions {
+        config: Some(config),
+        ..options(root.path())
+    };
     let resolved = voom::run::resolver_for(root.path(), &run_options)
         .and_then(|resolver| resolver.root_config())
         .expect("the configuration resolves");
@@ -491,15 +496,47 @@ fn should_resolve_the_bazel_section_with_the_flag_above_every_file() {
 #[test]
 fn should_reject_an_unparseable_bazel_max_age_and_name_the_file() {
     let root = tree(&["Cargo.toml"]);
-    write(root.path(), "voom.toml", "[bazel]\nmax_age = \"soon\"\n");
+    let config = root.path().join("machine.toml");
+    std::fs::write(&config, "[bazel]\nmax_age = \"soon\"\n").expect("a config file");
 
-    let error = voom::run::resolver_for(root.path(), &options(root.path()))
-        .and_then(|resolver| resolver.root_config())
-        .expect_err("a bad duration is a configuration error");
+    let error = voom::run::resolver_for(
+        root.path(),
+        &RunOptions {
+            config: Some(config),
+            ..options(root.path())
+        },
+    )
+    .and_then(|resolver| resolver.root_config())
+    .expect_err("a bad duration is a configuration error");
 
     let message = error.to_string();
     assert!(
-        message.contains("voom.toml") && message.contains("max_age"),
+        message.contains("machine.toml") && message.contains("max_age"),
         "{message}"
     );
+}
+
+/// A repository's committed `voom.toml` may not set a machine-global section: cloning a
+/// repository must never let it clear the machine's Bazel state or tool caches. It is a hard
+/// error, not a silent no-op, so the file and the behaviour never disagree.
+#[test]
+fn should_refuse_machine_global_sections_in_a_repository_config() {
+    for body in [
+        "[bazel]\nenabled = true\n",
+        "[bazel]\nmax_age = \"1s\"\n",
+        "[caches]\nenable = [\"bazel\"]\n",
+    ] {
+        let root = tree(&["Cargo.toml", "voom.toml"]);
+        write(root.path(), "voom.toml", body);
+
+        let error = voom::run::resolver_for(root.path(), &options(root.path()))
+            .and_then(|resolver| resolver.root_config())
+            .expect_err("a repository may not set a machine-global section");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("voom.toml") && message.contains("machine-global"),
+            "{body}: {message}"
+        );
+    }
 }

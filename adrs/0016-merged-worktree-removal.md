@@ -26,11 +26,13 @@ is not one of them.
    else `origin/main`, `origin/master`, `main`, `master`. voom never fetches, so a stale ref
    makes fewer worktrees look merged, the safe direction;
 2. `git status --porcelain --ignored=matching` reports nothing except unstaged deletions of
-   tracked files under a build-output directory (`dist`, `build`, `target`, `out`, `node_modules`,
-   `__pycache__`) and ignored trees under those names. Those are regenerable and the only content
-   removal discards; `--force` is passed to git only in that case. Any modified, staged, added,
+   tracked files under a **top-level** build-output directory (`dist`, `build`, `target`, `out`,
+   `node_modules`, `__pycache__`) and ignored trees under those names anywhere. Those are
+   regenerable and the only content removal discards; `--force` is passed to git only in that
+   case. A deleted tracked file under a deeper directory that merely shares one of those names —
+   `src/build/`, `internal/out/` — is source, and keeps the worktree. Any modified, staged, added,
    renamed, untracked, or ignored non-build-output path — a gitignored `.env`, a local database,
-   notes — keeps the worktree, reported as merged-with-local-changes with a count;
+   notes — keeps it too, reported as merged-with-local-changes with a count;
 3. it is not the main worktree, not locked, not missing (`git worktree prune` owns that), and
    voom was not started inside it;
 4. it resolves strictly below a path voom was told to sweep. Repositories come from the walk the

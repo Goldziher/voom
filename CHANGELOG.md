@@ -7,6 +7,32 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
+## [0.8.1] - 2026-10-05
+
+### Fixed
+
+- **A repository's `voom.toml` can no longer drive machine-global removal.** `[caches]` and
+  `[bazel]` act on state outside the swept tree — tool caches and Bazel output bases — so they are
+  read only from the user configuration or an explicit `--config`. A repository that sets one is a
+  hard error rather than a silent no-op, so cloning a repository can never let it clear your
+  machine's caches.
+- **Merged-worktree removal keeps gitignored files.** `git status` hides ignored files and
+  `git worktree remove` deletes them, so a worktree whose only content was a gitignored `.env` was
+  removed and the file lost. Ignored files are now inspected and any non-build-output one keeps
+  the worktree, and a deleted tracked file under a deeper directory that merely shares a
+  build-output name (`src/build/`) is treated as source and keeps it too.
+- **Bazel removal no longer decides by name alone.** `install/` and `cache/` are Bazel's only
+  under a `_bazel_<user>` root, and an unmarked child of one is removed only when it carries
+  Bazel's own `execroot/`; a `_bazel_`-named parent is not proof. A running server is detected by
+  a process whose command line names the output base, and on a platform with no process check a
+  recorded pid is treated as live.
+- **Control files are read behind a size and type guard.** `DO_NOT_BUILD_HERE`, a `.git` file, a
+  `commondir` and `state.json` are refused unless they are small regular files, so a FIFO or an
+  enormous file at one of those paths cannot block or exhaust a run.
+- **Concurrent `git worktree remove` calls within one repository are serialised**, removing a race
+  on git's own `worktrees/` bookkeeping.
+- **`--list-caches` now says the reserved `bazel` id exists** and what it clears.
+
 ## [0.8.0] - 2026-10-05
 
 ### Added
