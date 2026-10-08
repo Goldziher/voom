@@ -286,8 +286,12 @@ fn judge(
     options: WorktreeOptions,
     removal_lock: &std::sync::Mutex<()>,
 ) -> Worktree {
+    // git reports a worktree path in its own spelling; canonicalize it to the form the roots and
+    // the rest of voom compare (on Windows that is the verbatim `\\?\` form). A path that no
+    // longer exists — an already-removed worktree — falls back to what git said.
+    let canonical = entry.path.canonicalize().unwrap_or_else(|_| entry.path.clone());
     let mut worktree = Worktree {
-        path: entry.path.clone(),
+        path: canonical.clone(),
         branch: entry.branch.clone(),
         state: State::NotMerged,
         outcome: None,
@@ -300,7 +304,6 @@ fn judge(
         worktree.state = State::Missing;
         return worktree;
     }
-    let canonical = entry.path.canonicalize().unwrap_or_else(|_| entry.path.clone());
     if !roots
         .iter()
         .any(|root| canonical != *root && canonical.starts_with(root))
@@ -420,7 +423,9 @@ fn remove(main: &Path, path: &Path, force: bool) -> Outcome {
     if force {
         command.arg("--force");
     }
-    command.arg(path);
+    // `path` is the canonical worktree path; git does not accept the verbatim `\\?\` form that
+    // `canonicalize` produces on Windows, so strip it back to a path git understands.
+    command.arg(&*crate::git::for_git(path));
     match command.output() {
         Ok(output) if output.status.success() => Outcome::Removed,
         Ok(output) => Outcome::Failed(

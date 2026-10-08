@@ -26,6 +26,8 @@ mod discover;
 mod report;
 mod run;
 
+pub(crate) use run::for_git;
+
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
