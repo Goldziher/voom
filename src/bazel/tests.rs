@@ -9,7 +9,7 @@ fn options(root: &Path) -> BazelPruneOptions {
         one_file_system: true,
         max_age: DEFAULT_MAX_AGE,
         clear_all: false,
-        shared_cache: true,
+        jobs: None,
     }
 }
 
@@ -258,23 +258,6 @@ fn should_prune_only_old_files_from_the_shared_cache() {
         "the old entry and its directory are gone"
     );
     assert!(root.join("cache/repos/v1/new/blob").exists());
-}
-
-/// A sweep does not walk the shared cache: with `shared_cache` off, even an old entry survives.
-#[test]
-fn should_leave_the_shared_cache_alone_when_shared_cache_is_off() {
-    let fixture = tree(&["_bazel_dev/cache/repos/v1/old/blob"]);
-    let root = fixture.path().join("_bazel_dev");
-    age(&root.join("cache/repos/v1/old/blob"), 30);
-
-    let mut sweep = options(&root);
-    sweep.shared_cache = false;
-    prune(&sweep).expect("the root resolves");
-
-    assert!(
-        root.join("cache/repos/v1/old/blob").exists(),
-        "a sweep leaves the shared cache to a `bazel-prune`"
-    );
 }
 
 #[cfg(unix)]

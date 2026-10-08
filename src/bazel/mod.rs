@@ -22,6 +22,8 @@ mod report;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use rayon::prelude::*;
+
 pub use report::{document, render_human, render_json};
 
 use crate::delete::{Guard, Outcome, Removal};
@@ -94,10 +96,9 @@ pub struct BazelPruneOptions {
     /// Remove everything under a `_bazel_<user>` root — live workspaces, install bases and the
     /// shared cache included — stopping any running server first.
     pub clear_all: bool,
-    /// Whether to age-prune the shared download cache (`<root>/cache`) file by file. On for an
-    /// explicit `bazel-prune`, off for a sweep: it is a full recursive walk, and a sweep must not
-    /// pay for one. `clear_all` removes the cache wholesale regardless of this flag.
-    pub shared_cache: bool,
+    /// Worker threads for the fan-out over bases and cache files. `None` means one per logical
+    /// core.
+    pub jobs: Option<usize>,
 }
 
 impl BazelPruneOptions {
@@ -111,7 +112,7 @@ impl BazelPruneOptions {
             one_file_system,
             max_age: DEFAULT_MAX_AGE,
             clear_all: false,
-            shared_cache: true,
+            jobs: None,
         }
     }
 }
@@ -367,33 +368,45 @@ pub fn prune(options: &BazelPruneOptions) -> Result<BazelPruneResult> {
         }
     }
 
-    let mut found: Vec<OutputBase> = output_bases
-        .into_iter()
-        .map(|path| handle_output_base(path, options, &guard, removal))
-        .collect();
+    // Every base is independent of the others, and each one is a handful of small reads followed
+    // by a removal: latency-bound work that serial execution leaves the disk idle for. The
+    // install bases wait for the output bases only because they ask which of them survived. The
+    // shared cache is separate from both and runs beside them.
+    let pool = build_pool(options.jobs)?;
+    let (mut found, cache_found) = pool.install(|| {
+        rayon::join(
+            || {
+                let mut found: Vec<OutputBase> = output_bases
+                    .into_par_iter()
+                    .map(|path| handle_output_base(path, options, &guard, removal))
+                    .collect();
 
-    // An install base is in use when a base that survived this run still points at it. A dry
-    // run leaves everything on disk, so what *would* be removed is excluded explicitly rather
-    // than by looking.
-    let referenced: Vec<PathBuf> = found
-        .iter()
-        .filter(|base| !base.is_removable() || base.outcome.as_ref().is_some_and(|outcome| !outcome.is_reclaimed()))
-        .filter_map(|base| std::fs::canonicalize(base.path.join("install")).ok())
-        .collect();
-    found.extend(
-        install_bases
-            .into_iter()
-            .map(|path| handle_install_base(path, &referenced, options, &guard, removal)),
-    );
-    // The shared cache is a full recursive walk; a sweep skips it and leaves it to `bazel-prune`
-    // or `--clear-caches`. A clear removes it wholesale and is not gated by `shared_cache`.
-    if options.clear_all || options.shared_cache {
-        found.extend(
-            caches
-                .into_iter()
-                .map(|path| handle_cache(path, options, &guard, removal)),
-        );
-    }
+                // An install base is in use when a base that survived this run still points at
+                // it. A dry run leaves everything on disk, so what *would* be removed is
+                // excluded explicitly rather than by looking.
+                let referenced: Vec<PathBuf> = found
+                    .iter()
+                    .filter(|base| {
+                        !base.is_removable() || base.outcome.as_ref().is_some_and(|outcome| !outcome.is_reclaimed())
+                    })
+                    .filter_map(|base| std::fs::canonicalize(base.path.join("install")).ok())
+                    .collect();
+                found.par_extend(
+                    install_bases
+                        .into_par_iter()
+                        .map(|path| handle_install_base(path, &referenced, options, &guard, removal)),
+                );
+                found
+            },
+            || {
+                caches
+                    .into_par_iter()
+                    .map(|path| handle_cache(path, options, &guard, removal))
+                    .collect::<Vec<_>>()
+            },
+        )
+    });
+    found.extend(cache_found);
 
     found.sort_by(|left, right| left.path.cmp(&right.path));
 
@@ -403,6 +416,15 @@ pub fn prune(options: &BazelPruneOptions) -> Result<BazelPruneResult> {
         dry_run: options.dry_run,
         elapsed: started.elapsed(),
     })
+}
+
+/// Builds the scoped worker pool for the fan-out, as `run.rs` does for the sweep.
+fn build_pool(jobs: Option<usize>) -> Result<rayon::ThreadPool> {
+    let jobs = jobs.map_or(0, |jobs| jobs.max(1));
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(jobs)
+        .build()
+        .map_err(|source| crate::error::Error::ThreadPool { jobs, source })
 }
 
 /// One root's immediate subdirectories, with `install/` expanded one level: its children are
@@ -699,13 +721,17 @@ fn handle_cache(path: PathBuf, options: &BazelPruneOptions, guard: &Guard, remov
     }
 
     let now = std::time::SystemTime::now();
-    let mut aged = Vec::new();
-    collect_aged_files(&path, now, options.max_age, &mut aged);
+    let aged = collect_aged_files(&path, now, options.max_age);
 
+    // One removal per file, the slowest part of the whole stage on a cache of tens of thousands
+    // of entries, and independent per file.
+    let results: Vec<(u64, Outcome)> = aged
+        .par_iter()
+        .map(|(file, size)| (*size, guard.remove(file, *size, removal)))
+        .collect();
     let mut bytes = 0;
     let mut outcome = None;
-    for (file, size) in &aged {
-        let result = guard.remove(file, *size, removal);
+    for (size, result) in results {
         if result.is_reclaimed() {
             bytes += size;
         }
@@ -724,58 +750,66 @@ fn handle_cache(path: PathBuf, options: &BazelPruneOptions, guard: &Guard, remov
     }
 }
 
-fn count_files(root: &Path) -> usize {
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return 0;
+/// The immediate children of `dir` with their file types, or nothing when it cannot be listed.
+fn children(dir: &Path) -> Vec<(PathBuf, Option<std::fs::FileType>)> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
     };
     entries
         .flatten()
-        .map(|entry| match entry.file_type() {
-            Ok(file_type) if file_type.is_dir() => count_files(&entry.path()),
-            Ok(file_type) if file_type.is_file() => 1,
+        .map(|entry| (entry.path(), entry.file_type().ok()))
+        .collect()
+}
+
+fn count_files(root: &Path) -> usize {
+    children(root)
+        .into_par_iter()
+        .map(|(path, file_type)| match file_type {
+            Some(file_type) if file_type.is_dir() => count_files(&path),
+            Some(file_type) if file_type.is_file() => 1,
             _ => 0,
         })
         .sum()
 }
 
-fn collect_aged_files(dir: &Path, now: std::time::SystemTime, max_age: Duration, out: &mut Vec<(PathBuf, u64)>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_dir() {
-            collect_aged_files(&entry.path(), now, max_age, out);
-        } else if file_type.is_file() {
-            let Ok(metadata) = entry.metadata() else {
-                continue;
+/// Every file under `dir` not modified within `max_age`, with its size. Subdirectories are
+/// walked in parallel: a download cache is tens of thousands of entries, and each `metadata`
+/// call is a round trip to the disk.
+fn collect_aged_files(dir: &Path, now: std::time::SystemTime, max_age: Duration) -> Vec<(PathBuf, u64)> {
+    children(dir)
+        .into_par_iter()
+        .flat_map_iter(|(path, file_type)| {
+            let Some(file_type) = file_type else {
+                return Vec::new();
+            };
+            if file_type.is_dir() {
+                return collect_aged_files(&path, now, max_age);
+            }
+            if !file_type.is_file() {
+                return Vec::new();
+            }
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                return Vec::new();
             };
             let aged = metadata
                 .modified()
                 .ok()
                 .and_then(|modified| now.duration_since(modified).ok())
                 .is_some_and(|age| age > max_age);
-            if aged {
-                out.push((entry.path(), metadata.len()));
-            }
-        }
-    }
+            if aged { vec![(path, metadata.len())] } else { Vec::new() }
+        })
+        .collect()
 }
 
 /// Removes directories a file removal left empty, deepest first. `remove_dir` refuses a
 /// non-empty directory, which is the whole safety argument.
 fn remove_empty_directories(root: &Path) {
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        if entry.file_type().is_ok_and(|file_type| file_type.is_dir()) {
-            remove_empty_directories(&entry.path());
-            let _ = std::fs::remove_dir(entry.path());
+    children(root).into_par_iter().for_each(|(path, file_type)| {
+        if file_type.is_some_and(|file_type| file_type.is_dir()) {
+            remove_empty_directories(&path);
+            let _ = std::fs::remove_dir(&path);
         }
-    }
+    });
 }
 
 #[cfg(test)]

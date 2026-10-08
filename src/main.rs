@@ -49,7 +49,6 @@ fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
         }
         Some(Command::Watch(args)) => watch(cli, args),
         Some(Command::GitPrune(args)) => git_prune(cli, args),
-        Some(Command::BazelPrune(args)) => bazel_prune(args),
         Some(Command::ClaudePrune(args)) => claude_prune(args),
         None => prune(cli),
     }
@@ -62,18 +61,6 @@ fn claude_prune(args: &voom::cli::ClaudePruneArgs) -> anyhow::Result<i32> {
 
     let mut out = anstream::stdout().lock();
     voom::cli::render_claude(&result, args, &mut out).context("writing the report")?;
-    out.flush().context("flushing the report")?;
-
-    Ok(result.exit_code())
-}
-
-/// `voom bazel-prune`: orphaned Bazel output bases, run on their own.
-fn bazel_prune(args: &voom::cli::BazelPruneArgs) -> anyhow::Result<i32> {
-    let options = args.to_bazel_options()?;
-    let result = voom::bazel::prune(&options).context("pruning output bases")?;
-
-    let mut out = anstream::stdout().lock();
-    voom::cli::render_bazel(&result, args, &mut out).context("writing the report")?;
     out.flush().context("flushing the report")?;
 
     Ok(result.exit_code())
@@ -94,7 +81,10 @@ fn git_prune(cli: &Cli, args: &voom::cli::GitPruneArgs) -> anyhow::Result<i32> {
         let worktrees = voom::worktrees::prune(
             &repositories,
             &options.roots,
-            voom::worktrees::WorktreeOptions { dry_run: args.dry_run },
+            voom::worktrees::WorktreeOptions {
+                dry_run: args.dry_run,
+                stale_after: None,
+            },
         );
         let mut out = anstream::stdout().lock();
         match args.format {
@@ -148,20 +138,38 @@ fn prune(cli: &Cli) -> anyhow::Result<i32> {
     }
 
     let options = cli.prune.to_run_options()?;
-    let result = voom::run::run(&options).context("scanning")?;
+
+    // Bazel's housekeeping is machine-global and shares nothing with the sweep, so the two run
+    // side by side and the Bazel report waits for the sweep's. Merged-worktree removal is the one
+    // thing that feeds it — a removed worktree's output base is then an orphan in the same run —
+    // so with that opt-in the Bazel stage keeps its place after the sweep.
+    let overlap = !cli.prune.remove_merged_worktrees;
+    let (result, mut bazel) = std::thread::scope(|scope| {
+        let early = overlap.then(|| scope.spawn(|| bazel_prune(cli, &options)));
+        let result = voom::run::run(&options).context("scanning");
+        (result, early.map(std::thread::ScopedJoinHandle::join))
+    });
+    let result = result?;
+    let early_bazel = match bazel.take() {
+        Some(joined) => Some(joined.map_err(|_| anyhow::anyhow!("the bazel housekeeping panicked"))??),
+        None => None,
+    };
 
     let mut out = anstream::stdout().lock();
     voom::cli::render(&result, &cli.prune, &mut out).context("writing the report")?;
     out.flush().context("flushing the report")?;
     drop(out);
 
-    // Before Bazel: a removed worktree's output base is then an orphan in the same run.
     let worktree_code = if cli.prune.remove_merged_worktrees {
         merged_worktrees(cli, &result.repositories, &options.roots)?
     } else {
         exit::SUCCESS
     };
-    let bazel_code = bazel_housekeeping(cli, &options)?;
+    let bazel = match early_bazel {
+        Some(bazel) => bazel,
+        None => bazel_prune(cli, &options)?,
+    };
+    let bazel_code = report_bazel(cli, bazel.as_ref())?;
     let code = result.exit_code(cli.prune.exit_code);
     Ok([code, worktree_code, bazel_code]
         .into_iter()
@@ -169,21 +177,33 @@ fn prune(cli: &Cli) -> anyhow::Result<i32> {
         .unwrap_or(exit::SUCCESS))
 }
 
-/// Bazel's own housekeeping after a sweep: stale output bases and caches, or everything under
-/// `--clear-caches`. Silent when there was nothing to do; JSON runs get a one-line summary on
-/// stderr so stdout stays a single document.
-fn bazel_housekeeping(cli: &Cli, run_options: &voom::run::RunOptions) -> anyhow::Result<i32> {
+/// Bazel's own housekeeping: stale output bases and caches, or everything under
+/// `--clear-caches`. `None` when the configuration turned it off.
+fn bazel_prune(
+    cli: &Cli,
+    run_options: &voom::run::RunOptions,
+) -> anyhow::Result<Option<voom::bazel::BazelPruneResult>> {
     // Machine-global, so decided once by the configuration at the first scan root.
     let Some(root) = run_options.roots.first() else {
-        return Ok(exit::SUCCESS);
+        return Ok(None);
     };
     let resolved = voom::run::resolver_for(root, run_options)
         .and_then(|resolver| resolver.root_config())
         .context("resolving configuration")?;
     let Some(options) = cli.prune.bazel_options(&resolved) else {
+        return Ok(None);
+    };
+    voom::bazel::prune(&options)
+        .context("pruning bazel output bases")
+        .map(Some)
+}
+
+/// Prints the Bazel stage after the sweep's report. Silent when there was nothing to do; JSON
+/// runs get a one-line summary on stderr so stdout stays a single document.
+fn report_bazel(cli: &Cli, result: Option<&voom::bazel::BazelPruneResult>) -> anyhow::Result<i32> {
+    let Some(result) = result else {
         return Ok(exit::SUCCESS);
     };
-    let result = voom::bazel::prune(&options).context("pruning bazel output bases")?;
     let totals = result.totals();
     if totals.removed == 0 && totals.refused == 0 {
         return Ok(result.exit_code());
@@ -193,7 +213,7 @@ fn bazel_housekeeping(cli: &Cli, run_options: &voom::run::RunOptions) -> anyhow:
         voom::cli::Format::Human => {
             let mut out = anstream::stdout().lock();
             writeln!(out)?;
-            voom::bazel::render_human(&result, &mut out).context("writing the bazel report")?;
+            voom::bazel::render_human(result, &mut out).context("writing the bazel report")?;
             out.flush().context("flushing the bazel report")?;
         }
         voom::cli::Format::Json => {
@@ -232,6 +252,13 @@ fn merged_worktrees(
         roots,
         voom::worktrees::WorktreeOptions {
             dry_run: cli.prune.dry_run,
+            stale_after: cli
+                .prune
+                .stale_worktrees
+                .as_deref()
+                .map(voom::policy::parse_duration)
+                .transpose()
+                .context("reading --stale-worktrees")?,
         },
     );
     match cli.prune.format {

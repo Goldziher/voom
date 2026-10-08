@@ -7,7 +7,7 @@ use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 
 mod housekeeping;
 
-pub use housekeeping::{BazelPruneArgs, ClaudePruneArgs, GitPruneArgs, render_bazel, render_claude, render_git};
+pub use housekeeping::{ClaudePruneArgs, GitPruneArgs, render_claude, render_git};
 
 use crate::catalog::CATALOG;
 use crate::config::resolve::Flags;
@@ -63,13 +63,6 @@ pub enum Command {
     /// An ordinary sweep already does the local half of this; the subcommand is for running it
     /// alone, and for the network step a sweep will not do (`--remotes`).
     GitPrune(GitPruneArgs),
-    /// Remove orphaned Bazel output bases — one per workspace path that ever ran Bazel, and
-    /// nothing else ever reclaims one once the workspace is gone.
-    ///
-    /// Not part of a sweep: an output base never lives under the tree it was built from, so
-    /// there is no walk to discover it for free. See
-    /// `adrs/0014-bazel-output-base-housekeeping.md`.
-    BazelPrune(BazelPruneArgs),
     /// Reclaim scratch left behind by Claude Code's background jobs, once a job has been quiet
     /// long enough and nothing on this machine is still running it.
     ///
@@ -180,12 +173,28 @@ pub struct PruneArgs {
     #[arg(long, help_heading = "Behaviour")]
     pub remove_merged_worktrees: bool,
 
-    /// Skip Bazel housekeeping: output bases that are orphaned, abandoned or idle for longer
-    /// than `--bazel-max-age`, and install bases nothing uses.
+    /// With `--remove-merged-worktrees`, also remove worktrees that are not merged but have been
+    /// idle at least this long, e.g. `30d`.
     ///
-    /// Runs after the sweep, over the conventional output-user-roots, and is silent when there
-    /// is nothing to do. A base with a running server is never touched. A sweep leaves the shared
-    /// download cache to `bazel-prune`; `--clear-caches` clears Bazel completely instead.
+    /// Idle is the later of the `HEAD` commit's date and the last commit, checkout or rebase
+    /// recorded in the worktree's reflog. Only a worktree whose commits are reachable from
+    /// another ref goes (removal keeps the branch; a detached `HEAD` nothing else reaches never
+    /// does), and the same working-tree rule applies as for a merged one: nothing but deleted
+    /// build output may differ. Off unless given.
+    #[arg(
+        long,
+        value_name = "DURATION",
+        requires = "remove_merged_worktrees",
+        help_heading = "Behaviour"
+    )]
+    pub stale_worktrees: Option<String>,
+
+    /// Skip Bazel housekeeping: output bases that are orphaned, abandoned or idle for longer
+    /// than `--bazel-max-age`, install bases nothing uses, and stale downloads.
+    ///
+    /// Runs beside the sweep, over the conventional output-user-roots, and is silent when there
+    /// is nothing to do. A base with a running server is never touched. `--clear-caches` clears
+    /// Bazel completely instead.
     #[arg(long, help_heading = "Behaviour")]
     pub no_bazel: bool,
 
@@ -432,9 +441,7 @@ impl PruneArgs {
             options.max_age = age;
         }
         options.clear_all = resolved.clean_caches.iter().any(|id| id == crate::caches::BAZEL_ID);
-        // A sweep does not walk the shared download cache file by file; `bazel-prune` does, and
-        // `--clear-caches` (`clear_all`) removes it wholesale.
-        options.shared_cache = false;
+        options.jobs = self.jobs;
         Some(options)
     }
 

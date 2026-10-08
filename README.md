@@ -413,14 +413,14 @@ workspace that owns it, and that is proof enough to answer the one question that
 the owner still there?
 
 ```bash
-voom bazel-prune                          # search the conventional locations
-voom bazel-prune -n /var/tmp/_bazel_you    # what would be removed, without removing it
-voom bazel-prune --max-age 14d             # treat a base as stale after two weeks, not one
-voom bazel-prune --all                     # clear Bazel completely, stopping servers first
-voom bazel-prune --format json             # machine-readable
+voom ~/code                      # a sweep prunes Bazel too
+voom -n ~/code                   # what would be removed, without removing it
+voom --bazel-max-age 14d ~/code  # treat a base as stale after two weeks, not one
+voom --no-bazel ~/code           # leave Bazel alone
+voom --clear-caches=bazel        # clear Bazel completely, stopping servers first
 ```
 
-Given no path, it searches `/tmp/_bazel_<user>`, `/var/tmp/_bazel_<user>`,
+It searches `/tmp/_bazel_<user>`, `/var/tmp/_bazel_<user>`,
 `~/.cache/bazel/_bazel_<user>` and `~/Library/Caches/bazel/_bazel_<user>` (or the
 `VOOM_BAZEL_ROOTS` path list, which replaces them), and finds nothing at whichever do not exist
 on this machine — that absence is never a usage error. An output base is removed when:
@@ -428,18 +428,16 @@ on this machine — that absence is never a usage error. An output base is remov
 - its recorded owner no longer exists on disk;
 - its owner is a git worktree whose administration is gone (`git worktree remove` ran, the
   directory survived);
-- nothing has built there for longer than `--max-age` (default `7d`) — the stale worktrees a
+- nothing has built there for longer than `--bazel-max-age` (default `7d`) — the stale worktrees a
   monorepo accumulates, one output base each.
 
 Removing a base also unlinks the owner's dangling `bazel-*` convenience symlinks. A base with a
 running server is never touched. Install bases no surviving output base points at, and files in
-the shared download cache not used within the age limit, go the same way — the cache only from
-this command, not from a sweep.
+the shared download cache not used within the age limit, go the same way.
 
-A sweep runs this same housekeeping after the artifacts, over the conventional roots, and says
-nothing when there is nothing to do; `--no-bazel` skips it and `--bazel-max-age` sets the age. It
-leaves the shared download cache to `bazel-prune`, because that prune is a full recursive walk and
-a sweep must not pay for one. `--clear-caches` is the exception to age: it clears Bazel completely — every output base,
+The housekeeping runs beside the sweep, over the conventional roots, fanned out across the same
+worker pool, and says nothing when there is nothing to do; `--no-bazel` skips it and
+`--bazel-max-age` sets the age. `--clear-caches` is the exception to age: it clears Bazel completely — every output base,
 install base and cached download, live workspaces included, after stopping their servers. The
 next build starts cold. See [ADR 0014](adrs/0014-bazel-output-base-housekeeping.md).
 

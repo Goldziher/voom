@@ -233,44 +233,63 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
     // It runs on this pool, never fails the sweep — a machine without git simply has nothing to
     // do here — and says nothing in the report when it did nothing.
     collected.repositories.extend(scanned.repositories.iter().cloned());
-    prune_repositories(root, &scanned.repositories, &at_root, options, collected)?;
 
-    let selected = select(root, &resolver, scanned.findings, options, collected)?;
+    // Git's housekeeping is a process per repository and the slowest stage once the walk is
+    // wide; sizing and removal touch artifacts and never a repository's administration. Neither
+    // needs the other's result, so they overlap on the same pool.
+    let (git, removed) = rayon::join(
+        || prune_repositories(root, &scanned.repositories, &at_root, options),
+        || -> Result<(Vec<Entry>, Vec<Entry>)> {
+            let selected = select(root, &resolver, scanned.findings, options, collected)?;
 
-    // Removal is independent per artifact and embarrassingly parallel; a failure on one is
-    // recorded and never aborts the run.
-    let removal = Removal {
-        dry_run: options.dry_run,
-        force: options.force,
-    };
-    let started = Instant::now();
-    let entries = remove_all(selected.to_remove, &guard, removal);
+            // Removal is independent per artifact and embarrassingly parallel; a failure on one is
+            // recorded and never aborts the run.
+            let removal = Removal {
+                dry_run: options.dry_run,
+                force: options.force,
+            };
+            let started = Instant::now();
+            let entries = remove_all(selected.to_remove, &guard, removal);
 
-    // A covered artifact is only *covered* if the removal that was supposed to take it actually
-    // happened. Deciding that before the rails run would let a refused `vendor/` leave its
-    // `vendor/bundle/` neither removed nor reported as removable, on every subsequent run —
-    // a skip line asserting something that never took place. Nesting is rare, so this second
-    // pass is almost always empty.
-    //
-    // `PartiallyRemoved` counts as covered even though it is not `is_reclaimed`: the outer
-    // removal *ran*, its `freed` already counts whatever it took out of the inner artifact, and
-    // retrying on the pre-removal size would report those bytes a second time. Only a removal
-    // that never happened at all sends the inner one back.
-    let ran: std::collections::HashSet<&Path> = entries
-        .iter()
-        .filter(|entry| entry.outcome.is_reclaimed() || matches!(entry.outcome, Outcome::PartiallyRemoved { .. }))
-        .map(|entry| entry.path.as_path())
-        .collect();
-    let mut uncovered = Vec::new();
-    for (finding, measured, by) in selected.covered {
-        if ran.contains(by.as_path()) {
-            note(collected, options.verbose, finding.path, SkipReason::Covered { by });
-        } else {
-            uncovered.push((finding, measured));
+            // A covered artifact is only *covered* if the removal that was supposed to take it actually
+            // happened. Deciding that before the rails run would let a refused `vendor/` leave its
+            // `vendor/bundle/` neither removed nor reported as removable, on every subsequent run —
+            // a skip line asserting something that never took place. Nesting is rare, so this second
+            // pass is almost always empty.
+            //
+            // `PartiallyRemoved` counts as covered even though it is not `is_reclaimed`: the outer
+            // removal *ran*, its `freed` already counts whatever it took out of the inner artifact, and
+            // retrying on the pre-removal size would report those bytes a second time. Only a removal
+            // that never happened at all sends the inner one back.
+            let ran: std::collections::HashSet<&Path> = entries
+                .iter()
+                .filter(|entry| {
+                    entry.outcome.is_reclaimed() || matches!(entry.outcome, Outcome::PartiallyRemoved { .. })
+                })
+                .map(|entry| entry.path.as_path())
+                .collect();
+            let mut uncovered = Vec::new();
+            for (finding, measured, by) in selected.covered {
+                if ran.contains(by.as_path()) {
+                    note(collected, options.verbose, finding.path, SkipReason::Covered { by });
+                } else {
+                    uncovered.push((finding, measured));
+                }
+            }
+            let retried = remove_all(uncovered, &guard, removal);
+            collected.delete += started.elapsed();
+
+            Ok((entries, retried))
+        },
+    );
+    if let Some((pruned, elapsed)) = git? {
+        match &mut collected.git {
+            Some(existing) => existing.merge(pruned),
+            None => collected.git = Some(pruned),
         }
+        collected.git_elapsed += elapsed;
     }
-    let retried = remove_all(uncovered, &guard, removal);
-    collected.delete += started.elapsed();
+    let (entries, retried) = removed?;
 
     collected.entries.extend(entries);
     collected.entries.extend(retried);
@@ -292,10 +311,9 @@ fn prune_repositories(
     work_trees: &[PathBuf],
     at_root: &Resolved,
     options: &RunOptions,
-    collected: &mut Collected,
-) -> Result<()> {
+) -> Result<Option<(crate::git::GitPruneResult, Duration)>> {
     if !at_root.git || work_trees.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
 
     // Timed from here rather than around the call, so a run that never asked for housekeeping
@@ -310,14 +328,7 @@ fn prune_repositories(
         // honour `-j`. Setting it here would nest a second pool inside that one.
         ..crate::git::GitPruneOptions::default()
     };
-    if let Some(pruned) = crate::git::prune_during_sweep(work_trees, &git_options) {
-        match &mut collected.git {
-            Some(existing) => existing.merge(pruned),
-            None => collected.git = Some(pruned),
-        }
-    }
-    collected.git_elapsed += started.elapsed();
-    Ok(())
+    Ok(crate::git::prune_during_sweep(work_trees, &git_options).map(|pruned| (pruned, started.elapsed())))
 }
 
 /// Which ecosystems the classifier will consider, always permissively.

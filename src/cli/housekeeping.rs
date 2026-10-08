@@ -1,4 +1,4 @@
-//! Arguments and rendering for the maintenance subcommands: `git-prune`, `bazel-prune`,
+//! Arguments and rendering for the maintenance subcommands: `git-prune`,
 //! `claude-prune`. Split out of `cli/mod.rs` purely to stay under the module size cap — the
 //! three share a shape (a subcommand takes its own paths, its own `--dry-run`, its own
 //! `--format`) but nothing that would justify one being written in terms of another.
@@ -106,103 +106,6 @@ pub fn render_git(
     match args.format {
         Format::Human => crate::git::render_human(result, out),
         Format::Json => crate::git::render_json(result, out),
-    }
-}
-
-/// `voom bazel-prune` arguments.
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "these mirror command-line flags, which are bools by nature"
-)]
-#[derive(Debug, Args)]
-pub struct BazelPruneArgs {
-    /// Output-user-roots to search, each an `_bazel_<user>`-shaped directory whose immediate
-    /// subdirectories are candidate output bases.
-    ///
-    /// Defaults to the conventional locations (`/tmp`, `/var/tmp`, `~/.cache/bazel`) when none
-    /// are given. A root that does not exist — named explicitly or by default — is silently
-    /// absent from the search rather than a usage error, unlike `voom <path>` and
-    /// `voom git-prune <path>`: these roots name a convention voom is guessing at, not a tree
-    /// the user has necessarily confirmed exists, and there is nothing unsafe about finding
-    /// nothing at one.
-    #[arg(value_name = "PATH")]
-    pub roots: Vec<PathBuf>,
-
-    /// Report what would be removed, without removing it.
-    #[arg(short = 'n', long)]
-    pub dry_run: bool,
-
-    /// Output format.
-    #[arg(long, value_enum, default_value_t = Format::Human)]
-    pub format: Format,
-
-    /// Do not cross filesystem boundaries.
-    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
-    pub one_file_system: bool,
-
-    /// Retry a failed removal, repairing permissions inside the output base first.
-    #[arg(long)]
-    pub force: bool,
-
-    /// How long an output base may go unbuilt in before it is stale, e.g. `7d`.
-    ///
-    /// Also the age limit for entries in the shared download cache. Defaults to seven days. An
-    /// output base with a running server is never stale, however idle its files look.
-    #[arg(long, value_name = "DURATION")]
-    pub max_age: Option<String>,
-
-    /// Clear Bazel completely: every output base, install base and cached download under the
-    /// roots, live workspaces included. Running servers are stopped first.
-    ///
-    /// The next build in any workspace starts cold. This is what `voom --clear-caches` does for
-    /// Bazel as part of clearing every cache.
-    #[arg(long)]
-    pub all: bool,
-}
-
-impl BazelPruneArgs {
-    /// The options for `voom bazel-prune`.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::InvalidDuration`] for an unparseable `--max-age`.
-    pub fn to_bazel_options(&self) -> Result<crate::bazel::BazelPruneOptions> {
-        Ok(crate::bazel::BazelPruneOptions {
-            roots: if self.roots.is_empty() {
-                crate::bazel::conventional_roots()
-            } else {
-                self.roots.clone()
-            },
-            dry_run: self.dry_run,
-            force: self.force,
-            one_file_system: self.one_file_system,
-            max_age: self
-                .max_age
-                .as_deref()
-                .map(parse_duration)
-                .transpose()?
-                .unwrap_or(crate::bazel::DEFAULT_MAX_AGE),
-            clear_all: self.all,
-            // An explicit `bazel-prune` walks the shared cache; a sweep (via `bazel_options`)
-            // does not.
-            shared_cache: true,
-        })
-    }
-}
-
-/// Renders a finished `bazel-prune` in the requested format.
-///
-/// # Errors
-///
-/// Propagates write failures from `out`.
-pub fn render_bazel(
-    result: &crate::bazel::BazelPruneResult,
-    args: &BazelPruneArgs,
-    out: &mut impl io::Write,
-) -> io::Result<()> {
-    match args.format {
-        Format::Human => crate::bazel::render_human(result, out),
-        Format::Json => crate::bazel::render_json(result, out),
     }
 }
 

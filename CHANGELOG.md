@@ -7,6 +7,25 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
+## [Unreleased]
+
+### Changed
+
+- **`--stale-worktrees <DURATION>` removes idle unmerged worktrees too.** With
+  `--remove-merged-worktrees`, a worktree not in the default branch goes when nothing has
+  committed, checked out or rebased in it for the given time, some ref still reaches its `HEAD`
+  (the branch is kept; a detached `HEAD` nothing else reaches is never stale), and nothing but
+  deleted build output differs. Off unless given.
+- **Merged-worktree removal clears nested build output.** A deleted tracked file under a `dist/`,
+  `target/`, `node_modules/` or `__pycache__/` at any depth no longer keeps an otherwise merged
+  worktree; `build/` and `out/` still count only at the top level.
+- **`voom bazel-prune` is gone; a sweep does all of it.** The sweep now also age-prunes the shared
+  download cache, which it used to leave to the subcommand. Use `--bazel-max-age` for the age,
+  `--no-bazel` to skip, and `--clear-caches=bazel` for a full clear.
+- **The sweep is wider.** The walk defaults to eight threads per core, capped at 128 (it was capped at 12) because
+  it waits on the filesystem rather than computing; the Bazel stage runs beside the sweep instead of
+  after it and fans out over bases and cache files; git housekeeping overlaps sizing and removal.
+
 ## [0.8.1] - 2026-10-05
 
 ### Fixed
