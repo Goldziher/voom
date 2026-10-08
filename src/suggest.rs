@@ -321,7 +321,7 @@ mod tests {
         let fixture = tree(&["a/.mytool/blob", "b/.mytool/blob", "c/.mytool/blob"]);
         repository(fixture.path(), "unrelated/\n");
 
-        assert!(run(fixture.path()).is_empty());
+        assert!(run(fixture.path()).is_empty(), "no suggestion is warranted here");
     }
 
     /// One is an accident and two is a coincidence.
@@ -330,7 +330,7 @@ mod tests {
         let fixture = tree(&["a/.mytool/blob", "b/.mytool/blob"]);
         repository(fixture.path(), ".mytool/\n");
 
-        assert!(run(fixture.path()).is_empty());
+        assert!(run(fixture.path()).is_empty(), "no suggestion is warranted here");
     }
 
     /// Suggesting `target/` would be advice to configure what voom already does.
@@ -339,7 +339,7 @@ mod tests {
         let fixture = tree(&["a/target/o", "b/target/o", "c/target/o"]);
         repository(fixture.path(), "target/\n");
 
-        assert!(run(fixture.path()).is_empty());
+        assert!(run(fixture.path()).is_empty(), "no suggestion is warranted here");
     }
 
     /// A glob is a rule about shapes; a negation says the opposite. Neither is a name.
@@ -369,7 +369,7 @@ mod tests {
         ]);
         repository(fixture.path(), ".mytool/\n");
 
-        assert!(run(fixture.path()).is_empty());
+        assert!(run(fixture.path()).is_empty(), "no suggestion is warranted here");
     }
 
     /// A candidate is not descended into, so a candidate nested inside another is attributed to

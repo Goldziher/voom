@@ -5,7 +5,7 @@
 //!
 //! The house style is the sweep's (ADR 0007): an aligned em dash before a reason, colour as a
 //! second channel and never the only one, every state named in words, and a deterministic
-//! order. `voom bazel-prune` names every output base it found, including the ones it left
+//! order. The Bazel housekeeping names every output base it found, including the ones it left
 //! alone (`adrs/0014-bazel-output-base-housekeeping.md`). A sweep prints the same report only
 //! when it removed something.
 

@@ -103,7 +103,7 @@ fn should_leave_a_missing_root_silently_absent() {
 
     let result = prune(&options(&missing)).expect("a missing root is not an error");
 
-    assert!(result.roots.is_empty());
+    assert!(result.roots.is_empty(), "a missing root is silently absent");
     assert!(result.output_bases.is_empty());
 }
 

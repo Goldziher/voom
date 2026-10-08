@@ -432,7 +432,7 @@ fn build_pool(jobs: Option<usize>) -> Result<rayon::ThreadPool> {
 ///
 /// `install/` and `cache/` are Bazel's only under a Bazel output-user-root (`_bazel_<user>`);
 /// under any other directory those names are ordinary directories, and a name alone never
-/// proves an ecosystem. This is what lets `bazel-prune --all` be pointed at an unrelated
+/// proves an ecosystem. This is what lets `--clear-caches=bazel` be pointed at an unrelated
 /// directory without clearing its `cache/` or `install/`.
 fn candidates_in(root: &Path) -> Vec<Candidate> {
     let mut candidates = Vec::new();

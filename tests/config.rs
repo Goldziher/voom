@@ -198,7 +198,7 @@ fn should_leave_the_same_path_alone_without_the_include() {
 
     let result = run(&options(fixture.path())).expect("the run completes");
 
-    assert!(result.entries.is_empty());
+    assert!(result.entries.is_empty(), "a keep rule holds every artifact");
     assert_eq!(snapshot(fixture.path()), before);
 }
 
@@ -272,7 +272,7 @@ fn should_not_reach_outside_the_scan_root_through_include() {
 
     let result = run(&options(fixture.path())).expect("the run completes");
 
-    assert!(result.entries.is_empty());
+    assert!(result.entries.is_empty(), "a keep rule holds every artifact");
     assert!(outside.path().join("precious.txt").exists());
 }
 

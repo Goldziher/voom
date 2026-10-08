@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn an_empty_file_is_valid_and_sets_nothing() {
         let config: ConfigFile = toml::from_str("").expect("an empty file parses");
-        assert!(config.exclude.is_empty());
+        assert!(config.exclude.is_empty(), "an empty file sets no exclude");
         assert!(config.keep.scalars().min_age.is_none());
     }
 }

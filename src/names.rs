@@ -212,7 +212,7 @@ mod tests {
             let name = OsStr::from_bytes(b"targ\xffet");
             let mut hits = Vec::new();
             matcher.for_each_match(name, |value| hits.push(value));
-            assert!(hits.is_empty());
+            assert!(hits.is_empty(), "a non-UTF-8 name must not match an ASCII pattern");
         }
     }
 

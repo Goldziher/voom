@@ -172,7 +172,7 @@ fn should_never_descend_into_a_vcs_directory() {
 
     let result = run(&options(root.path())).expect("the run completes");
 
-    assert!(result.entries.is_empty());
+    assert!(result.entries.is_empty(), "nothing removable is reported here");
     assert_eq!(snapshot(root.path()), before);
 }
 
@@ -721,7 +721,7 @@ fn should_hold_an_included_path_that_a_keep_policy_covers() {
         root.path().join("junk/leftovers.o").exists(),
         "a fresh directory is held by min_age however it was named"
     );
-    assert!(result.entries.is_empty());
+    assert!(result.entries.is_empty(), "nothing removable is reported here");
 }
 
 /// ADR 0006's central property, for the one path that reaches deletion without a marker.

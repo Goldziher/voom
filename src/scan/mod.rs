@@ -343,7 +343,10 @@ mod tests {
 
         let scan = run(fixture.path(), &options);
 
-        assert!(scan.findings.is_empty());
+        assert!(
+            scan.findings.is_empty(),
+            "an include names a path, not an artifact to sweep"
+        );
         assert!(fixture.path().join(".npm/_cacache/pkg/leftovers.o").exists());
     }
 
@@ -571,7 +574,10 @@ mod tests {
             "node_modules/pkg/target/",
         ]);
         let scan = run(fixture.path(), &ScanOptions::default());
-        assert!(found(&scan, fixture.path()).is_empty());
+        assert!(
+            found(&scan, fixture.path()).is_empty(),
+            "a dependency directory is never a finding by default"
+        );
     }
 
     #[test]
@@ -713,7 +719,10 @@ mod tests {
         let fixture = tree(&["package.json", "node_modules/left-pad/index.js"]);
         let scan = run(fixture.path(), &verbose());
 
-        assert!(found(&scan, fixture.path()).is_empty());
+        assert!(
+            found(&scan, fixture.path()).is_empty(),
+            "a dependency directory is never a finding by default"
+        );
         assert!(
             scan.skips.iter().any(|skip| matches!(
                 &skip.reason,
@@ -745,7 +754,7 @@ mod tests {
     fn should_count_skips_without_collecting_them_by_default() {
         let fixture = tree(&["target/", "dist/"]);
         let scan = run(fixture.path(), &ScanOptions::default());
-        assert!(scan.findings.is_empty());
+        assert!(scan.findings.is_empty(), "neither artifact is on by default");
         assert_eq!(scan.skipped_count, 2);
         assert!(scan.skips.is_empty(), "the default view keeps the report short");
     }

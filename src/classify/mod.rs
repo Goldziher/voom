@@ -652,7 +652,7 @@ mod tests {
     fn should_not_classify_when_the_ecosystem_is_deselected() {
         let fixture = tree(&["Cargo.toml", "target/"]);
         let (selection, unknown) = Selection::only(["node"]);
-        assert!(unknown.is_empty());
+        assert!(unknown.is_empty(), "a deselected ecosystem declares no unknown specs");
         let classifier = Classifier::new(selection).unwrap();
         match verdict(&classifier, fixture.path(), "target") {
             Verdict::Skip(SkipReason::NotEnabled { .. }) => {}
