@@ -391,17 +391,24 @@ the ones whose work is already in the default branch:
 ```bash
 voom -n --remove-merged-worktrees ~/code          # what would go
 voom --remove-merged-worktrees ~/code             # remove them; Bazel orphans go in the same run
+voom --remove-merged-worktrees --stale-worktrees 30d ~/code   # and unmerged ones idle for 30 days
 ```
 
 A worktree is removed only when its `HEAD` is an ancestor of the default branch (the local
 `origin/HEAD`, else `main`/`master` — voom never fetches, so a stale ref errs toward keeping),
 it is not locked or the current directory, it is stored under a path you asked voom to sweep (one
 elsewhere on disk is reported and kept), and its working tree holds nothing but deleted tracked
-build output such as `dist/` and ignored build-output trees such as `target/`. One with any
+build output (a `dist/`, `target/`, `node_modules/` or `__pycache__/` at any depth, a top-level
+`build/` or `out/`) and ignored build-output trees such as `target/`. One with any
 modified, staged, untracked, or ignored non-build-output path — a `.env`, a local database — is
 reported as merged-with-local-changes and kept. Branches are never deleted. It is off by
 default and cannot be turned on from `voom.toml`, because unlike the rest of git housekeeping it
-can lose work. See [ADR 0016](adrs/0016-merged-worktree-removal.md).
+can lose work.
+
+`--stale-worktrees <DURATION>` widens that to unmerged worktrees that have gone quiet: nothing
+committed, checked out or rebased for the given time, some ref still reaching their `HEAD` (the
+branch is kept; a detached `HEAD` nothing else reaches is never removed), and the same
+working-tree rule as above. See [ADR 0016](adrs/0016-merged-worktree-removal.md).
 
 ## Bazel output-base housekeeping
 

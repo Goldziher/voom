@@ -7,24 +7,35 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
-## [Unreleased]
+## [0.9.0] - 2026-10-08
 
-### Changed
+### Added
 
 - **`--stale-worktrees <DURATION>` removes idle unmerged worktrees too.** With
   `--remove-merged-worktrees`, a worktree not in the default branch goes when nothing has
   committed, checked out or rebased in it for the given time, some ref still reaches its `HEAD`
   (the branch is kept; a detached `HEAD` nothing else reaches is never stale), and nothing but
   deleted build output differs. Off unless given.
+
+### Changed
+
+- **A sweep also age-prunes the shared Bazel download cache**, which it used to leave to
+  `bazel-prune`. `--bazel-max-age` sets the age, `--no-bazel` skips Bazel, and
+  `--clear-caches=bazel` clears it completely.
+- **The sweep is much wider.** The walk defaults to eight threads per core, capped at 128 (it was
+  capped at 12), because it waits on the filesystem rather than computing; the Bazel stage runs
+  beside the sweep instead of after it and fans out over output bases and cache files; git
+  housekeeping overlaps sizing and removal. A single large checkout dropped from 35 s to 9 s.
 - **Merged-worktree removal clears nested build output.** A deleted tracked file under a `dist/`,
   `target/`, `node_modules/` or `__pycache__/` at any depth no longer keeps an otherwise merged
   worktree; `build/` and `out/` still count only at the top level.
-- **`voom bazel-prune` is gone; a sweep does all of it.** The sweep now also age-prunes the shared
-  download cache, which it used to leave to the subcommand. Use `--bazel-max-age` for the age,
-  `--no-bazel` to skip, and `--clear-caches=bazel` for a full clear.
-- **The sweep is wider.** The walk defaults to eight threads per core, capped at 128 (it was capped at 12) because
-  it waits on the filesystem rather than computing; the Bazel stage runs beside the sweep instead of
-  after it and fans out over bases and cache files; git housekeeping overlaps sizing and removal.
+- Dependencies are at their latest releases (`cargo upgrade --incompatible`, `cargo update`).
+
+### Removed
+
+- **`voom bazel-prune`.** A plain sweep does everything it did. The explicit output-user-root
+  arguments and `--all` went with it; `VOOM_BAZEL_ROOTS` still names the roots and
+  `--clear-caches=bazel` replaces `--all`.
 
 ## [0.8.1] - 2026-10-05
 
