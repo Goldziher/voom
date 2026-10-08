@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
+## [0.9.1] - 2026-10-08
+
+### Fixed
+
+- **Merged-worktree removal works on Windows.** The worktree path was handed to
+  `git worktree remove` in the verbatim `\\?\C:\...` form, which git refuses, so
+  `--remove-merged-worktrees` failed there. The path now goes to git in the form
+  it accepts.
+
 ## [0.9.0] - 2026-10-08
 
 ### Added
