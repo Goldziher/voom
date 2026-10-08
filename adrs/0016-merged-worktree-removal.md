@@ -26,13 +26,19 @@ is not one of them.
    else `origin/main`, `origin/master`, `main`, `master`. voom never fetches, so a stale ref
    makes fewer worktrees look merged, the safe direction;
 2. `git status --porcelain --ignored=matching` reports nothing except unstaged deletions of
-   tracked files under a **top-level** build-output directory (`dist`, `build`, `target`, `out`,
-   `node_modules`, `__pycache__`) and ignored trees under those names anywhere. Those are
-   regenerable and the only content removal discards; `--force` is passed to git only in that
-   case. A deleted tracked file under a deeper directory that merely shares one of those names —
-   `src/build/`, `internal/out/` — is source, and keeps the worktree. Any modified, staged, added,
+   tracked files under a build-output directory and ignored trees under those names anywhere.
+   `dist`, `target`, `node_modules` and `__pycache__` count at any depth — a monorepo commits
+   `client/dist/` several levels down and a sweep deletes it — while `build` and `out` count only
+   at the top level. Those are regenerable and the only content removal discards; `--force` is
+   passed to git only in that case. A deleted tracked file under a nested `src/build/` or
+   `internal/out/` is source, and keeps the worktree. Any modified, staged, added,
    renamed, untracked, or ignored non-build-output path — a gitignored `.env`, a local database,
    notes — keeps it too, reported as merged-with-local-changes with a count;
+   A caller may also name `--stale-worktrees <age>`, which lets an *unmerged* worktree through
+   condition 1 when it has been idle at least that long — the later of its `HEAD` commit date
+   and the modification time of its `HEAD` reflog, which `git status` does not touch — and some
+   ref contains its `HEAD`, so removing the checkout (which keeps the branch) loses no commit.
+   Conditions 2–4 apply unchanged;
 3. it is not the main worktree, not locked, not missing (`git worktree prune` owns that), and
    voom was not started inside it;
 4. it resolves strictly below a path voom was told to sweep. Repositories come from the walk the

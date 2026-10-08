@@ -8,12 +8,11 @@
 //!
 //! - its `HEAD` is an ancestor of the repository's default branch, so every commit is reachable
 //!   from somewhere else;
-//! - its working tree holds nothing but deletions of tracked build output in a **top-level**
-//!   build-output directory (a `dist/` that was cleaned) and ignored build-output trees
-//!   (`target/`, `node_modules/`) anywhere; any modified, staged, added, renamed or untracked
-//!   path, any ignored file that is not build output, and a deleted tracked file under a deeper
-//!   directory that merely shares a build-output name, keep it, reported as
-//!   merged-with-local-changes;
+//! - its working tree holds nothing but deletions of tracked build output (a `dist/` that was
+//!   cleaned, at any depth; `build/` and `out/` only at the top level, where they are not source)
+//!   and ignored build-output trees (`target/`, `node_modules/`) anywhere; any modified, staged,
+//!   added, renamed or untracked path, any ignored file that is not build output, and a deleted
+//!   tracked file under a nested `src/build/`, keep it, reported as merged-with-local-changes;
 //! - it is not the main worktree, not locked, not missing, not where voom was started, and
 //!   stored strictly below a path voom was told to sweep — a worktree elsewhere on disk is
 //!   reported and kept, so nothing outside the scanned tree is ever its target;
@@ -40,6 +39,10 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// Path components whose tracked deletions are build output, not work.
 const BUILD_OUTPUT_DIRS: &[&str] = &["dist", "build", "target", "out", "node_modules", "__pycache__"];
 
+/// The build-output names that are never source, so a tracked deletion under one is discardable at
+/// any depth. `build` and `out` are left out: they are only build output at the top level.
+const UNAMBIGUOUS_BUILD_OUTPUT_DIRS: &[&str] = &["dist", "target", "node_modules", "__pycache__"];
+
 /// The default-branch candidates, most authoritative first. The first that resolves wins.
 const DEFAULT_BRANCH_FALLBACKS: &[&str] = &[
     "refs/remotes/origin/main",
@@ -53,6 +56,9 @@ const DEFAULT_BRANCH_FALLBACKS: &[&str] = &[
 pub struct WorktreeOptions {
     /// Report what would be removed without removing it.
     pub dry_run: bool,
+    /// Also remove a worktree that is not merged but has been idle at least this long, provided
+    /// its commits are reachable from another ref. `None` removes only merged worktrees.
+    pub stale_after: Option<Duration>,
 }
 
 /// Why a worktree was removed or kept.
@@ -81,11 +87,17 @@ pub enum State {
         /// How many deleted tracked build-output paths removal discards.
         discarded: usize,
     },
+    /// Not merged, but idle past the stale age, its commits safe on another ref, and clean apart
+    /// from build output.
+    Stale {
+        /// How many deleted tracked build-output paths removal discards.
+        discarded: usize,
+    },
     /// Git could not answer (status failed, ancestry check errored).
     Unchecked(String),
 }
 
-/// What happened to a [`State::Merged`] worktree.
+/// What happened to a [`State::Merged`] or [`State::Stale`] worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     /// Removed.
@@ -153,8 +165,10 @@ impl WorktreePruneResult {
         let mut totals = Totals::default();
         for worktree in self.repositories.iter().flat_map(|repository| &repository.worktrees) {
             match (&worktree.state, &worktree.outcome) {
-                (State::Merged { .. }, Some(Outcome::Removed | Outcome::WouldRemove)) => totals.removed += 1,
-                (State::Merged { .. }, Some(Outcome::Failed(_))) => totals.failed += 1,
+                (State::Merged { .. } | State::Stale { .. }, Some(Outcome::Removed | Outcome::WouldRemove)) => {
+                    totals.removed += 1;
+                }
+                (State::Merged { .. } | State::Stale { .. }, Some(Outcome::Failed(_))) => totals.failed += 1,
                 (State::LocalChanges { .. }, _) => totals.local_changes += 1,
                 _ => totals.kept += 1,
             }
@@ -298,13 +312,17 @@ fn judge(
         worktree.state = State::Current;
         return worktree;
     }
-    match is_ancestor(main, &entry.head, default_sha) {
-        Ok(true) => {}
-        Ok(false) => return worktree,
+    let merged = match is_ancestor(main, &entry.head, default_sha) {
+        Ok(merged) => merged,
         Err(message) => {
             worktree.state = State::Unchecked(message);
             return worktree;
         }
+    };
+    // Not merged is kept unless the caller named a stale age and the worktree is provably idle
+    // past it with its commits safe on another ref.
+    if !merged && !options.stale_after.is_some_and(|age| is_stale(entry, main, age)) {
+        return worktree;
     }
     let Some(status) = git_bytes(
         &entry.path,
@@ -327,7 +345,11 @@ fn judge(
         worktree.state = State::LocalChanges { changed };
         return worktree;
     }
-    worktree.state = State::Merged { discarded };
+    worktree.state = if merged {
+        State::Merged { discarded }
+    } else {
+        State::Stale { discarded }
+    };
     worktree.outcome = Some(if options.dry_run {
         Outcome::WouldRemove
     } else {
@@ -353,7 +375,7 @@ fn classify_status(status: &[u8]) -> (usize, usize) {
         if matches!(index, b'R' | b'C') || matches!(tree, b'R' | b'C') {
             fields.next();
         }
-        if index == b' ' && tree == b'D' && is_top_level_build_output(&path) {
+        if index == b' ' && tree == b'D' && is_deleted_build_output(&path) {
             discarded += 1;
         } else if index == b'!' && tree == b'!' && is_build_output(&path) {
             // An ignored build-output tree (target/, node_modules/) is regenerable and goes with
@@ -373,13 +395,23 @@ fn is_build_output(path: &str) -> bool {
     path.split('/').any(|part| BUILD_OUTPUT_DIRS.contains(&part))
 }
 
-/// A top-level build-output directory. Used for a deleted *tracked* file, where a deeper match
-/// could be source — `src/build/`, `internal/out/` — and the deletion is worth keeping. The
-/// tracked file's content survives in `HEAD`, but the deletion is a choice removal would undo.
-fn is_top_level_build_output(path: &str) -> bool {
-    path.split('/')
-        .next()
-        .is_some_and(|first| BUILD_OUTPUT_DIRS.contains(&first))
+/// Whether a deleted *tracked* file was build output. `dist/`, `target/`, `node_modules/` and
+/// `__pycache__/` are build output wherever they sit — a monorepo commits `client/dist/` several
+/// levels down, and a sweep deletes it. `build/` and `out/` are build output only at the top
+/// level: deeper they are as often source (`src/build/`, `internal/out/`), and that deletion is a
+/// choice removal would undo. The file's content survives in `HEAD` either way.
+fn is_deleted_build_output(path: &str) -> bool {
+    let mut parts = path.split('/');
+    let top_level = parts.next();
+    if top_level.is_some_and(|first| BUILD_OUTPUT_DIRS.contains(&first)) {
+        return true;
+    }
+    // Everything after the file name is not a directory; the file itself is excluded.
+    let mut directories: Vec<&str> = parts.collect();
+    directories.pop();
+    directories
+        .iter()
+        .any(|part| UNAMBIGUOUS_BUILD_OUTPUT_DIRS.contains(part))
 }
 
 fn remove(main: &Path, path: &Path, force: bool) -> Outcome {
@@ -412,6 +444,33 @@ fn is_ancestor(main: &Path, head: &str, default_sha: &str) -> Result<bool, Strin
         Some(1) => Ok(false),
         _ => Err("`git merge-base` failed".to_owned()),
     }
+}
+
+/// Whether an unmerged worktree has gone quiet and removing it loses no commit.
+///
+/// Idle is the later of the `HEAD` commit's committer date and the modification time of the
+/// worktree's `HEAD` reflog, which git rewrites on commit, checkout, rebase and reset but not on
+/// `git status` (the index is rewritten by every status, so an IDE's background refresh would
+/// make nothing ever stale). Removal keeps the branch, so the commits are safe when some ref
+/// contains `HEAD` — a detached `HEAD` that no ref reaches would be lost, and is never stale.
+fn is_stale(entry: &Entry, main: &Path, age: Duration) -> bool {
+    let reachable = git(main, &["for-each-ref", "--count=1", "--contains", &entry.head, "refs/"])
+        .is_some_and(|refs| !refs.trim().is_empty());
+    if !reachable {
+        return false;
+    }
+    let committed = git(&entry.path, &["log", "-1", "--format=%ct", "HEAD"])
+        .and_then(|seconds| seconds.trim().parse::<u64>().ok())
+        .map(|seconds| std::time::UNIX_EPOCH + Duration::from_secs(seconds));
+    let reflog = git(&entry.path, &["rev-parse", "--path-format=absolute", "--git-dir"])
+        .and_then(|dir| std::fs::metadata(Path::new(dir.trim()).join("logs/HEAD")).ok())
+        .and_then(|metadata| metadata.modified().ok());
+    // Without a commit date there is nothing to age; an unreadable reflog only means the
+    // commit date decides.
+    let Some(latest) = [committed, reflog].into_iter().flatten().max() else {
+        return false;
+    };
+    committed.is_some() && latest.elapsed().is_ok_and(|idle| idle >= age)
 }
 
 /// The default branch as (ref name, commit). Never fetches.

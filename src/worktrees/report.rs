@@ -33,7 +33,7 @@ pub fn render_human(result: &WorktreePruneResult, out: &mut impl io::Write) -> i
     let verb = if result.dry_run { "would be removed" } else { "removed" };
     writeln!(
         out,
-        "{} merged worktrees {verb}, {} merged but with local changes, {} others kept in {:.2?}",
+        "{} merged or stale worktrees {verb}, {} with local changes, {} others kept in {:.2?}",
         totals.removed.bold(),
         totals.local_changes,
         totals.kept,
@@ -47,33 +47,38 @@ pub fn render_human(result: &WorktreePruneResult, out: &mut impl io::Write) -> i
 
 fn row(worktree: &Worktree, dry_run: bool) -> Option<(String, String)> {
     match (&worktree.state, &worktree.outcome) {
-        (State::Merged { discarded }, Some(Outcome::Removed | Outcome::WouldRemove)) => Some((
-            if dry_run {
-                "would remove".yellow().to_string()
-            } else {
-                "removed".green().to_string()
-            },
-            merged_detail(worktree, *discarded),
-        )),
-        (State::Merged { .. }, Some(Outcome::Failed(message))) => Some(("failed".red().to_string(), message.clone())),
+        (State::Merged { discarded } | State::Stale { discarded }, Some(Outcome::Removed | Outcome::WouldRemove)) => {
+            Some((
+                if dry_run {
+                    "would remove".yellow().to_string()
+                } else {
+                    "removed".green().to_string()
+                },
+                merged_detail(worktree, *discarded, matches!(worktree.state, State::Stale { .. })),
+            ))
+        }
+        (State::Merged { .. } | State::Stale { .. }, Some(Outcome::Failed(message))) => {
+            Some(("failed".red().to_string(), message.clone()))
+        }
         (State::LocalChanges { changed }, _) => Some((
             "kept".cyan().to_string(),
-            format!("merged, but {changed} changed path(s) are not build output"),
+            format!("merged or stale, but {changed} changed path(s) are not build output"),
         )),
         (State::Unchecked(message), _) => Some(("kept".cyan().to_string(), message.clone())),
         _ => None,
     }
 }
 
-fn merged_detail(worktree: &Worktree, discarded: usize) -> String {
+fn merged_detail(worktree: &Worktree, discarded: usize, stale: bool) -> String {
+    let why = if stale { "stale" } else { "merged" };
     let branch = worktree
         .branch
         .as_deref()
         .map_or("detached".to_owned(), |branch| format!("branch {branch}"));
     if discarded > 0 {
-        format!("{branch}, merged ({discarded} deleted build-output path(s) discarded)")
+        format!("{branch}, {why} ({discarded} deleted build-output path(s) discarded)")
     } else {
-        format!("{branch}, merged and clean")
+        format!("{branch}, {why} and clean")
     }
 }
 
@@ -87,6 +92,7 @@ fn state_code(state: &State) -> &'static str {
         State::OutsideRoot => "outside_root",
         State::LocalChanges { .. } => "local_changes",
         State::Merged { .. } => "merged",
+        State::Stale { .. } => "stale",
         State::Unchecked(_) => "unchecked",
     }
 }

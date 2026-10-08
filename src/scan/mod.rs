@@ -197,10 +197,25 @@ fn configure<'b>(builder: &'b mut WalkBuilder, options: &ScanOptions) -> &'b mut
         .hidden(false)
         .follow_links(false)
         .same_file_system(options.one_file_system);
-    if let Some(jobs) = options.jobs {
-        builder.threads(jobs.max(1));
-    }
+    builder.threads(walker_threads(options.jobs));
     builder
+}
+
+/// How many walker threads to run.
+///
+/// An explicit `-j` is taken as given. Otherwise the walk oversubscribes the cores: it is a
+/// `getdirentries` and an `lstat` per entry, which is time spent waiting on the filesystem and
+/// not computing, so a thread per core leaves the disk idle between requests. The `ignore`
+/// crate's own default stops at 12 whatever the machine has. Measured on one 18-core machine under
+/// load, a lone thread took 8.5 minutes over a tree that the default took 35 seconds on.
+fn walker_threads(jobs: Option<usize>) -> usize {
+    jobs.map_or_else(
+        || {
+            let cores = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
+            (cores * 8).clamp(8, 128)
+        },
+        |jobs| jobs.max(1),
+    )
 }
 
 #[cfg(test)]
