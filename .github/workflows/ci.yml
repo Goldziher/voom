@@ -43,15 +43,12 @@ jobs:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
-      # fail-fast stays off so a red Windows leg does not cancel Linux and macOS.
+      # fail-fast stays off so one platform's failure does not cancel the others.
       fail-fast: false
       matrix:
-        # DO NOT REMOVE windows-latest, and do not make it non-blocking. It is expected
-        # to fail today, and that is the reason it is here: the protected-path denylist
-        # cannot fire because Windows `canonicalize()` returns verbatim `\\?\C:\...`
-        # paths, `--one-file-system` is unenforced, and the snapshots assert `/`-separated
-        # paths. Those failures are the specification for the Windows fix work — the leg
-        # goes green when the defects are fixed, not when the leg is deleted or masked.
+        # Windows is a shipped target: the release workflow cross-compiles
+        # `x86_64-pc-windows-gnu` with mingw and never executes the binary, so this leg is the
+        # only place the suite runs on a real Windows host. It is required, not advisory.
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7

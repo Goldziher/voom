@@ -141,10 +141,9 @@ root is through a volume mount point, which is a reparse point, which rail 2's b
 refuses unconditionally on Windows — so `--one-file-system=false` there is stricter than it
 literally asks for, which is the direction to err in.
 
-Windows is verified by the CI leg only — there is no Windows machine in the development loop.
-Every claim above is backed by a test in `src/delete.rs` that runs there — the junction refusal,
-the resolved-denylist match, the case-insensitive comparison, and the volume-prefix read all have
-one — and none of it has been run against real hardware by a contributor.
+Every claim above is backed by a test in `src/delete.rs` that runs on the required Windows CI
+leg. No contributor develops on Windows, so that leg is this platform's regression net — the one
+place the behaviour is exercised on real hardware.
 
 ## Amendment — `--force` — 2026-08-28
 

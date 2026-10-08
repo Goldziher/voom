@@ -89,10 +89,10 @@ Negative / risks:
   because uncomment shipped without the former and relies on the latter to catch drift.
 - Binding trusted publishing to a filename means the workflow file is effectively immutable
   in name — a rename silently breaks publishing on all three registries at once.
-- Windows is cross-compiled with mingw and never built on a Windows runner, so
-  Windows-specific regressions are therefore caught by CI's `windows-latest` test leg rather
-  than by anything in the release itself; the release's `smoke_test` job unpacks and runs the
-  published macOS and Linux archives, which is where cross-compilation is not in play.
+- Windows is cross-compiled with mingw and never built on a Windows runner, so the release
+  itself exercises nothing Windows-specific. Regressions there are caught by CI's required
+  `windows-latest` test leg; the release's `smoke_test` job unpacks and runs only the published
+  macOS and Linux archives, where cross-compilation is not in play.
 
 ## Alternatives considered
 
