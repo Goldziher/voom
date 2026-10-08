@@ -422,6 +422,11 @@ mod tests {
     /// The regression this ADR exists to prevent: a job whose `state.json` says "stopped" but
     /// whose session a running process still names must never be removed, however old the
     /// timestamp, however explicitly `--remove` was given.
+    ///
+    /// Unix-only: the check is a real `ps` invocation, and `ps` is how the platform finds a
+    /// process by its command line. Off unix there is no such probe, so a miss is all there can
+    /// ever be, and the age gate and `--remove` remain the only rails (module doc).
+    #[cfg(unix)]
     #[test]
     fn should_never_remove_a_job_a_running_process_still_names() {
         let fixture = tree(&["jobs/old-but-live/tmp/scratch.bin"]);

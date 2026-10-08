@@ -159,6 +159,10 @@ impl Links {
     /// Off unix there is no portable link count through `std`, so nothing is deduplicated and a
     /// hard-linked tree over-reports. Documented in the module header rather than guessed at.
     #[cfg(not(unix))]
+    #[expect(
+        clippy::unused_self,
+        reason = "the unix arm needs `self`; this stub keeps the same signature"
+    )]
     fn counted(&self, _metadata: &std::fs::Metadata) -> bool {
         false
     }

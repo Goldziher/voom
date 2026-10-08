@@ -72,7 +72,9 @@ pub const ROOTS_ENV: &str = "VOOM_BAZEL_ROOTS";
 /// Where Bazel records a running server's process id, inside the output base.
 const SERVER_PID_FILE: &str = "server/server.pid.txt";
 
-/// How long `clear_all` waits for a stopped server to exit.
+/// How long `clear_all` waits for a stopped server to exit. Only the unix path can stop a
+/// server, so off unix this is unused (and `stop_server` never claims one stopped).
+#[cfg(unix)]
 const SERVER_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// What to search, and how.

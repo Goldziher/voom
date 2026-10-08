@@ -15,8 +15,7 @@ fn options(root: &Path) -> BazelPruneOptions {
 
 fn age(path: &Path, days: u64) {
     let then = std::time::SystemTime::now() - Duration::from_secs(days * 86_400);
-    let file = std::fs::File::options().read(true).open(path).unwrap();
-    file.set_modified(then).unwrap();
+    crate::testing::set_modified(path, then);
 }
 
 /// Ages every marker file and directory Bazel would have touched, and the base itself.

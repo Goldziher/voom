@@ -88,6 +88,43 @@ fn collect(root: &Path, dir: &Path, paths: &mut Vec<String>) {
     }
 }
 
+/// Sets a path's modification time, whether it is a file or a directory.
+///
+/// A directory has to be ageable: Bazel staleness is the *newest* of the output base and its
+/// markers, so a fixture must be able to push the directory itself into the past. Unix
+/// `futimens` needs only an open handle, and a read handle opens a directory. Windows
+/// `SetFileTime` needs `FILE_WRITE_ATTRIBUTES`, and a directory handle additionally needs
+/// `FILE_FLAG_BACKUP_SEMANTICS` — neither of which `File::open` or `OpenOptions::write`
+/// supplies for a directory.
+///
+/// # Panics
+///
+/// If the time cannot be set, which means the test environment is broken.
+pub fn set_modified(path: &Path, when: std::time::SystemTime) {
+    open_for_time(path)
+        .set_modified(when)
+        .expect("a modification time can be set");
+}
+
+#[cfg(not(windows))]
+fn open_for_time(path: &Path) -> fs::File {
+    fs::File::open(path).expect("the path opens for its modification time")
+}
+
+#[cfg(windows)]
+fn open_for_time(path: &Path) -> fs::File {
+    use std::os::windows::fs::OpenOptionsExt;
+    // `FILE_WRITE_ATTRIBUTES`, the access `SetFileTime` requires.
+    const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+    // `FILE_FLAG_BACKUP_SEMANTICS`, required to obtain a handle to a directory.
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    fs::OpenOptions::new()
+        .access_mode(FILE_WRITE_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .expect("the path opens for its modification time")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

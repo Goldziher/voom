@@ -35,7 +35,11 @@ fn repository() -> (tempfile::TempDir, PathBuf) {
 
 fn add_worktree(main: &Path, name: &str) -> PathBuf {
     let path = main.parent().unwrap().join(name);
-    run(main, &["worktree", "add", "-q", "--detach", path.to_str().unwrap()]);
+    // git rejects the verbatim `\\?\` form `canonicalize` produces on Windows. The worktree is
+    // still created at `path`, and the product canonicalizes what git reports back, so the two
+    // spellings meet.
+    let target = crate::git::for_git(&path).display().to_string();
+    run(main, &["worktree", "add", "-q", "--detach", target.as_str()]);
     path
 }
 
@@ -241,7 +245,8 @@ fn should_classify_status_entries() {
 /// An unmerged branch worktree whose only commit is `days` old, with its reflog aged to match.
 fn unmerged_worktree(main: &Path, name: &str, days: u64) -> PathBuf {
     let path = main.parent().unwrap().join(name);
-    run(main, &["worktree", "add", "-q", "-b", name, path.to_str().unwrap()]);
+    let target = crate::git::for_git(&path).display().to_string();
+    run(main, &["worktree", "add", "-q", "-b", name, target.as_str()]);
     std::fs::write(path.join("work.txt"), "wip").unwrap();
     run(&path, &["add", "work.txt"]);
     let then = std::time::SystemTime::now() - Duration::from_secs(days * 86_400);
@@ -268,11 +273,7 @@ fn unmerged_worktree(main: &Path, name: &str, days: u64) -> PathBuf {
         .unwrap();
     assert!(status.success());
     let git_dir = git(&path, &["rev-parse", "--path-format=absolute", "--git-dir"]).unwrap();
-    let reflog = std::fs::File::options()
-        .read(true)
-        .open(Path::new(git_dir.trim()).join("logs/HEAD"))
-        .unwrap();
-    reflog.set_modified(then).unwrap();
+    crate::testing::set_modified(&Path::new(git_dir.trim()).join("logs/HEAD"), then);
     path
 }
 
@@ -341,20 +342,11 @@ fn should_never_treat_a_detached_head_no_ref_reaches_as_stale() {
     let path = unmerged_worktree(&main, "old-work", 90);
     run(&path, &["checkout", "-q", "--detach"]);
     run(&main, &["branch", "-q", "-D", "-f", "old-work"]);
-    let reflog = std::fs::File::options()
-        .read(true)
-        .open(
-            Path::new(
-                git(&path, &["rev-parse", "--path-format=absolute", "--git-dir"])
-                    .unwrap()
-                    .trim(),
-            )
-            .join("logs/HEAD"),
-        )
-        .unwrap();
-    reflog
-        .set_modified(std::time::SystemTime::now() - Duration::from_secs(90 * 86_400))
-        .unwrap();
+    let git_dir = git(&path, &["rev-parse", "--path-format=absolute", "--git-dir"]).unwrap();
+    crate::testing::set_modified(
+        &Path::new(git_dir.trim()).join("logs/HEAD"),
+        std::time::SystemTime::now() - Duration::from_secs(90 * 86_400),
+    );
 
     let result = prune_stale(&main, 30);
 
