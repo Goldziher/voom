@@ -1,6 +1,12 @@
 ---
-priority: medium
-description: "The poly MCP server — read-only vs mutating tools, the paths/exclude/config params, and JSON/TOON output mirroring the CLI"
+type: Playbook
+title: Poly Mcp
+description: The poly MCP server — read-only vs mutating tools, the paths/exclude/config params, and JSON/TOON output mirroring the CLI
+x-ai-rulez:
+  kind: skill
+  id: poly-mcp
+  metadata:
+    priority: medium
 ---
 
 # poly MCP

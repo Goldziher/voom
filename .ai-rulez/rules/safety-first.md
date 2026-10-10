@@ -1,5 +1,11 @@
 ---
-priority: critical
+type: Decision
+title: Safety First
+x-ai-rulez:
+  kind: rule
+  id: safety-first
+  metadata:
+    priority: critical
 ---
 
 # Safety first — voom deletes, and there is no undo

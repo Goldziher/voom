@@ -1,5 +1,11 @@
 ---
-priority: high
+type: Concept
+title: Artifact Catalog
+x-ai-rulez:
+  kind: context
+  id: artifact-catalog
+  metadata:
+    priority: high
 ---
 
 # The artifact catalog

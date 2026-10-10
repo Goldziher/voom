@@ -1,7 +1,13 @@
 ---
-priority: medium
-usage: "/build [args]"
-description: "Build voom and report warnings — debug by default, release with --release"
+type: Reference
+title: Build
+description: Build voom and report warnings — debug by default, release with --release
+x-ai-rulez:
+  kind: command
+  id: build
+  metadata:
+    priority: medium
+    usage: /build [args]
 ---
 
 # Build

@@ -1,6 +1,12 @@
 ---
-priority: medium
-description: "What poly is — tier-1 in-process backends vs the tree-sitter generic tier, language coverage, and when to reach for it"
+type: Playbook
+title: Poly Overview
+description: What poly is — tier-1 in-process backends vs the tree-sitter generic tier, language coverage, and when to reach for it
+x-ai-rulez:
+  kind: skill
+  id: poly-overview
+  metadata:
+    priority: medium
 ---
 
 # poly Overview

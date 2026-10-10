@@ -1,7 +1,13 @@
 ---
-name: rust-perf-engineer
+type: Reference
+title: Rust Perf Engineer
 description: Reviews diffs touching voom's traversal, classification, sizing, or deletion paths for hot-path regressions — re-walks and redundant stats, allocations in the classify loop, lost subtree pruning, glob recompilation, and any change that weakens the walker's disabled-ignore configuration.
-model: sonnet
+x-ai-rulez:
+  kind: agent
+  id: rust-perf-engineer
+  metadata:
+    model: sonnet
+    name: rust-perf-engineer
 ---
 
 # rust-perf-engineer

@@ -1,7 +1,13 @@
 ---
-priority: high
-usage: "/test [filter]"
-description: "Run the test suite and report failures, with attention to the safety fixtures"
+type: Reference
+title: Test
+description: Run the test suite and report failures, with attention to the safety fixtures
+x-ai-rulez:
+  kind: command
+  id: test
+  metadata:
+    priority: high
+    usage: /test [filter]
 ---
 
 # Test

@@ -1,4 +1,4 @@
-version = "4.0"
+version = "5.0"
 name = "voom"
 description = "Fast, safe, parallel build-artifact pruning across every major language ecosystem — a single pure-Rust binary that recursively finds and removes build output anywhere in a tree, proving every candidate against an ecosystem marker file before it deletes."
 gitignore = true
@@ -40,3 +40,7 @@ marketplace = "poly"
 name = "poly"
 scope = "project"
 enabled = true
+
+# Pinned by `ai-rulez migrate v5`: the 4.x default. Remove this line to take the v5 default.
+[header]
+hashes = "full"

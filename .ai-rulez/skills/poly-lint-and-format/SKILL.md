@@ -1,6 +1,12 @@
 ---
-priority: medium
-description: "Running poly lint / poly fmt — --fix, --format json|toon, --exclude, --config, exit codes, and the check → read-json → fix → re-check loop"
+type: Playbook
+title: Poly Lint And Format
+description: Running poly lint / poly fmt — --fix, --format json|toon, --exclude, --config, exit codes, and the check → read-json → fix → re-check loop
+x-ai-rulez:
+  kind: skill
+  id: poly-lint-and-format
+  metadata:
+    priority: medium
 ---
 
 # poly Lint and Format

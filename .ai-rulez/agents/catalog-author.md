@@ -1,7 +1,13 @@
 ---
-name: catalog-author
+type: Reference
+title: Catalog Author
 description: Adds a new language ecosystem to voom's build-artifact catalog end to end — researches the ecosystem's real artifact layout and marker files, writes the catalog entry with a correct anchor, builds both the positive and the negative fixture, and updates the README table and ADR 0003.
-model: sonnet
+x-ai-rulez:
+  kind: agent
+  id: catalog-author
+  metadata:
+    model: sonnet
+    name: catalog-author
 ---
 
 # catalog-author

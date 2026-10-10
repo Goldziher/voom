@@ -18,10 +18,10 @@ exclude = [
 ]
 
 [lint.markdown.rumdl]
-disable = ["MD013", "MD024", "MD033", "MD036", "MD041"]
+disable = ["MD013", "MD024", "MD025", "MD033", "MD036", "MD041"]
 
 [fmt.markdown.rumdl]
-disable = ["MD013", "MD024", "MD033", "MD036", "MD041"]
+disable = ["MD013", "MD024", "MD025", "MD033", "MD036", "MD041"]
 
 [lint.uncomment]
 enabled = true

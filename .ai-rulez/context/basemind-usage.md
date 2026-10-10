@@ -1,5 +1,11 @@
 ---
-priority: medium
+type: Concept
+title: Basemind Usage
+x-ai-rulez:
+  kind: context
+  id: basemind-usage
+  metadata:
+    priority: medium
 ---
 
 # basemind, when it is connected
