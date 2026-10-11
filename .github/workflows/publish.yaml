@@ -39,6 +39,10 @@ jobs:
       npm_exists: ${{ steps.probe.outputs.npm_exists }}
       pypi_exists: ${{ steps.probe.outputs.pypi_exists }}
     steps:
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: "12.11.2"
       - uses: actions/checkout@v7
 
       - name: Resolve tag and versions
@@ -118,7 +122,7 @@ jobs:
             "https://crates.io/api/v1/crates/voom/${version}" >/dev/null 2>&1 && crates_exists=true
 
           npm_exists=false
-          npm view "@goldziher/voom@${version}" version >/dev/null 2>&1 && npm_exists=true
+          pnpm view "@goldziher/voom@${version}" version >/dev/null 2>&1 && npm_exists=true
 
           pypi_exists=false
           curl -fsS "https://pypi.org/pypi/voom-cli/${python_version}/json" >/dev/null 2>&1 && pypi_exists=true
@@ -406,6 +410,10 @@ jobs:
     if: needs.meta.outputs.npm_exists != 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: "12.11.2"
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.tag }}
@@ -413,24 +421,20 @@ jobs:
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
-      # NOTE: OIDC trusted publishing needs npm >= 11.5.1. Node 22 ships npm 10, and
-      # NOTE: npm@latest is npm 12, which requires Node >= 22.22 (EBADENGINE). Pin npm 11.
-      - name: Pin npm 11
-        run: npm install -g npm@11
-      - name: npm publish
+      - name: pnpm publish --no-git-checks
         env:
           NODE_AUTH_TOKEN: ""
         run: |
           set -euo pipefail
           unset NODE_AUTH_TOKEN
-          # `npm publish` includes a LICENSE only when one sits in the package directory. The
+          # `pnpm publish` includes a LICENSE only when one sits in the package directory. The --no-git-checks
           # root file is the single source of truth, so it is copied in rather than duplicated
           # in the repository where the two copies would drift.
           cp LICENSE npm-package/LICENSE
           cd npm-package
           version="${{ needs.meta.outputs.version }}"
           if [[ "$version" == *"-rc."* ]]; then npm_tag="beta"; else npm_tag="latest"; fi
-          npm publish --provenance --access public --tag "$npm_tag"
+          pnpm publish --provenance --access public --tag "$npm_tag" --no-git-checks
 
   publish_pypi:
     name: Publish to PyPI

@@ -3,7 +3,7 @@
 Fast, safe, parallel build-artifact pruning across every major language ecosystem.
 
 ```bash
-npm install -g @goldziher/voom
+pnpm add -g @goldziher/voom
 voom --dry-run ~
 ```
 

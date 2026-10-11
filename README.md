@@ -52,7 +52,7 @@ real pipeline · hierarchical TOML · a named tool-cache catalog · watch mode �
 | ------- | ------- |
 | Homebrew (macOS/Linux) | `brew install goldziher/tap/voom` |
 | Cargo (Rust) | `cargo install voom` |
-| npm (Node.js) | `npm install -g @goldziher/voom` |
+| npm (Node.js) | `pnpm add -g @goldziher/voom` |
 | pip (Python) | `pip install voom-cli` |
 
 The binary is called `voom` however you install it. The package names differ because `voom` was
@@ -64,7 +64,7 @@ downloads a release archive instead of compiling from source.
 Run without installing:
 
 ```bash
-npx -y @goldziher/voom@latest --dry-run ~
+pnpm dlx @goldziher/voom@latest --dry-run ~
 uvx --from voom-cli voom --dry-run ~
 ```
 

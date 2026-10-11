@@ -41,7 +41,7 @@ a hard error in poly. Three channels are offered, matching voom's distribution (
 | Channel | `check` | `run` |
 | --- | --- | --- |
 | `system` | `command -v voom` | `voom` |
-| `npx` | `command -v npx` | `npx -y @goldziher/voom@X.Y.Z` |
+| `pnpm` | `command -v pnpm` | `pnpm dlx @goldziher/voom@X.Y.Z` |
 | `uvx` | `command -v uvx` | `uvx voom-cli==X.Y.Z` |
 
 Both hooks are `workspace = true` (whole-project, no filenames) and pinned to an exact

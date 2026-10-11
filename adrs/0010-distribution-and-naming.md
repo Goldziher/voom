@@ -27,7 +27,7 @@ formula.
 | --- | --- | --- |
 | Homebrew | `Goldziher/homebrew-tap` → `Formula/voom.rb` | `brew install goldziher/tap/voom` |
 | crates.io | `voom` | `cargo install voom` |
-| npm | `@goldziher/voom` | `npm install -g @goldziher/voom` |
+| npm | `@goldziher/voom` | `pnpm add -g @goldziher/voom` |
 | PyPI | `voom-cli` | `pip install voom-cli` |
 | GitHub releases | `voom-<triple>.tar.gz` / `.zip` | `cargo binstall voom` |
 

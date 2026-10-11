@@ -28,10 +28,10 @@ check = "command -v voom"
 run = "voom"
 
 [[hooks.paths]]
-channel = "npx"
-check = "command -v npx"
-run = "npx -y @goldziher/voom@0.9.1"
-install = "npx -y @goldziher/voom@0.9.1 --version"
+channel = "pnpm"
+check = "command -v pnpm"
+run = "pnpm dlx @goldziher/voom@0.9.1"
+install = "pnpm dlx @goldziher/voom@0.9.1 --version"
 
 [[hooks.paths]]
 channel = "uvx"
@@ -52,10 +52,10 @@ check = "command -v voom"
 run = "voom"
 
 [[hooks.paths]]
-channel = "npx"
-check = "command -v npx"
-run = "npx -y @goldziher/voom@0.9.1"
-install = "npx -y @goldziher/voom@0.9.1 --version"
+channel = "pnpm"
+check = "command -v pnpm"
+run = "pnpm dlx @goldziher/voom@0.9.1"
+install = "pnpm dlx @goldziher/voom@0.9.1 --version"
 
 [[hooks.paths]]
 channel = "uvx"
