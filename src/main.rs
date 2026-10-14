@@ -84,6 +84,7 @@ fn git_prune(cli: &Cli, args: &voom::cli::GitPruneArgs) -> anyhow::Result<i32> {
             voom::worktrees::WorktreeOptions {
                 dry_run: args.dry_run,
                 stale_after: None,
+                github_merged: args.github_merged_worktrees,
             },
         );
         let mut out = anstream::stdout().lock();
@@ -252,6 +253,7 @@ fn merged_worktrees(
         roots,
         voom::worktrees::WorktreeOptions {
             dry_run: cli.prune.dry_run,
+            github_merged: cli.prune.github_merged_worktrees,
             stale_after: cli
                 .prune
                 .stale_worktrees

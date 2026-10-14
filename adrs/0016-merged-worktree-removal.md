@@ -71,3 +71,45 @@ the worktrees just removed are orphans and go in the same run (ADR 0014).
 - **A separate subcommand**: the sweep already walks the repositories, and the follow-on Bazel
   cleanup belongs in the same run.
 - **Deleting the merged branch too**: a separate decision with its own recovery story.
+
+## Amendment — 2026-10-14: Optional GitHub merge proof for exact HEADs
+
+Default-branch ancestry cannot prove squash or rebase merges, and a pull request merged into a
+release or integration branch can remain absent from the default branch. With
+`--remove-merged-worktrees`, the additional `--github-merged-worktrees` flag accepts hosted merge
+proof on both a sweep and `git-prune`. This is an explicit network opt-in using
+`gh api --hostname github.com`; ordinary ancestry checks remain offline and voom does not fetch.
+
+The supported github.com `origin` URL supplies the repository identity. A returned pull request
+must have a nonempty `merged_at`, an exact head SHA equal to the worktree's HEAD, and a base
+repository equal to that origin repository. Any base branch qualifies. Branch names, associated
+commits with a different head SHA, closed-but-unmerged PRs, and another repository's PR do not
+prove a merge. Unsupported remotes, missing `gh` or authentication, malformed or oversized
+responses, timeouts and API/network failures fail closed: none supplies hosted merge proof.
+Independent local ancestry can still prove a merge.
+
+The working-tree check still protects modifications and local evidence. Current-directory,
+locked-worktree, protected-path and containment checks remain in force. Ignored evidence is retained in place rather than
+archived to make removal possible, and submodule worktrees are not force-removed. Before removing
+any HEAD proved only by GitHub, named or detached, voom creates `refs/voom/merged-worktrees/<SHA>` in the
+common repository so the commit remains locally reachable. Failure to retain it prevents removal;
+dry-run does not write the ref. Branches remain untouched.
+
+Neither `--clear-caches` nor configuration enables worktree removal. Scan roots remain explicit:
+worktrees outside a supplied root are kept, so a home-and-temporary audit uses roots such as
+`voom -n --remove-merged-worktrees --github-merged-worktrees ~ /tmp`.
+
+## Amendment — 2026-10-14: Marker-proven ignored dependency directories
+
+Ignored Elixir `deps/` beside a regular `mix.exs`, and Python `.venv/` beside a regular
+`pyproject.toml`, `setup.py` or `setup.cfg`, now count as regenerable content when judging a
+worktree. This applies at the directory's own parent, including nested packages; a marker
+elsewhere in the checkout does not prove it. The candidate must be an actual directory, not a
+file or symlink, and the sibling marker must be a regular file, not a symlink. Missing or invalid
+proof keeps the worktree as `LocalChanges`.
+
+These exceptions allow a clean, merged worktree with fetched dependencies to be removed without
+classifying arbitrary `deps` or `.venv` paths by name alone. They apply only to ignored status
+entries: modified, staged and untracked content still keeps the checkout. Configuration, notes,
+databases and other ignored evidence remain protected. No automatic evidence archive, forceful
+submodule removal or default worktree-removal behavior is introduced.

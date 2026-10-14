@@ -7,6 +7,29 @@ All notable changes to this project are documented here. The format follows
 <!-- Keep a Changelog repeats Added/Changed/Fixed headings per version. -->
 <!-- markdownlint-disable MD024 -->
 
+## [Unreleased]
+
+### Added
+
+- `--github-merged-worktrees`, with `--remove-merged-worktrees` on a sweep or `git-prune`,
+  opts into exact-HEAD merged pull request proof through `gh api` for `origin` on github.com.
+  Squash/rebase merges into any base branch qualify; failed lookups provide no proof. Local
+  changes, ignored evidence and containment still protect worktrees. GitHub-proven commits, named or detached,
+  without local ancestry proof are retained under `refs/voom/merged-worktrees/<SHA>` before
+  removal; dry runs create no refs.
+
+### Fixed
+
+- Full `--clean-caches` / `--clear-caches` (including `=all`) now includes signature-verified
+  tagged build caches, so relocated Cargo targets and tagged caches under the scan roots are
+  reached. Named cache IDs stay scoped. `[caches] enable = ["all"]` enables tagged cleanup unless
+  `[tagged] enabled = false` overrides it; full CLI clearing overrides the configuration.
+  Default sweeps are unchanged, and worktree removal still requires its explicit flag.
+- Merged-worktree cleanup now accepts ignored Elixir `deps/` beside a regular `mix.exs` and
+  Python `.venv/` beside a regular `pyproject.toml`, `setup.py` or `setup.cfg` as regenerable.
+  Candidates must be actual directories and neither candidates nor markers may be symlinks.
+  Missing proof, configuration, notes and other ignored evidence still keep the checkout.
+
 ## [0.9.1] - 2026-10-08
 
 ### Fixed

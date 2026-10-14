@@ -13,6 +13,10 @@ use crate::error::Result;
 use crate::policy::parse_duration;
 
 /// `voom git-prune` arguments.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "these mirror command-line flags, which are bools by nature"
+)]
 #[derive(Debug, Args)]
 pub struct GitPruneArgs {
     /// Trees to search for repositories.
@@ -50,6 +54,15 @@ pub struct GitPruneArgs {
     /// output or ignored build-output trees. Reports only under `-n`.
     #[arg(long)]
     pub remove_merged_worktrees: bool,
+
+    /// With `--remove-merged-worktrees`, also recognize squash and rebase merges on GitHub.
+    ///
+    /// Contacts github.com through `gh`. Only an exact HEAD match to a merged pull request
+    /// in the origin repository counts; lookup failures keep the checkout. Working-tree and
+    /// containment checks still apply. Commits proved only by GitHub are retained under
+    /// `refs/voom/merged-worktrees/` before removal.
+    #[arg(long, requires = "remove_merged_worktrees")]
+    pub github_merged_worktrees: bool,
 
     /// How old a worktree's administration must be before git may prune it.
     ///

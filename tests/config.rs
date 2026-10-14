@@ -540,3 +540,48 @@ fn should_refuse_machine_global_sections_in_a_repository_config() {
         );
     }
 }
+
+#[test]
+fn should_expand_all_caches_in_user_configuration_and_include_tagged_builds() {
+    let fixture = tree(&["machine.toml", "relocated/debug/app", "relocated/CACHEDIR.TAG"]);
+    write(fixture.path(), "machine.toml", "[caches]\nenable = [\"all\"]\n");
+    write(
+        fixture.path(),
+        "relocated/CACHEDIR.TAG",
+        "Signature: 8a477f597d28d172789f06886806bc55\n",
+    );
+    let run_options = RunOptions {
+        config: Some(fixture.path().join("machine.toml")),
+        ..options(fixture.path())
+    };
+    let resolved = voom::run::resolver_for(fixture.path(), &run_options)
+        .and_then(|resolver| resolver.root_config())
+        .expect("the configuration resolves");
+    assert!(resolved.clean_tagged);
+    assert!(resolved.clean_caches.iter().any(|id| id == "poly"));
+    assert!(resolved.clean_caches.iter().any(|id| id == "bazel"));
+    assert!(!resolved.clean_caches.iter().any(|id| id == "all"));
+    run(&run_options).expect("the run completes");
+    assert!(!fixture.path().join("relocated").exists());
+}
+
+#[test]
+fn should_allow_configured_full_cache_cleanup_to_keep_tagged_directories() {
+    let fixture = tree(&["machine.toml", "relocated/debug/app", "relocated/CACHEDIR.TAG"]);
+    write(
+        fixture.path(),
+        "machine.toml",
+        "[caches]\nenable = [\"all\"]\n[tagged]\nenabled = false\n",
+    );
+    write(
+        fixture.path(),
+        "relocated/CACHEDIR.TAG",
+        "Signature: 8a477f597d28d172789f06886806bc55\n",
+    );
+    run(&RunOptions {
+        config: Some(fixture.path().join("machine.toml")),
+        ..options(fixture.path())
+    })
+    .expect("the run completes");
+    assert!(fixture.path().join("relocated/debug/app").exists());
+}

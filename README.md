@@ -106,6 +106,8 @@ What a run prints:
 ## Usage
 
 Start narrow: `voom --dry-run --verbose ~/projects`, and read the skips before widening to `~`.
+With no path, voom scans `.`. Pass `~ /tmp` explicitly to cover home-directory caches and relocated
+build output in temporary directories.
 
 ```bash
 voom --dry-run --verbose ~                                  # preview, with a reason for every skip
@@ -113,7 +115,7 @@ voom --min-age 7d ~                                          # only artifacts un
 voom --ecosystem rust --ecosystem node ~                     # only these ecosystems
 voom --format json ~ | jq '.totals'                          # machine-readable
 voom --list-caches                                           # the tool caches this machine holds
-voom --dry-run --clean-caches ~                              # remove every proven tool cache
+voom --dry-run --clear-caches ~ /tmp                         # preview tool caches and tagged build output
 voom --dry-run --clean-caches=cargo-registry,uv ~            # remove these named tool caches
 voom --dry-run --include .mytool-cache ~/projects            # sweep something the catalog misses
 voom --dry-run --clean-dependencies ~                        # also node_modules/, vendor/, deps/, .venv/
@@ -196,10 +198,16 @@ None is ever removed without that marker, and unless it lies under the tree bein
 ```bash
 voom --list-caches                      # the caches on this machine, each with its size
 voom --list-caches --verbose            # ... and every location, marker and note the table knows
-voom --dry-run --clean-caches ~         # a bare flag: every proven cache under the root
-voom --dry-run --clear-caches ~         # `--clear-caches` is the same flag, spelled that way
+voom --dry-run --clean-caches ~ /tmp    # named caches plus signature-verified tagged build output
+voom --dry-run --clear-caches ~ /tmp    # the same flag, spelled that way
 voom --dry-run --clean-caches=uv,go-build ~   # or the ones you name, comma-separated with `=`
 ```
+
+A bare `--clean-caches` (alias `--clear-caches`), or `--clean-caches=all`, also enables
+`--clean-tagged` to reach relocated build caches. Named IDs such as `uv,go-build` remain scoped
+to those caches. `[caches] enable = ["all"]` supplies the same tagged default in user or explicit
+configuration, unless `[tagged] enabled = false` overrides it; the full CLI flag overrides that
+configuration. Cache clearing never implies worktree removal.
 
 By default `--list-caches` prints only the cache locations that actually exist here, each with
 its path and how much disk it holds; `--verbose` shows the whole table — every location the
@@ -216,8 +224,8 @@ directory that has neither — a `CARGO_TARGET_DIR` pointed at `/tmp`, a `.build
 renamed, a cache belonging to a tool voom has never heard of. Measured on one workstation, that was
 104 GB across 53 directories.
 
-`--clean-tagged` reaches them, using the one piece of evidence that needs no name and no location:
-the [`CACHEDIR.TAG`](https://bford.info/cachedir/) the tool wrote *inside* the directory to say the
+`--clean-tagged`, also included in a full `--clear-caches`, reaches them using the one piece of
+evidence that needs no name and no location: the [`CACHEDIR.TAG`](https://bford.info/cachedir/) the tool wrote *inside* the directory to say the
 contents can be rebuilt. `tar --exclude-caching`, `rsync --exclude-tag`, Borg and restic all honour
 the same file.
 
@@ -369,9 +377,10 @@ was found:
 Turn it off with `--no-git`, or `[git] enabled = false` in a `voom.toml` (the flag wins). See
 [ADR 0011](adrs/0011-git-housekeeping.md).
 
-`voom git-prune` runs the same housekeeping on its own, and is the only place the network step
-(`--remotes`) lives — one round trip per remote per repository, which hangs without connectivity
-and can block on a credential prompt, so it is deliberately not part of an ordinary sweep:
+`voom git-prune` runs the same housekeeping on its own. `--remotes` drops remote-tracking
+branches whose upstream is gone — one round trip per remote per repository, which hangs without
+connectivity and can block on a credential prompt, so it is deliberately not part of an ordinary
+sweep:
 
 ```bash
 voom git-prune -n ~/projects              # what would be pruned
@@ -386,24 +395,39 @@ doing its job and exits `0`.
 
 A worktree checked out for a ticket and left after the merge keeps a full checkout — and a Bazel
 output base — on disk. `--remove-merged-worktrees` (on a sweep, or on `voom git-prune`) removes
-the ones whose work is already in the default branch:
+the ones whose work is already merged:
 
 ```bash
 voom -n --remove-merged-worktrees ~/code          # what would go
 voom --remove-merged-worktrees ~/code             # remove them; Bazel orphans go in the same run
 voom --remove-merged-worktrees --stale-worktrees 30d ~/code   # and unmerged ones idle for 30 days
+voom -n --remove-merged-worktrees --github-merged-worktrees ~ /tmp   # also prove squash/rebase merges
 ```
 
-A worktree is removed only when its `HEAD` is an ancestor of the default branch (the local
+Ordinarily a worktree is removed only when its `HEAD` is an ancestor of the default branch (the local
 `origin/HEAD`, else `main`/`master` — voom never fetches, so a stale ref errs toward keeping),
 it is not locked or the current directory, it is stored under a path you asked voom to sweep (one
 elsewhere on disk is reported and kept), and its working tree holds nothing but deleted tracked
 build output (a `dist/`, `target/`, `node_modules/` or `__pycache__/` at any depth, a top-level
-`build/` or `out/`) and ignored build-output trees such as `target/`. One with any
-modified, staged, untracked, or ignored non-build-output path — a `.env`, a local database — is
-reported as merged-with-local-changes and kept. Branches are never deleted. It is off by
+`build/` or `out/`) and ignored build-output trees such as `target/`. Ignored Elixir `deps/`
+also qualifies beside a real `mix.exs`, and Python `.venv/` beside a real `pyproject.toml`,
+`setup.py` or `setup.cfg`. These dependency candidates must be actual directories, not symlinks,
+and their sibling markers must be regular files, not symlinks; without that proof they keep the
+worktree as local changes. Any modified, staged or untracked path, or other ignored content
+such as a `.env` or local database, is reported as merged-with-local-changes and kept. Branches are never deleted. It is off by
 default and cannot be turned on from `voom.toml`, because unlike the rest of git housekeeping it
-can lose work.
+can lose work. `--clear-caches` does not imply it.
+
+For squash or rebase merges, add `--github-merged-worktrees` with
+`--remove-merged-worktrees` on a sweep or `git-prune`. It opts into network access through
+`gh api --hostname github.com` and accepts a merged pull request only when its head SHA exactly
+matches the worktree HEAD and its base repository matches `origin`. Any base branch qualifies,
+including release and integration branches. Missing authentication, network/API errors, unsupported
+remotes, and mismatched SHAs provide no merge proof; local ancestry remains the ordinary offline
+proof. All working-tree and containment checks still apply. Before any GitHub-proven HEAD
+is removed without local ancestry proof, voom retains it at `refs/voom/merged-worktrees/<SHA>`;
+a dry run writes no ref. Ignored evidence keeps the checkout, and voom neither archives that
+evidence nor force-removes submodule worktrees.
 
 `--stale-worktrees <DURATION>` widens that to unmerged worktrees that have gone quiet: nothing
 committed, checked out or rebased for the given time, some ref still reaching their `HEAD` (the

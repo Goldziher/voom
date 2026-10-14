@@ -313,6 +313,12 @@ impl Resolver {
 
         let mut clean_caches = accumulated.clean_caches.clone();
         clean_caches.extend(self.flags.clean_caches.iter().cloned());
+        let clear_all = clean_caches.iter().any(|id| id == "all");
+        if clear_all {
+            clean_caches.retain(|id| id != "all");
+            clean_caches.extend(crate::caches::CACHES.iter().map(|cache| cache.id.to_owned()));
+            clean_caches.push(crate::caches::BAZEL_ID.to_owned());
+        }
         clean_caches.sort_unstable();
         clean_caches.dedup();
         let unknown = crate::caches::unknown_ids(&clean_caches);
@@ -335,9 +341,14 @@ impl Resolver {
             git: self.flags.git.or(accumulated.git).unwrap_or(true),
             bazel: self.flags.bazel.or(accumulated.bazel).unwrap_or(true),
             bazel_max_age: self.flags.bazel_max_age.or(accumulated.bazel_max_age),
-            // `--clean-tagged`. Off by default: a tagged directory may carry any name, so
-            // nothing about a default run may depend on finding one (ADR 0013).
-            clean_tagged: self.flags.clean_tagged.or(accumulated.clean_tagged).unwrap_or(false),
+            // A full cache clear includes relocated tagged build output. Named cache ids do
+            // not widen the scan; an ordinary run still leaves tagged directories alone.
+            clean_tagged: self
+                .flags
+                .clean_tagged
+                .or_else(|| self.flags.clean_caches.iter().any(|id| id == "all").then_some(true))
+                .or(accumulated.clean_tagged)
+                .unwrap_or(clear_all),
             sources: accumulated.sources.clone(),
         })
     }

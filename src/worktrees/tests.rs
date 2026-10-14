@@ -51,6 +51,7 @@ fn prune_real(main: &Path, dry_run: bool) -> WorktreePruneResult {
         WorktreeOptions {
             dry_run,
             stale_after: None,
+            github_merged: false,
         },
     )
 }
@@ -184,6 +185,7 @@ fn should_keep_a_worktree_outside_every_scan_root() {
         WorktreeOptions {
             dry_run: false,
             stale_after: None,
+            github_merged: false,
         },
     );
 
@@ -229,6 +231,7 @@ fn should_handle_a_repository_reached_through_several_of_its_worktrees_once() {
         WorktreeOptions {
             dry_run: true,
             stale_after: None,
+            github_merged: false,
         },
     );
 
@@ -285,6 +288,7 @@ fn prune_stale(main: &Path, days: u64) -> WorktreePruneResult {
         WorktreeOptions {
             dry_run: false,
             stale_after: Some(Duration::from_secs(days * 86_400)),
+            github_merged: false,
         },
     )
 }
@@ -352,4 +356,171 @@ fn should_never_treat_a_detached_head_no_ref_reaches_as_stale() {
 
     assert_eq!(state_of(&result, &path).state, State::NotMerged);
     assert!(path.exists());
+}
+
+#[test]
+fn should_require_exact_merged_pull_head_and_base_repository() {
+    let head = "0123456789012345678901234567890123456789";
+    let response = serde_json::json!([{
+        "head": {"sha": head}, "merged_at": "2026-10-14T00:00:00Z",
+        "base": {"repo": {"full_name": "Goldziher/voom"}}
+    }]);
+    assert!(github::merged_response(response.to_string().as_bytes(), "Goldziher/voom", head).unwrap());
+    assert!(!github::merged_response(response.to_string().as_bytes(), "someone/voom", head).unwrap());
+    assert!(!github::merged_response(response.to_string().as_bytes(), "Goldziher/voom", "other").unwrap());
+    let mut closed = response;
+    closed[0]["merged_at"] = serde_json::Value::Null;
+    assert!(!github::merged_response(closed.to_string().as_bytes(), "Goldziher/voom", head).unwrap());
+}
+
+fn detached_ahead(main: &Path, name: &str) -> PathBuf {
+    let path = add_worktree(main, name);
+    std::fs::write(path.join("new.txt"), "work").unwrap();
+    run(&path, &["add", "new.txt"]);
+    run(&path, &["commit", "-q", "-m", "squashed work"]);
+    path
+}
+
+fn judge_hosted(main: &Path, path: &Path, dry_run: bool, proof: &Result<bool, String>) -> Worktree {
+    let entries = parse_listing(&git(main, &["worktree", "list", "--porcelain"]).unwrap());
+    let entry = entries.iter().find(|entry| entry.path == path).unwrap();
+    let (_, sha) = default_branch(main).unwrap();
+    judge(
+        entry,
+        main,
+        MergeProof {
+            default_sha: Some(&sha),
+            hosted_merge: &|_| proof.clone(),
+        },
+        &[main.parent().unwrap().to_path_buf()],
+        None,
+        WorktreeOptions {
+            dry_run,
+            stale_after: None,
+            github_merged: true,
+        },
+        &std::sync::Mutex::new(()),
+    )
+}
+
+#[test]
+fn should_remove_a_hosted_merged_detached_head_and_retain_its_commits() {
+    let (_fixture, main) = repository();
+    let path = detached_ahead(&main, "squashed");
+    let head = git(&path, &["rev-parse", "HEAD"]).unwrap();
+    let reference = format!("refs/voom/merged-worktrees/{}", head.trim());
+    let worktree = judge_hosted(&main, &path, false, &Ok(true));
+    assert_eq!(worktree.outcome, Some(Outcome::Removed));
+    assert!(!path.exists());
+    assert_eq!(git(&main, &["rev-parse", &reference]), Some(head));
+}
+
+#[test]
+fn should_not_write_retention_refs_during_a_hosted_merge_dry_run() {
+    let (_fixture, main) = repository();
+    let path = detached_ahead(&main, "squashed");
+    let worktree = judge_hosted(&main, &path, true, &Ok(true));
+    assert_eq!(worktree.outcome, Some(Outcome::WouldRemove));
+    assert!(path.exists());
+    assert_eq!(git(&main, &["for-each-ref", "refs/voom/"]).unwrap(), "");
+}
+
+#[test]
+fn should_keep_a_hosted_merged_worktree_with_local_or_ignored_work() {
+    for (name, contents) in [("notes.txt", "notes"), ("src.txt", "modified"), ("local.env", "secret")] {
+        let (_fixture, main) = repository();
+        std::fs::write(main.join(".gitignore"), "*.env\n").unwrap();
+        run(&main, &["add", ".gitignore"]);
+        run(&main, &["commit", "-q", "-m", "ignore"]);
+        let path = detached_ahead(&main, "squashed");
+        std::fs::write(path.join(name), contents).unwrap();
+        let worktree = judge_hosted(&main, &path, false, &Ok(true));
+        assert!(matches!(worktree.state, State::LocalChanges { .. }));
+        assert!(path.join(name).exists());
+        assert_eq!(git(&main, &["for-each-ref", "refs/voom/"]).unwrap(), "");
+    }
+}
+
+#[test]
+fn should_keep_a_worktree_when_hosted_merge_proof_fails() {
+    let (_fixture, main) = repository();
+    let path = detached_ahead(&main, "squashed");
+    let worktree = judge_hosted(&main, &path, false, &Err("network error".to_owned()));
+    assert_eq!(worktree.state, State::Unchecked("network error".to_owned()));
+    assert!(path.exists());
+}
+
+#[test]
+fn should_discard_marker_proven_ignored_dependencies_and_keep_unproven_trees() {
+    for (artifact, marker) in [
+        ("packages/elixir/deps", "mix.exs"),
+        ("packages/python/.venv", "pyproject.toml"),
+    ] {
+        for proven in [false, true] {
+            let (_fixture, main) = repository();
+            std::fs::write(main.join(".gitignore"), format!("{artifact}/\n")).unwrap();
+            let parent = main.join(artifact).parent().unwrap().to_path_buf();
+            std::fs::create_dir_all(&parent).unwrap();
+            if proven {
+                std::fs::write(parent.join(marker), "manifest").unwrap();
+            }
+            run(&main, &["add", "."]);
+            run(&main, &["commit", "-q", "-m", "ignore dependency"]);
+            let path = detached_ahead(&main, "squashed");
+            std::fs::create_dir_all(path.join(artifact)).unwrap();
+            std::fs::write(path.join(artifact).join("contents"), "dependency").unwrap();
+            let worktree = judge_hosted(&main, &path, false, &Ok(true));
+            if proven {
+                assert_eq!(worktree.outcome, Some(Outcome::Removed));
+                assert!(!path.exists());
+            } else {
+                assert!(matches!(worktree.state, State::LocalChanges { .. }));
+                assert!(path.join(artifact).exists());
+            }
+        }
+    }
+}
+
+#[test]
+fn should_refuse_a_head_changed_while_hosted_merge_proof_was_checked() {
+    let (_fixture, main) = repository();
+    let path = detached_ahead(&main, "squashed");
+    let entries = parse_listing(&git(&main, &["worktree", "list", "--porcelain"]).unwrap());
+    let entry = entries.iter().find(|entry| entry.path == path).unwrap();
+    let worktree = judge(
+        entry,
+        &main,
+        MergeProof {
+            default_sha: None,
+            hosted_merge: &|_| {
+                std::fs::write(path.join("new.txt"), "new work").unwrap();
+                run(&path, &["add", "new.txt"]);
+                run(&path, &["commit", "-q", "-m", "new work"]);
+                Ok(true)
+            },
+        },
+        &[main.parent().unwrap().to_path_buf()],
+        None,
+        WorktreeOptions {
+            github_merged: true,
+            ..WorktreeOptions::default()
+        },
+        &std::sync::Mutex::new(()),
+    );
+    assert!(matches!(worktree.state, State::Unchecked(_)));
+    assert!(path.exists());
+    assert_eq!(git(&main, &["for-each-ref", "refs/voom/"]).unwrap(), "");
+}
+
+#[test]
+fn should_keep_ignored_files_that_share_a_dependency_directory_name() {
+    for (name, marker) in [(".venv", "pyproject.toml"), ("deps", "mix.exs")] {
+        let fixture = tempfile::tempdir().unwrap();
+        std::fs::write(fixture.path().join(marker), "manifest").unwrap();
+        std::fs::write(fixture.path().join(name), "user data").unwrap();
+        assert_eq!(
+            classify_status_in(format!("!! {name}\0").as_bytes(), Some(fixture.path())),
+            (0, 1)
+        );
+    }
 }

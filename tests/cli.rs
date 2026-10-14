@@ -739,6 +739,87 @@ fn should_clean_only_the_named_caches() {
     );
 }
 
+#[test]
+#[cfg(unix)]
+fn should_include_relocated_tagged_builds_only_in_a_full_cache_clear() {
+    for flag in [
+        None,
+        Some("--clean-caches"),
+        Some("--clear-caches"),
+        Some("--clean-caches=all"),
+        Some("--clean-caches=cargo-registry"),
+    ] {
+        let home = TempDir::new().unwrap();
+        let targets = [
+            ".codex/targets/arbitrary-build",
+            ".codex/automations/review/runs/issue/target",
+            "repository/baseline-target",
+            "repository/release-target",
+        ];
+        for relative in targets {
+            let target = home.path().join(relative);
+            fs::create_dir_all(target.join("debug/.fingerprint")).unwrap();
+            fs::write(
+                target.join("CACHEDIR.TAG"),
+                b"Signature: 8a477f597d28d172789f06886806bc55\n",
+            )
+            .unwrap();
+        }
+        let invalid = home.path().join("saved-evidence");
+        fs::create_dir_all(&invalid).unwrap();
+        fs::write(invalid.join("CACHEDIR.TAG"), b"not a cache signature").unwrap();
+        let installed = home.path().join(".rustup/toolchains/example");
+        fs::create_dir_all(&installed).unwrap();
+        fs::write(
+            installed.join("CACHEDIR.TAG"),
+            b"Signature: 8a477f597d28d172789f06886806bc55\n",
+        )
+        .unwrap();
+        fs::write(home.path().join("voom.toml"), b"[tagged]\nenabled = false\n").unwrap();
+
+        let mut command = voom();
+        command.env("HOME", home.path()).args(["--no-bazel", "--no-git"]);
+        if let Some(flag) = flag {
+            command.arg(flag);
+        }
+        command.arg(home.path()).assert().success();
+
+        let full_clear = flag.is_some_and(|flag| !flag.ends_with("cargo-registry"));
+        for relative in targets {
+            assert_eq!(home.path().join(relative).exists(), !full_clear, "{flag:?}: {relative}");
+        }
+        assert!(invalid.exists(), "an invalid tag never proves a directory");
+        assert!(installed.exists(), "a full clear must not reopen installed toolchains");
+    }
+}
+
+#[test]
+fn should_require_worktree_cleanup_for_github_merge_lookups() {
+    use clap::Parser;
+    use voom::cli::{Cli, Command as CliCommand};
+
+    for arguments in [
+        vec!["voom", "--github-merged-worktrees"],
+        vec!["voom", "git-prune", "--github-merged-worktrees"],
+    ] {
+        assert!(Cli::try_parse_from(arguments).is_err());
+    }
+    let sweep = Cli::try_parse_from(["voom", "--remove-merged-worktrees", "--github-merged-worktrees"])
+        .expect("the sweep accepts both worktree options");
+    assert!(sweep.prune.github_merged_worktrees);
+    let prune = Cli::try_parse_from([
+        "voom",
+        "git-prune",
+        "--remove-merged-worktrees",
+        "--github-merged-worktrees",
+    ])
+    .expect("git-prune accepts both worktree options");
+    let Some(CliCommand::GitPrune(prune)) = prune.command else {
+        panic!("git-prune was parsed");
+    };
+    assert!(prune.github_merged_worktrees);
+}
+
 /// A mistyped id removes nothing and must fail rather than report success, which would be
 /// indistinguishable from an empty cache.
 #[test]

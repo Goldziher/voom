@@ -6,8 +6,9 @@
 //! for by name, and "merged" is never the whole test. A worktree is removed only when **all** of
 //! these hold:
 //!
-//! - its `HEAD` is an ancestor of the repository's default branch, so every commit is reachable
-//!   from somewhere else;
+//! - its `HEAD` is an ancestor of the repository's default branch, or an explicitly enabled
+//!   GitHub lookup proves that exact HEAD belongs to a merged pull request; commits proven only
+//!   by GitHub are retained under `refs/voom/merged-worktrees/` before removal;
 //! - its working tree holds nothing but deletions of tracked build output (a `dist/` that was
 //!   cleaned, at any depth; `build/` and `out/` only at the top level, where they are not source)
 //!   and ignored build-output trees (`target/`, `node_modules/`) anywhere; any modified, staged,
@@ -21,6 +22,7 @@
 //! stale ref errs toward keeping. `git worktree remove` does the removal and the branch is left
 //! alone: deleting a branch is a separate decision this module never makes.
 
+mod github;
 mod report;
 #[cfg(test)]
 mod tests;
@@ -52,13 +54,15 @@ const DEFAULT_BRANCH_FALLBACKS: &[&str] = &[
 ];
 
 /// What to do.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct WorktreeOptions {
     /// Report what would be removed without removing it.
     pub dry_run: bool,
     /// Also remove a worktree that is not merged but has been idle at least this long, provided
     /// its commits are reachable from another ref. `None` removes only merged worktrees.
     pub stale_after: Option<Duration>,
+    /// Also accept an exact HEAD match on a merged GitHub pull request via `gh`.
+    pub github_merged: bool,
 }
 
 /// Why a worktree was removed or kept.
@@ -246,11 +250,20 @@ fn examine(
     if let Some(main) = entries.first() {
         repository.repository.clone_from(&main.path);
     }
-    let Some((default_ref, default_sha)) = default_branch(&repository.repository) else {
+    let default = default_branch(&repository.repository);
+    if default.is_none() && !options.github_merged {
         repository.error = Some("no default branch found (origin/HEAD, main, master)".to_owned());
         return repository;
+    }
+    repository.default_branch = default.as_ref().map(|(name, _)| name.clone());
+    let github_repository = options
+        .github_merged
+        .then(|| github::repository(&repository.repository));
+    let hosted_merge = |head: &str| match &github_repository {
+        Some(Ok(name)) => github::merged(&repository.repository, name, head),
+        Some(Err(error)) => Err(error.clone()),
+        None => Ok(false),
     };
-    repository.default_branch = Some(default_ref);
 
     // Fanned out per worktree: ancestry is cheap and settles most of them, but a status over a
     // monorepo checkout with tens of thousands of changes is not, and one repository can own
@@ -265,7 +278,10 @@ fn examine(
             judge(
                 entry,
                 &repository.repository,
-                &default_sha,
+                MergeProof {
+                    default_sha: default.as_ref().map(|(_, sha)| sha.as_str()),
+                    hosted_merge: &hosted_merge,
+                },
                 roots,
                 current,
                 options,
@@ -277,10 +293,16 @@ fn examine(
     repository
 }
 
+#[derive(Clone, Copy)]
+struct MergeProof<'a> {
+    default_sha: Option<&'a str>,
+    hosted_merge: &'a (dyn Fn(&str) -> Result<bool, String> + Sync),
+}
+
 fn judge(
     entry: &Entry,
     main: &Path,
-    default_sha: &str,
+    merge_proof: MergeProof<'_>,
     roots: &[PathBuf],
     current: Option<&Path>,
     options: WorktreeOptions,
@@ -315,7 +337,17 @@ fn judge(
         worktree.state = State::Current;
         return worktree;
     }
-    let merged = match is_ancestor(main, &entry.head, default_sha) {
+    let ancestor = merge_proof
+        .default_sha
+        .map_or(Ok(false), |sha| is_ancestor(main, &entry.head, sha));
+    let locally_merged = ancestor.as_ref().is_ok_and(|merged| *merged);
+    let merged = match ancestor.and_then(|merged| {
+        if merged {
+            Ok(true)
+        } else {
+            (merge_proof.hosted_merge)(&entry.head)
+        }
+    }) {
         Ok(merged) => merged,
         Err(message) => {
             worktree.state = State::Unchecked(message);
@@ -343,9 +375,13 @@ fn judge(
         worktree.state = State::Unchecked("`git status` failed".to_owned());
         return worktree;
     };
-    let (discarded, changed) = classify_status(&status);
+    let (discarded, changed) = classify_status_in(&status, Some(&entry.path));
     if changed > 0 {
         worktree.state = State::LocalChanges { changed };
+        return worktree;
+    }
+    if !checkout_unchanged(entry, &canonical) {
+        worktree.state = State::Unchecked("worktree HEAD or path changed while checking it".to_owned());
         return worktree;
     }
     worktree.state = if merged {
@@ -356,14 +392,69 @@ fn judge(
     worktree.outcome = Some(if options.dry_run {
         Outcome::WouldRemove
     } else {
-        let _serialised = removal_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        remove(main, &entry.path, discarded > 0)
+        remove_checked(
+            entry,
+            main,
+            &canonical,
+            discarded > 0,
+            merged && !locally_merged,
+            removal_lock,
+        )
     });
     worktree
 }
 
+/// Rechecks a checkout under the repository lock and retains hosted-only commits before removal.
+fn remove_checked(
+    entry: &Entry,
+    main: &Path,
+    canonical: &Path,
+    force: bool,
+    retain_head: bool,
+    removal_lock: &std::sync::Mutex<()>,
+) -> Outcome {
+    let _serialised = removal_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    // A hosted query may have taken seconds. Revalidate the exact checkout and local work
+    // before removal, including when --force is needed for regenerable output.
+    let clean_now = git_bytes(
+        &entry.path,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=normal",
+            "--ignored=matching",
+        ],
+    )
+    .is_some_and(|status| classify_status_in(&status, Some(&entry.path)).1 == 0);
+    if !clean_now || !checkout_unchanged(entry, canonical) {
+        return Outcome::Failed("worktree HEAD or local changes changed before removal".to_owned());
+    }
+    if retain_head {
+        let reference = format!("refs/voom/merged-worktrees/{}", entry.head);
+        if git(main, &["update-ref", &reference, &entry.head]).is_none() {
+            return Outcome::Failed("could not retain worktree HEAD".to_owned());
+        }
+    }
+    if !checkout_unchanged(entry, canonical) {
+        return Outcome::Failed("worktree HEAD or path changed before removal".to_owned());
+    }
+    remove(main, &entry.path, force)
+}
+
+fn checkout_unchanged(entry: &Entry, canonical: &Path) -> bool {
+    std::fs::symlink_metadata(&entry.path).is_ok_and(|metadata| metadata.file_type().is_dir())
+        && entry.path.canonicalize().is_ok_and(|path| path == canonical)
+        && git(&entry.path, &["rev-parse", "HEAD"]).is_some_and(|head| head.trim() == entry.head)
+}
+
 /// Splits `git status --porcelain=v1 -z` into (deleted build output, everything else).
+#[cfg(test)]
 fn classify_status(status: &[u8]) -> (usize, usize) {
+    classify_status_in(status, None)
+}
+
+fn classify_status_in(status: &[u8], work_tree: Option<&Path>) -> (usize, usize) {
     let mut discarded = 0;
     let mut changed = 0;
     let mut fields = status.split(|byte| *byte == 0).filter(|field| !field.is_empty());
@@ -380,7 +471,10 @@ fn classify_status(status: &[u8]) -> (usize, usize) {
         }
         if index == b' ' && tree == b'D' && is_deleted_build_output(&path) {
             discarded += 1;
-        } else if index == b'!' && tree == b'!' && is_build_output(&path) {
+        } else if index == b'!'
+            && tree == b'!'
+            && (is_build_output(&path) || work_tree.is_some_and(|root| is_ignored_dependency(root, &path)))
+        {
             // An ignored build-output tree (target/, node_modules/) is regenerable and goes with
             // the worktree. Any other ignored file — a `.env`, a local database, notes — is not,
             // and keeps it.
@@ -390,6 +484,29 @@ fn classify_status(status: &[u8]) -> (usize, usize) {
         }
     }
     (discarded, changed)
+}
+
+/// Ignored dependency trees need their ecosystem marker; a directory name alone is not proof.
+fn is_ignored_dependency(root: &Path, path: &str) -> bool {
+    let relative = Path::new(path.trim_end_matches('/'));
+    if !relative
+        .components()
+        .all(|part| matches!(part, std::path::Component::Normal(_)))
+    {
+        return false;
+    }
+    if !std::fs::symlink_metadata(root.join(relative)).is_ok_and(|metadata| metadata.file_type().is_dir()) {
+        return false;
+    }
+    let markers: &[&str] = match relative.file_name().and_then(|name| name.to_str()) {
+        Some("deps") => &["mix.exs"],
+        Some(".venv") => &["pyproject.toml", "setup.py", "setup.cfg"],
+        _ => return false,
+    };
+    let Some(parent) = relative.parent() else { return false };
+    markers.iter().any(|marker| {
+        std::fs::symlink_metadata(root.join(parent).join(marker)).is_ok_and(|metadata| metadata.file_type().is_file())
+    })
 }
 
 /// Any path component naming build output. Used for an *ignored* tree, which is regenerable by

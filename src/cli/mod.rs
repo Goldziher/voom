@@ -173,6 +173,15 @@ pub struct PruneArgs {
     #[arg(long, help_heading = "Behaviour")]
     pub remove_merged_worktrees: bool,
 
+    /// With `--remove-merged-worktrees`, also recognize squash/rebase merges using exact HEAD
+    /// matches to merged GitHub PRs.
+    ///
+    /// Contacts github.com through `gh`; lookup failure keeps the checkout. The same clean
+    /// working-tree and containment checks apply. HEADs proved only by GitHub are retained under
+    /// `refs/voom/merged-worktrees/` before removal.
+    #[arg(long, requires = "remove_merged_worktrees", help_heading = "Behaviour")]
+    pub github_merged_worktrees: bool,
+
     /// With `--remove-merged-worktrees`, also remove worktrees that are not merged but have been
     /// idle at least this long, e.g. `30d`.
     ///
@@ -313,13 +322,15 @@ pub struct PruneArgs {
     pub include: Vec<String>,
 
     /// Remove named machine-global tool caches; with no ids, remove every cache the table
-    /// knows about.
+    /// knows about, and tagged build caches under the swept tree.
     ///
     /// Each is proven the way everything else is — by a marker the tool wrote inside the
     /// directory, at a location that names the tool — and a cache is never removed unless it
     /// lies under the tree being swept. A bare `--clean-caches` (also spelled
     /// `--clear-caches`) asks for the whole table, the same list `--clean-caches=all` names; the
-    /// ids form is `--clean-caches=uv,go-build`, repeatable for several. The `=` is required so
+    /// full clear also enables `--clean-tagged`, reaching relocated Cargo targets and other
+    /// build caches with valid tags. Named ids keep their narrower scope. The ids form is
+    /// `--clean-caches=uv,go-build`, repeatable for several. The `=` is required so
     /// the flag can never swallow the next path argument.
     ///
     /// Run `--list-caches` for the table, what each one costs to lose, and whether it exists
@@ -357,7 +368,8 @@ pub struct PruneArgs {
     /// Never on by default, for that same reason — it will take a directory of any name. voom
     /// verifies the tag's signature rather than trusting the filename, an anchored artifact still
     /// wins where both apply, and every keep policy and safety rail is unchanged. Also settable
-    /// as `[tagged] enabled = true` in `voom.toml`, which this flag overrides.
+    /// as `[tagged] enabled = true` in `voom.toml`. A full `--clean-caches` clear also enables
+    /// this; either flag overrides the configuration.
     #[arg(long, help_heading = "Selection")]
     pub clean_tagged: bool,
 
@@ -408,23 +420,6 @@ impl WatchArgs {
 }
 
 impl PruneArgs {
-    /// The ids a bare `--clean-caches` expands to: every cache the table knows about.
-    ///
-    /// A bare flag supplies the sentinel `all` (see the `default_missing_value` on the field),
-    /// which has no entry in the catalog and would otherwise be rejected as an unknown id. Named
-    /// ids pass through untouched, including an explicit `--clean-caches=all`.
-    #[must_use]
-    fn clean_caches_ids(&self) -> Vec<String> {
-        if self.clean_caches.iter().any(|id| id == "all") {
-            return crate::caches::CACHES
-                .iter()
-                .map(|cache| cache.id.to_owned())
-                .chain(std::iter::once(crate::caches::BAZEL_ID.to_owned()))
-                .collect();
-        }
-        self.clean_caches.clone()
-    }
-
     /// The Bazel housekeeping a sweep runs after the artifacts, or `None` when the resolved
     /// configuration (`--no-bazel`, `[bazel] enabled`) turned it off.
     ///
@@ -458,7 +453,7 @@ impl PruneArgs {
             keep: self.keep()?,
             exclude: self.exclude.clone(),
             include: self.include.clone(),
-            clean_caches: self.clean_caches_ids(),
+            clean_caches: self.clean_caches.clone(),
             clean_tagged: self.clean_tagged.then_some(true),
             // Only ever `Some(false)`: the flag can turn housekeeping off, and nothing turns it
             // on, because it is already on.

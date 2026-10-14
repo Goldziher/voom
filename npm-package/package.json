@@ -5,16 +5,7 @@
   "bin": {
     "voom": "bin/voom"
   },
-  "keywords": [
-    "clean",
-    "cleanup",
-    "build-artifacts",
-    "disk-space",
-    "monorepo",
-    "cli",
-    "prune",
-    "rust"
-  ],
+  "keywords": ["clean", "cleanup", "build-artifacts", "disk-space", "monorepo", "cli", "prune", "rust"],
   "author": "Na'aman Hirschfeld <nhirschfeld@gmail.com>",
   "license": "MIT",
   "repository": {
@@ -32,12 +23,7 @@
     "adm-zip": "^0.6.1",
     "tar": "^7.5.22"
   },
-  "files": [
-    "bin/",
-    "download.js",
-    "LICENSE",
-    "README.md"
-  ],
+  "files": ["bin/", "download.js", "LICENSE", "README.md"],
   "engines": {
     "node": ">=18"
   },

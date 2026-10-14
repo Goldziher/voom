@@ -197,3 +197,21 @@ voom would merely be repeating), and docker reports bytes with no path while the
 shrink at all, which would recreate precisely the accounting lie ADR 0007 was amended to kill. If
 anything ships here it is a `suggest`-style report: measure the store, say the apparent size is a
 cap, print the command, remove nothing.
+
+## Amendment — 2026-10-14: Full cache clearing includes tagged build caches
+
+A full `--clean-caches` / `--clear-caches` request, including `=all`, now enables the existing
+signature-verified tagged-directory mechanism. Requiring a second flag left relocated Cargo
+output and other tagged build caches behind after a command that asked to clear all caches.
+Named cache IDs remain scoped and do not enable tagged cleanup.
+
+This is a bundle opt-in, not a weakening of the default or the proof. An ordinary sweep still
+leaves tagged directories alone. `[caches] enable = ["all"]` supplies a tagged default in user
+or explicit configuration, while an explicit `[tagged] enabled = false` overrides that default.
+The full CLI cache-clear flag, like `--clean-tagged`, overrides configuration. No signature,
+containment, symlink, protected-path, keep-policy, dependency-pruning or dry-run rule changes.
+Worktree removal remains a separate explicit request.
+
+The scope is still the supplied scan roots: with no path, `.` is scanned. Home and temporary
+build caches require roots such as `voom -n --clear-caches ~ /tmp`; enabling the bundle does not
+turn a current-directory sweep into a whole-machine sweep.
