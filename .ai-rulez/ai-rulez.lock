@@ -1,0 +1,252 @@
+# ai-rulez.lock: pins remote includes, installed skills and authored content. Commit this file.
+# Refresh it with `ai-rulez lock`; `ai-rulez generate --locked` fails when it is stale.
+
+version = 1
+ai_rulez_version = '5.3.0'
+scope = 'all'
+tree = 'sha256:f67132e9e61d9b8700c49efb9cc09a0c1efe7a44247c05fe55e10a5e7bac692c'
+
+[[served]]
+name = 'build'
+source = ''
+commit = ''
+digest = 'sha256:d80febd2781744bd2c62355a399f64ae963ccd4c79ca4048bea8c1fc8dd4397e'
+
+[[served]]
+name = 'code-quality-standards'
+source = 'builtin://universal/code-quality/skills/code-quality-standards/SKILL.md'
+commit = ''
+digest = 'sha256:0126cc7c038b3e343ee56866949865dd799bde0de4884ba0bdfeb28655fa8134'
+
+[[served]]
+name = 'dependency-awareness'
+source = 'builtin://universal/security/skills/dependency-awareness/SKILL.md'
+commit = ''
+digest = 'sha256:e108ed344fe20948fcbda61b96266026bb9b2318df089964c088c0455294f8d3'
+
+[[served]]
+name = 'error-handling'
+source = 'builtin://universal/code-quality/skills/error-handling/SKILL.md'
+commit = ''
+digest = 'sha256:fddb5f980e8d98c91b459be578cdea7e0fc765d8219f66088892e936f0d1e349'
+
+[[served]]
+name = 'incremental-approach'
+source = 'builtin://universal/token-efficiency/skills/incremental-approach/SKILL.md'
+commit = ''
+digest = 'sha256:ff56cbdc4813ee427a3b6f7d23f6b41b82b7c3cc8dc2b64ccd256a90e75e02f8'
+
+[[served]]
+name = 'iterate'
+source = ''
+commit = ''
+digest = 'sha256:5cb87728d1449fadda6d8557501fcc0823509c60a37058ce4d2dda123296f67c'
+
+[[served]]
+name = 'owasp-quick-reference'
+source = 'builtin://universal/security/skills/owasp-quick-reference/SKILL.md'
+commit = ''
+digest = 'sha256:de4f3b595b88e88d7bff0c342b5253637d08d79b3baebe888bd465f133ff512c'
+
+[[served]]
+name = 'parallelize'
+source = ''
+commit = ''
+digest = 'sha256:2700d984ba10baa2e16ed19b48cc8fd5f7351776f2ce03f6712394d3912f91cb'
+
+[[served]]
+name = 'poly-check'
+source = ''
+commit = ''
+digest = 'sha256:7c53e887fd96203a4ac73feceaf9f1f609a0aee58042e867ad8a7f05c4a34577'
+
+[[served]]
+name = 'poly-fix'
+source = ''
+commit = ''
+digest = 'sha256:df05298cfa336fd440c006138e329b0f8f319dd107004aae1abbaf2309e85cca'
+
+[[served]]
+name = 'poly-lint-and-format'
+source = '.ai-rulez/skills/poly-lint-and-format/SKILL.md'
+commit = ''
+digest = 'sha256:99aafdada319ca0830246181276b1f9e9e5f475f0ce27f17c9abdd762cda7985'
+
+[[served]]
+name = 'poly-mcp'
+source = '.ai-rulez/skills/poly-mcp/SKILL.md'
+commit = ''
+digest = 'sha256:17641357caf5166710976c01fdbb02b523e0adebef439af5b6754b7200cd3397'
+
+[[served]]
+name = 'poly-orchestrator'
+source = '.ai-rulez/skills/poly-orchestrator/SKILL.md'
+commit = ''
+digest = 'sha256:193915ae34a190496eaaa0195d1f98dc8ef08924bc5baba774d06da3d12111de'
+
+[[served]]
+name = 'poly-overview'
+source = '.ai-rulez/skills/poly-overview/SKILL.md'
+commit = ''
+digest = 'sha256:3c631b94e4c57dc6d00dc0b5714c1697f9b9cc259b24a984e5464be95d9aafd6'
+
+[[served]]
+name = 'poly-tiers-and-scope'
+source = '.ai-rulez/skills/poly-tiers-and-scope/SKILL.md'
+commit = ''
+digest = 'sha256:e8327e21663236a0ea38d2ec58b86b5084d5bd54d116cdb3516649b2a559c4df'
+
+[[served]]
+name = 'rust-conventions'
+source = 'builtin://languages/rust/skills/rust-conventions/SKILL.md'
+commit = ''
+digest = 'sha256:0a7c23c09a7fc29a7237fc838ab1491504f51f8d90fc114b52c1d914bf52214d'
+
+[[served]]
+name = 'task-runner'
+source = 'builtin://universal/token-efficiency/skills/task-runner/SKILL.md'
+commit = ''
+digest = 'sha256:9f3cadda648798b049869c463d7a69f6f7b5953bcad2a43ea02e645d1ec3e19b'
+
+[[served]]
+name = 'test'
+source = ''
+commit = ''
+digest = 'sha256:0f95173e8cc1da22f421bfd8d45f0a58bff41e097a012c4600eff207f0c7062b'
+
+[[item]]
+kind = 'agent'
+id = 'catalog-author'
+path = 'agents/catalog-author.md'
+digest = 'sha256:ce9d7c9ba14b311f9fa1d45d0dbc41a39dab8963a59421486ea42d83b86dd256'
+
+[[item]]
+kind = 'agent'
+id = 'rust-perf-engineer'
+path = 'agents/rust-perf-engineer.md'
+digest = 'sha256:47dd27078e28ee63ba0c0e73679214c9f61a0106bfd2c97e787700e283a867c9'
+
+[[item]]
+kind = 'command'
+id = 'build'
+path = 'commands/build.md'
+digest = 'sha256:b0f061b0d6a47376cd0382dff9db50f176631a8b2e1eb6eb042a04bf3e00eb41'
+
+[[item]]
+kind = 'command'
+id = 'poly-check'
+path = 'commands/poly-check.md'
+digest = 'sha256:a221e77c59786231ac2ba1cc1a6012e4a8ea859364002aebe4a504868bf55278'
+
+[[item]]
+kind = 'command'
+id = 'poly-fix'
+path = 'commands/poly-fix.md'
+digest = 'sha256:644d3bfadd71f682cf3d71181a4be940c90adfc00c5298ac7d1c1f67f119cc0d'
+
+[[item]]
+kind = 'command'
+id = 'test'
+path = 'commands/test.md'
+digest = 'sha256:11f29289bf97476a61ce39c9194d057f22c6c9fecf33d44b31900b839409831f'
+
+[[item]]
+kind = 'context'
+id = 'architecture'
+path = 'context/architecture.md'
+digest = 'sha256:22969132dae3956ef9ec3af4f16d4fb1062da5a96a0f85480abf4b42b8282a03'
+
+[[item]]
+kind = 'context'
+id = 'artifact-catalog'
+path = 'context/artifact-catalog.md'
+digest = 'sha256:f8281a388618008f011e21d3f23029e949b41fe5a6c74b0795ebceca09a1d1d1'
+
+[[item]]
+kind = 'context'
+id = 'basemind-usage'
+path = 'context/basemind-usage.md'
+digest = 'sha256:fc7f699af8891c6f3fcd9101c6d08bf97d8066f18ac560a12d18af28f9660ccf'
+
+[[item]]
+kind = 'context'
+id = 'code-style'
+path = 'context/code-style.md'
+digest = 'sha256:b2a251d7f979209230f01eda2d7fe1018cd6f32c7931bc74bd85549977281b6a'
+
+[[item]]
+kind = 'context'
+id = 'poly'
+path = 'context/poly.md'
+digest = 'sha256:2f21dfefb0082fdf9a5b2ffc88c2673bdccd4968b77bf1f95c342762ed06819f'
+
+[[item]]
+kind = 'rule'
+id = 'agent-comms'
+path = 'rules/agent-comms.md'
+digest = 'sha256:534c9701453675760d6419f6f1aa7a8f2b64b0d1704184d2712a644911bb9b7e'
+
+[[item]]
+kind = 'rule'
+id = 'module-size-cap'
+path = 'rules/module-size-cap.md'
+digest = 'sha256:47436cd7582eb302421611173fb9928da440a05a754015837238711fc3ea7a28'
+
+[[item]]
+kind = 'rule'
+id = 'perf-discipline'
+path = 'rules/perf-discipline.md'
+digest = 'sha256:3f99d57a3c9bb19a23a1cb04b7ac25c7a50299c9c2a845e101aeb2ce8b624393'
+
+[[item]]
+kind = 'rule'
+id = 'release-versioning'
+path = 'rules/release-versioning.md'
+digest = 'sha256:836e9802add01e915bda42f14daaba5c696eda3c2e232019a3af099186889dd1'
+
+[[item]]
+kind = 'rule'
+id = 'safety-first'
+path = 'rules/safety-first.md'
+digest = 'sha256:e09217763e888175b5c49438021e2e5694b4b394f4a72f5492d182088797f584'
+
+[[item]]
+kind = 'rule'
+id = 'tdd-and-hooks'
+path = 'rules/tdd-and-hooks.md'
+digest = 'sha256:4f17fcdfbafd7e092edf4fe01855fa92fd4a804ba257d0caa325ffd8a43c87fc'
+
+[[item]]
+kind = 'settings'
+id = 'mcp-servers'
+digest = 'sha256:164b242694cf69aeff9f29f337f665eaf0a0f28edf3a12de6c52dce7e13170aa'
+
+[[item]]
+kind = 'skill'
+id = 'poly-lint-and-format'
+path = 'skills/poly-lint-and-format'
+digest = 'sha256:5eb441a7a607cbf552010433eadf020f918dcb08cedded96ebb98b885bd8cfd6'
+
+[[item]]
+kind = 'skill'
+id = 'poly-mcp'
+path = 'skills/poly-mcp'
+digest = 'sha256:25e6eede722be0216390aa21d5dcbb72efabbe4ace51eb10ccd16f97c9aa3276'
+
+[[item]]
+kind = 'skill'
+id = 'poly-orchestrator'
+path = 'skills/poly-orchestrator'
+digest = 'sha256:a0cc6efa0aed262eccd22c5050d9baf97d7e6b7b16690a7f9af14e3834e6b964'
+
+[[item]]
+kind = 'skill'
+id = 'poly-overview'
+path = 'skills/poly-overview'
+digest = 'sha256:94ba19d0ffb9d5dac5e8db4c81e60291a02f4879fe5f1284c59534345ff638c9'
+
+[[item]]
+kind = 'skill'
+id = 'poly-tiers-and-scope'
+path = 'skills/poly-tiers-and-scope'
+digest = 'sha256:383345f3b73fd01adaf3fc26bdd9f73f3eba7943ccfe84410394aa19c9430eec'

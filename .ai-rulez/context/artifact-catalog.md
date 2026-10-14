@@ -79,7 +79,7 @@ us nothing to write.
 
 Machine-global tool caches and installed toolchains (`~/.cargo/registry`, `~/.npm`, `~/.pyenv`,
 `~/google-cloud-sdk`) are likewise not catalog entries. They are excluded by *location* instead,
-in `CACHE_DIRS` (`src/caches.rs`), because marker anchoring cannot tell an installed program
+in `CACHE_DIRS` (`src/caches/mod.rs`), because marker anchoring cannot tell an installed program
 from a project that was built in place — an installed pnpm really does sit beside a real
 `package.json`. The skip is unconditional: nothing re-opens those locations, and a removable
 cache is reached by `--clean-caches[=<ids>]` or `[caches] enable`. That list is append-only for

@@ -1,0 +1,10 @@
+[[marketplaces]]
+name = "basemind"
+source = "Goldziher/basemind"
+type = "github"
+
+
+[[marketplaces]]
+name = "poly"
+source = "Goldziher/poly"
+type = "github"
