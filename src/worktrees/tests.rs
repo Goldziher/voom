@@ -383,7 +383,10 @@ fn detached_ahead(main: &Path, name: &str) -> PathBuf {
 
 fn judge_hosted(main: &Path, path: &Path, dry_run: bool, proof: &Result<bool, String>) -> Worktree {
     let entries = parse_listing(&git(main, &["worktree", "list", "--porcelain"]).unwrap());
-    let entry = entries.iter().find(|entry| entry.path == path).unwrap();
+    let entry = entries
+        .iter()
+        .find(|entry| entry.path.canonicalize().is_ok_and(|canonical| canonical == path))
+        .expect("the canonical worktree path is listed");
     let (_, sha) = default_branch(main).unwrap();
     judge(
         entry,
@@ -486,7 +489,10 @@ fn should_refuse_a_head_changed_while_hosted_merge_proof_was_checked() {
     let (_fixture, main) = repository();
     let path = detached_ahead(&main, "squashed");
     let entries = parse_listing(&git(&main, &["worktree", "list", "--porcelain"]).unwrap());
-    let entry = entries.iter().find(|entry| entry.path == path).unwrap();
+    let entry = entries
+        .iter()
+        .find(|entry| entry.path.canonicalize().is_ok_and(|canonical| canonical == path))
+        .expect("the canonical worktree path is listed");
     let worktree = judge(
         entry,
         &main,
