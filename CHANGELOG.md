@@ -9,6 +9,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-14
+
 ### Added
 
 - `--github-merged-worktrees`, with `--remove-merged-worktrees` on a sweep or `git-prune`,
@@ -680,6 +682,7 @@ nothing; this is the tool.
 - Size accounting sums allocated blocks, so on a copy-on-write filesystem such as APFS the bytes
   reported can exceed the space actually freed where files are shared between clones.
 
-[Unreleased]: https://github.com/Goldziher/voom/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Goldziher/voom/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/Goldziher/voom/compare/v0.9.1...v0.10.0
 [0.2.0]: https://github.com/Goldziher/voom/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Goldziher/voom/releases/tag/v0.1.0
