@@ -35,30 +35,98 @@ pub(super) fn parse_repository(origin: &str) -> Option<String> {
     Some(path.to_owned())
 }
 
-pub(super) fn merged(main: &Path, repository: &str, head: &str) -> Result<bool, String> {
+/// What GitHub says about a worktree's exact `HEAD`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Hosted {
+    /// A merged pull request in the origin repository has exactly this head.
+    Merged,
+    /// No merged pull request is associated with this `HEAD`.
+    NotMerged,
+    /// A pull request merged, but its head is not this commit: the branch was amended, rebased or
+    /// extended after the pull request, or this checkout holds commits GitHub never saw.
+    HeadDiffers {
+        /// The pull request's number.
+        pull: u64,
+    },
+}
+
+/// What a `gh api` call came back with.
+#[derive(Debug, PartialEq, Eq)]
+enum Reply {
+    Body(Vec<u8>),
+    /// HTTP 422 "No commit found for SHA": the commit exists only locally, so no pull request
+    /// can contain it. An answer, not a failure.
+    UnknownCommit,
+}
+
+pub(super) fn merged(main: &Path, repository: &str, head: &str, branch: Option<&str>) -> Result<Hosted, String> {
     if !matches!(head.len(), 40 | 64) || !head.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("worktree HEAD is not a commit SHA".to_owned());
     }
+    let reply = response(
+        &mut api(
+            main,
+            &format!("repos/{repository}/commits/{head}/pulls?per_page=100"),
+            &[],
+        ),
+        TIMEOUT,
+    )?;
+    let Reply::Body(body) = reply else {
+        // A commit GitHub has never seen cannot be the head of a merged pull request, but the
+        // branch it sits on may have been: squash-merged, then amended locally. One more lookup,
+        // by branch, only so the report can say so instead of a bare "not merged".
+        let Some(branch) = branch else {
+            return Ok(Hosted::NotMerged);
+        };
+        let owner = repository.split('/').next().unwrap_or_default();
+        let by_branch = response(
+            &mut api(
+                main,
+                &format!("repos/{repository}/pulls"),
+                &[
+                    "-f",
+                    "state=closed",
+                    "-f",
+                    &format!("head={owner}:{branch}"),
+                    "-f",
+                    "per_page=100",
+                ],
+            ),
+            TIMEOUT,
+        )?;
+        return match by_branch {
+            Reply::Body(body) => classify(&body, repository, head),
+            Reply::UnknownCommit => Ok(Hosted::NotMerged),
+        };
+    };
+    classify(&body, repository, head)
+}
+
+fn api(main: &Path, endpoint: &str, fields: &[&str]) -> Command {
     let mut command = Command::new("gh");
     command
         .current_dir(main)
-        .args([
-            "api",
-            "--hostname",
-            "github.com",
-            "--method",
-            "GET",
-            &format!("repos/{repository}/commits/{head}/pulls?per_page=100"),
-        ])
+        .args(["api", "--hostname", "github.com", "--method", "GET", endpoint])
+        .args(fields)
         .env("GH_PROMPT_DISABLED", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    let response = response(&mut command, TIMEOUT)?;
-    merged_response(&response, repository, head)
+    command
 }
 
-fn response(command: &mut Command, timeout: Duration) -> Result<Vec<u8>, String> {
+/// Whether a failed call's body is GitHub's 422 for a commit it does not have. `gh` prints the
+/// error document on stdout, so the body is the only signal that survives with stderr discarded.
+fn is_unknown_commit(body: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(body).is_ok_and(|error| {
+        error["status"].as_str() == Some("422")
+            && error["message"]
+                .as_str()
+                .is_some_and(|message| message.starts_with("No commit found for SHA"))
+    })
+}
+
+fn response(command: &mut Command, timeout: Duration) -> Result<Reply, String> {
     let mut child = command
         .spawn()
         .map_err(|error| format!("GitHub merge proof: {error}"))?;
@@ -83,12 +151,15 @@ fn response(command: &mut Command, timeout: Duration) -> Result<Vec<u8>, String>
                     .map_err(|_| "GitHub response reader timed out or failed".to_owned())?
                     .map_err(|error| format!("GitHub response: {error}"))?;
                 if !status.success() {
+                    if is_unknown_commit(&bytes) {
+                        return Ok(Reply::UnknownCommit);
+                    }
                     return Err("GitHub merge proof failed (gh authentication, API, or network error)".to_owned());
                 }
                 if bytes.len() as u64 > MAX_RESPONSE {
                     return Err("GitHub response exceeds the size limit".to_owned());
                 }
-                return Ok(bytes);
+                return Ok(Reply::Body(bytes));
             }
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
             Ok(None) => {
@@ -105,16 +176,25 @@ fn response(command: &mut Command, timeout: Duration) -> Result<Vec<u8>, String>
     }
 }
 
-pub(super) fn merged_response(response: &[u8], repository: &str, head: &str) -> Result<bool, String> {
+/// Reads a pull request list: exact merged head wins, a merged pull request with another head is
+/// reported as such, anything else is not merged. Only pull requests whose base is `repository`
+/// count, so a fork's pull request proves nothing here.
+pub(super) fn classify(response: &[u8], repository: &str, head: &str) -> Result<Hosted, String> {
     let pulls: Vec<serde_json::Value> =
         serde_json::from_slice(response).map_err(|_| "invalid GitHub pull request response".to_owned())?;
-    Ok(pulls.iter().any(|pull| {
-        pull["head"]["sha"].as_str() == Some(head)
-            && pull["merged_at"].as_str().is_some_and(|date| !date.is_empty())
+    let mut differing = None;
+    for pull in pulls.iter().filter(|pull| {
+        pull["merged_at"].as_str().is_some_and(|date| !date.is_empty())
             && pull["base"]["repo"]["full_name"]
                 .as_str()
                 .is_some_and(|base| base.eq_ignore_ascii_case(repository))
-    }))
+    }) {
+        if pull["head"]["sha"].as_str() == Some(head) {
+            return Ok(Hosted::Merged);
+        }
+        differing = differing.or(pull["number"].as_u64());
+    }
+    Ok(differing.map_or(Hosted::NotMerged, |pull| Hosted::HeadDiffers { pull }))
 }
 
 #[cfg(test)]
@@ -139,6 +219,66 @@ mod tests {
         ] {
             assert!(parse_repository(origin).is_none(), "{origin}");
         }
+    }
+
+    #[cfg(unix)]
+    fn replying(script: &str) -> Result<Reply, String> {
+        let mut command = Command::new("sh");
+        command.args(["-c", script]).stdout(Stdio::piped());
+        response(&mut command, Duration::from_secs(5))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn should_treat_a_commit_github_has_never_seen_as_an_answer_not_a_failure() {
+        let body = r#"{"message":"No commit found for SHA: abc","documentation_url":"x","status":"422"}"#;
+        assert_eq!(
+            replying(&format!("printf '%s' '{body}'; exit 1")),
+            Ok(Reply::UnknownCommit)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn should_still_fail_on_other_api_errors() {
+        for body in [
+            r#"{"message":"Bad credentials","status":"401"}"#,
+            r#"{"message":"Not Found","status":"404"}"#,
+            r#"{"message":"Validation Failed","status":"422"}"#,
+            "not json",
+        ] {
+            let error = replying(&format!("printf '%s' '{body}'; exit 1")).unwrap_err();
+            assert!(error.contains("authentication, API, or network"), "{body}: {error}");
+        }
+    }
+
+    #[test]
+    fn should_report_a_merged_pull_request_whose_head_is_not_the_checkout() {
+        let pull = |number: u64, sha: &str, base: &str| {
+            serde_json::json!({
+                "number": number, "head": {"sha": sha}, "merged_at": "2026-10-14T00:00:00Z",
+                "base": {"repo": {"full_name": base}}
+            })
+        };
+        let head = "0123456789012345678901234567890123456789";
+        let answer = |pulls: serde_json::Value| classify(pulls.to_string().as_bytes(), "Goldziher/voom", head).unwrap();
+
+        assert_eq!(
+            answer(serde_json::json!([pull(7, "other", "Goldziher/voom")])),
+            Hosted::HeadDiffers { pull: 7 }
+        );
+        assert_eq!(
+            answer(serde_json::json!([
+                pull(7, "other", "Goldziher/voom"),
+                pull(9, head, "Goldziher/voom")
+            ])),
+            Hosted::Merged,
+            "an exact head beats a differing one"
+        );
+        assert_eq!(
+            answer(serde_json::json!([pull(7, "other", "someone/voom")])),
+            Hosted::NotMerged
+        );
     }
 
     #[cfg(unix)]
