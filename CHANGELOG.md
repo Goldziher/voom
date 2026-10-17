@@ -9,6 +9,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`voom docker-prune`, and `--docker` on a sweep.** Removes dangling images, unused images older
+  than `--max-age` (default `7d`, mapped to `until=`) and idle build cache; with `--volumes` also
+  anonymous unmounted volumes, with `--volumes-all` all unmounted volumes. Never touches a
+  container or anything one uses. A dry run is the same plan with the commands withheld, and a real
+  run reports Docker's own reclaimed bytes. On Colima, Lima, Rancher Desktop and podman machine it
+  then runs `fstrim` in the VM and reports the host bytes returned. A missing docker or stopped
+  daemon is a one-line skip, never a failure. `[docker] enabled` / `max_age` set it from the user
+  config. See ADR 0017.
+
 ## [0.10.0] - 2026-10-14
 
 ### Added

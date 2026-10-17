@@ -50,6 +50,7 @@ fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
         Some(Command::Watch(args)) => watch(cli, args),
         Some(Command::GitPrune(args)) => git_prune(cli, args),
         Some(Command::ClaudePrune(args)) => claude_prune(args),
+        Some(Command::DockerPrune(args)) => docker_prune_command(args),
         None => prune(cli),
     }
 }
@@ -64,6 +65,18 @@ fn claude_prune(args: &voom::cli::ClaudePruneArgs) -> anyhow::Result<i32> {
     out.flush().context("flushing the report")?;
 
     Ok(result.exit_code())
+}
+
+/// `voom docker-prune`: Docker's disk space, run on its own. Never fails on docker's account.
+fn docker_prune_command(args: &voom::cli::DockerPruneArgs) -> anyhow::Result<i32> {
+    let options = args.to_docker_options()?;
+    let result = voom::docker::prune(&options);
+
+    let mut out = anstream::stdout().lock();
+    voom::cli::render_docker(&result, args, &mut out).context("writing the report")?;
+    out.flush().context("flushing the report")?;
+
+    Ok(exit::SUCCESS)
 }
 
 /// `voom git-prune`: git's own housekeeping, run on its own.
@@ -145,10 +158,14 @@ fn prune(cli: &Cli) -> anyhow::Result<i32> {
     // thing that feeds it — a removed worktree's output base is then an orphan in the same run —
     // so with that opt-in the Bazel stage keeps its place after the sweep.
     let overlap = !cli.prune.remove_merged_worktrees;
-    let (result, mut bazel) = std::thread::scope(|scope| {
+    //
+    // Docker is just as independent, and a prune is mostly waiting on a daemon, so it overlaps
+    // with everything.
+    let (result, mut bazel, docker) = std::thread::scope(|scope| {
         let early = overlap.then(|| scope.spawn(|| bazel_prune(cli, &options)));
+        let docker = scope.spawn(|| docker_prune(cli, &options));
         let result = voom::run::run(&options).context("scanning");
-        (result, early.map(std::thread::ScopedJoinHandle::join))
+        (result, early.map(std::thread::ScopedJoinHandle::join), docker.join())
     });
     let result = result?;
     let early_bazel = match bazel.take() {
@@ -171,11 +188,79 @@ fn prune(cli: &Cli) -> anyhow::Result<i32> {
         None => bazel_prune(cli, &options)?,
     };
     let bazel_code = report_bazel(cli, bazel.as_ref())?;
+    // A docker problem is a note on stderr and nothing more; it must not fail the sweep.
+    if let Some(docker) = docker.ok().and_then(Result::ok).flatten() {
+        report_docker(cli, &docker)?;
+    }
     let code = result.exit_code(cli.prune.exit_code);
     Ok([code, worktree_code, bazel_code]
         .into_iter()
         .find(|code| *code != exit::SUCCESS)
         .unwrap_or(exit::SUCCESS))
+}
+
+/// Docker's housekeeping, when `--docker` or `[docker] enabled` asked for it.
+fn docker_prune(
+    cli: &Cli,
+    run_options: &voom::run::RunOptions,
+) -> anyhow::Result<Option<voom::docker::DockerPruneResult>> {
+    let Some(resolved) = machine_config(run_options)? else {
+        return Ok(None);
+    };
+    Ok(cli
+        .prune
+        .docker_options(&resolved)
+        .map(|options| voom::docker::prune(&options)))
+}
+
+/// The machine-global configuration, decided once by the first scan root. `None` when there is no
+/// root.
+fn machine_config(
+    run_options: &voom::run::RunOptions,
+) -> anyhow::Result<Option<std::sync::Arc<voom::config::Resolved>>> {
+    let Some(root) = run_options.roots.first() else {
+        return Ok(None);
+    };
+    voom::run::resolver_for(root, run_options)
+        .and_then(|resolver| resolver.root_config())
+        .map(Some)
+        .context("resolving configuration")
+}
+
+/// Prints the Docker stage after the other reports. Silent when docker had nothing to say; a skip
+/// is one line on stderr, and JSON runs get a one-line summary there too so stdout stays a single
+/// document.
+fn report_docker(cli: &Cli, result: &voom::docker::DockerPruneResult) -> anyhow::Result<()> {
+    if let Some(skip) = &result.skipped {
+        writeln!(anstream::stderr(), "voom: docker: {} (skipped)", skip.reason)?;
+        return Ok(());
+    }
+    if !result.has_news() {
+        return Ok(());
+    }
+
+    match cli.prune.format {
+        voom::cli::Format::Human => {
+            let mut out = anstream::stdout().lock();
+            writeln!(out)?;
+            voom::docker::render_human(result, &mut out).context("writing the docker report")?;
+            out.flush().context("flushing the docker report")?;
+        }
+        voom::cli::Format::Json => {
+            let totals = result.totals();
+            writeln!(
+                anstream::stderr(),
+                "voom: docker: {} matched, {} bytes{}{}",
+                totals.candidates,
+                totals.bytes,
+                totals
+                    .host_bytes_returned
+                    .map_or_else(String::new, |bytes| format!(", {bytes} returned to the host")),
+                if result.dry_run { ", dry run" } else { "" }
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// Bazel's own housekeeping: stale output bases and caches, or everything under
@@ -185,12 +270,9 @@ fn bazel_prune(
     run_options: &voom::run::RunOptions,
 ) -> anyhow::Result<Option<voom::bazel::BazelPruneResult>> {
     // Machine-global, so decided once by the configuration at the first scan root.
-    let Some(root) = run_options.roots.first() else {
+    let Some(resolved) = machine_config(run_options)? else {
         return Ok(None);
     };
-    let resolved = voom::run::resolver_for(root, run_options)
-        .and_then(|resolver| resolver.root_config())
-        .context("resolving configuration")?;
     let Some(options) = cli.prune.bazel_options(&resolved) else {
         return Ok(None);
     };

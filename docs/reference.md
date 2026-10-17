@@ -19,6 +19,10 @@ The `Group` column matches `voom --help`'s own grouping.
 | Behaviour | `--stale-worktrees <DURATION>` | | off | With `--remove-merged-worktrees`, also remove unmerged worktrees idle at least this long (last commit, checkout or rebase), when a ref still reaches their `HEAD` and only deleted build output differs. Branches are kept; a detached `HEAD` nothing else reaches is never removed. |
 | Behaviour | `--no-bazel` | | off | Skip the Bazel housekeeping a sweep runs beside the artifacts: orphaned, abandoned and stale output bases, unused install bases, and downloads past the age limit. `--clear-caches` clears Bazel completely instead. |
 | Behaviour | `--bazel-max-age <DURATION>` | | `7d` | How long an output base may go unbuilt in, or a shared-cache download sit unused, before the sweep treats it as stale. |
+| Behaviour | `--docker` | | off | Also prune Docker beside the sweep: dangling images, unused images older than `--docker-max-age`, build cache idle that long, then trim the VM's disk (Colima, Lima, Rancher Desktop, podman machine). Never touches containers or anything a container uses. A missing docker or stopped daemon is one line on stderr. Also `[docker] enabled = true` (user config only). See ADR 0017. |
+| Behaviour | `--docker-max-age <DURATION>` | | `7d` | How old an unused Docker image or idle build-cache record must be, mapped to `until=` in whole hours. Also `[docker] max_age`. |
+| Behaviour | `--docker-volumes` | | off | With `--docker`, also remove anonymous volumes no container mounts. Volumes are data. Command line only. |
+| Behaviour | `--docker-volumes-all` | | off | With `--docker`, also remove every volume no container mounts, named ones included. |
 | Behaviour | `--no-git` | | off | Skip `git worktree prune` and `git gc --auto` in every repository walked. Also `[git] enabled = false`; the flag wins. |
 | Behaviour | `--force` | | off | Retry a failed removal, first clearing read-only bits (and, on macOS, the immutable flag) on paths already inside a proven artifact. Never relaxes a rail, follows a symlink, or touches the artifact's parent. A repair that does not go on to succeed is not undone. |
 | Behaviour | `--jobs <N>` | `-j` | every core | Worker threads for the walk, sizing and removal. Lower on spinning disks or network filesystems. |
@@ -50,6 +54,7 @@ The `Group` column matches `voom --help`'s own grouping.
 | `voom suggest [PATHS]` | Rank repeated directories a `.gitignore` names that the catalog does not cover. Removes nothing. Takes `--one-file-system[=BOOL]` and `-j`/`--jobs <N>`. Always exits `0`. |
 | `voom watch [PATHS]` | Keep a tree pruned continuously. `--debounce <DURATION>` (default `5s`), `--quiet-period <DURATION>` (default `60s`). Sweep flags come from the top-level arguments. |
 | `voom claude-prune [ROOTS]` | Age-gate and report Claude Code job scratch (`~/.claude/jobs/<id>/tmp`), removing nothing without `--remove`. `-n`/`--dry-run`, `--remove`, `--min-age <DURATION>` (default `14d`), `--force`, `--format <human\|json>`. Roots default to `~/.claude/jobs`. See ADR 0015. |
+| `voom docker-prune` | Reclaim Docker disk space on its own, then trim the VM and report host bytes returned. `-n`/`--dry-run`, `--max-age <DURATION>` (default `7d`), `--volumes`, `--volumes-all`, `--no-trim`, `--timeout <DURATION>` (default `15m`), `--format <human\|json>`. Always exits `0`; a docker that cannot be reached is a one-line skip. See ADR 0017. |
 | `voom git-prune [PATHS]` | Run git's own housekeeping on its own. `-n`/`--dry-run`, `--remotes`, `--remove-merged-worktrees`, `--timeout <DURATION>`, `--expire <TIME>` (default git's own three-month `gc.worktreePruneExpire`), `--format <human\|json>`. Exits `1` if a repository's housekeeping failed. |
 
 ## JSON output

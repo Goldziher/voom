@@ -45,6 +45,10 @@ pub struct Flags {
     pub bazel: Option<bool>,
     /// `--bazel-max-age`. `None` leaves the age to configuration.
     pub bazel_max_age: Option<std::time::Duration>,
+    /// `--docker`, as `Some(true)`. `None` leaves the decision to configuration.
+    pub docker: Option<bool>,
+    /// `--docker-max-age`. `None` leaves the age to configuration.
+    pub docker_max_age: Option<std::time::Duration>,
     /// `--clean-tagged`, as `Some(true)`. `None` leaves the decision to configuration.
     pub clean_tagged: Option<bool>,
 }
@@ -72,11 +76,17 @@ struct Accumulated {
     git: Option<bool>,
     bazel: Option<bool>,
     bazel_max_age: Option<std::time::Duration>,
+    docker: Option<bool>,
+    docker_max_age: Option<std::time::Duration>,
     clean_tagged: Option<bool>,
     sources: Vec<PathBuf>,
 }
 
 /// The configuration in effect at one point in the tree, with flags applied.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "these mirror command-line flags, which are bools by nature"
+)]
 #[derive(Debug, Clone)]
 pub struct Resolved {
     selection: Selection,
@@ -104,6 +114,11 @@ pub struct Resolved {
     /// How long an output base may go unbuilt in before the sweep treats it as stale. `None`
     /// means [`crate::bazel::DEFAULT_MAX_AGE`].
     pub bazel_max_age: Option<std::time::Duration>,
+    /// Whether an ordinary sweep prunes Docker (ADR 0017). Off unless something turned it on.
+    pub docker: bool,
+    /// How old an unused Docker image or idle build-cache record must be. `None` means
+    /// [`crate::docker::DEFAULT_MAX_AGE`].
+    pub docker_max_age: Option<std::time::Duration>,
     /// Whether a `CACHEDIR.TAG` alone proves an artifact here (ADR 0013). Off unless asked.
     pub clean_tagged: bool,
     /// The files that contributed, in ascending precedence.
@@ -341,6 +356,8 @@ impl Resolver {
             git: self.flags.git.or(accumulated.git).unwrap_or(true),
             bazel: self.flags.bazel.or(accumulated.bazel).unwrap_or(true),
             bazel_max_age: self.flags.bazel_max_age.or(accumulated.bazel_max_age),
+            docker: self.flags.docker.or(accumulated.docker).unwrap_or(false),
+            docker_max_age: self.flags.docker_max_age.or(accumulated.docker_max_age),
             // A full cache clear includes relocated tagged build output. Named cache ids do
             // not widen the scan; an ordinary run still leaves tagged directories alone.
             clean_tagged: self
@@ -377,8 +394,8 @@ fn apply(accumulated: &mut Accumulated, layer: &Layer) -> Result<()> {
         accumulated.git = Some(enabled);
     }
 
-    // `[bazel]` and `[caches]` drive removal outside the swept tree — machine-global Bazel
-    // output bases and tool caches. Only the user's own configuration or an explicit `--config`
+    // `[bazel]`, `[docker]` and `[caches]` drive removal outside the swept tree — machine-global
+    // Bazel output bases, Docker state and tool caches. Only the user's own configuration or an explicit `--config`
     // may set them; a repository's committed `voom.toml` cannot, so cloning a repository can
     // never let it clear the machine's caches or Bazel state. A repository that tries is a hard
     // error rather than a silent no-op, so the file and the behaviour never disagree.
@@ -392,6 +409,15 @@ fn apply(accumulated: &mut Accumulated, layer: &Layer) -> Result<()> {
                 reason: format!("`[bazel] max_age`: {error}"),
             })?);
         }
+        if let Some(enabled) = layer.file.docker.enabled {
+            accumulated.docker = Some(enabled);
+        }
+        if let Some(age) = &layer.file.docker.max_age {
+            accumulated.docker_max_age = Some(crate::policy::parse_duration(age).map_err(|error| Error::Config {
+                path: source.clone(),
+                reason: format!("`[docker] max_age`: {error}"),
+            })?);
+        }
         // Ids rather than paths, so nothing is expanded and nothing is per-directory: a cache is
         // machine-global and its location comes from the table, not from where the file sits.
         for id in &layer.file.caches.enable {
@@ -399,11 +425,13 @@ fn apply(accumulated: &mut Accumulated, layer: &Layer) -> Result<()> {
         }
     } else if layer.file.bazel.enabled.is_some()
         || layer.file.bazel.max_age.is_some()
+        || layer.file.docker.enabled.is_some()
+        || layer.file.docker.max_age.is_some()
         || !layer.file.caches.enable.is_empty()
     {
         return Err(Error::Config {
             path: source.clone(),
-            reason: "`[bazel]` and `[caches]` are machine-global and are read only from the user \
+            reason: "`[bazel]`, `[docker]` and `[caches]` are machine-global and are read only from the user \
                      configuration or `--config`, never from a repository's `voom.toml`"
                 .to_owned(),
         });
