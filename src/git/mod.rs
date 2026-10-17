@@ -350,6 +350,16 @@ impl Repository {
         }
     }
 
+    /// Whether git reported something it would remove: a stale worktree record or a gone remote
+    /// branch. The object census and a quiet `gc --auto` are not work, so a dry run that only
+    /// counted objects has nothing pending.
+    #[must_use]
+    pub fn has_pending_work(&self) -> bool {
+        self.steps.iter().any(|step| {
+            matches!(step.kind, StepKind::WorktreePrune | StepKind::RemotePrune) && step.summary().is_some()
+        })
+    }
+
     /// Whether this repository is worth a line in a *sweep's* report.
     ///
     /// A default sweep walks past every repository in a home directory and `gc --auto` is a
@@ -376,6 +386,8 @@ pub struct Totals {
     pub repositories: usize,
     /// Repositories whose housekeeping ran and succeeded.
     pub pruned: usize,
+    /// Of those, the repositories where git has something to remove.
+    pub would_prune: usize,
     /// Repositories passed over.
     pub skipped: usize,
     /// Repositories where a step failed or timed out.
@@ -405,7 +417,10 @@ impl GitPruneResult {
         };
         for repository in &self.repositories {
             match repository.status() {
-                Status::Pruned => totals.pruned += 1,
+                Status::Pruned => {
+                    totals.pruned += 1;
+                    totals.would_prune += usize::from(repository.has_pending_work());
+                }
                 Status::Skipped => totals.skipped += 1,
                 Status::Failed => totals.failed += 1,
             }
