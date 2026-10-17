@@ -49,6 +49,10 @@ pub struct Cache {
     /// expensive rather than merely slow — gigabytes that a metered or absent network cannot
     /// replace — so it is removed only by naming it.
     pub in_all: bool,
+    /// Whether the tool writes the cache read-only by design, as Go does its module cache.
+    /// Removal then restores the owner's bits inside it first — what the tool's own clean
+    /// command does (`go clean -modcache`) — instead of failing part-way unless `--force`.
+    pub read_only: bool,
 }
 
 impl Cache {
@@ -96,6 +100,7 @@ pub static CACHES: &[Cache] = &[
         markers: &["CACHEDIR.TAG"],
         note: "Crate sources and their index. Re-downloaded on the next build; needs network.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "cargo-git",
@@ -104,6 +109,7 @@ pub static CACHES: &[Cache] = &[
         markers: &["CACHEDIR.TAG"],
         note: "Checkouts of git dependencies. Re-cloned on the next build; needs network.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "uv",
@@ -112,6 +118,7 @@ pub static CACHES: &[Cache] = &[
         markers: &["CACHEDIR.TAG"],
         note: "Wheels and built distributions. `uv cache prune` removes only the stale part.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "gradle-caches",
@@ -120,6 +127,7 @@ pub static CACHES: &[Cache] = &[
         markers: &["CACHEDIR.TAG"],
         note: "Downloaded dependencies and build caches. The next build refetches them.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "go-build",
@@ -130,6 +138,7 @@ pub static CACHES: &[Cache] = &[
         markers: &["trim.txt"],
         note: "Compiled package objects. Rebuilt locally, no network needed.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "go-mod",
@@ -138,6 +147,7 @@ pub static CACHES: &[Cache] = &[
         markers: &["cache"],
         note: "Downloaded modules. `go clean -modcache` is the same thing; needs network after.",
         in_all: true,
+        read_only: true,
     },
     Cache {
         id: "npm",
@@ -146,6 +156,7 @@ pub static CACHES: &[Cache] = &[
         markers: &["content-v2", "index-v5"],
         note: "Content-addressed package tarballs. Refetched on the next install.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "pnpm",
@@ -154,6 +165,7 @@ pub static CACHES: &[Cache] = &[
         markers: &["lockfile-verified.jsonl"],
         note: "Registry metadata. The content-addressable store is `pnpm-store`.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "pub",
@@ -162,6 +174,7 @@ pub static CACHES: &[Cache] = &[
         markers: &["hosted-hashes"],
         note: "Downloaded packages. `dart pub get` refetches them; needs network.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "deno",
@@ -170,6 +183,7 @@ pub static CACHES: &[Cache] = &[
         markers: &["dep_analysis_cache_v2", "node_analysis_cache_v2"],
         note: "Fetched modules and analysis caches. Refetched on the next run; needs network.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "poly",
@@ -179,6 +193,7 @@ pub static CACHES: &[Cache] = &[
         note: "Lint and format results, hook staged snapshots and fetched remote sources. \
                Rebuilt on the next run.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "alef-global",
@@ -187,6 +202,7 @@ pub static CACHES: &[Cache] = &[
         markers: &["zig-hashes.json"],
         note: "Shared snippet build output and toolchain hashes. Rebuilt on the next run.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "pnpm-store",
@@ -205,6 +221,7 @@ pub static CACHES: &[Cache] = &[
                `node_modules` survive; the next install of anything not already linked refetches \
                it, and needs network.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "pip",
@@ -213,6 +230,7 @@ pub static CACHES: &[Cache] = &[
         markers: &["http-v2", "wheels", "selfcheck"],
         note: "Downloaded and locally built wheels. The next install refetches or rebuilds them.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "homebrew",
@@ -223,6 +241,7 @@ pub static CACHES: &[Cache] = &[
         note: "Bottles and API metadata already downloaded. `brew cleanup` removes only the \
                stale part; a reinstall or upgrade refetches the rest.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "prek",
@@ -231,6 +250,7 @@ pub static CACHES: &[Cache] = &[
         markers: &["config-tracking.json", "prek.log"],
         note: "Cloned hook repositories and their environments. Rebuilt on the next run; needs network.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "pre-commit",
@@ -239,6 +259,7 @@ pub static CACHES: &[Cache] = &[
         markers: &["db.db"],
         note: "Cloned hook repositories and their environments. Rebuilt on the next run; needs network.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "ms-playwright",
@@ -252,6 +273,7 @@ pub static CACHES: &[Cache] = &[
         note: "Downloaded browser builds. Playwright tests fail until `playwright install` fetches \
                them again; needs network.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "node-gyp",
@@ -264,6 +286,7 @@ pub static CACHES: &[Cache] = &[
         markers: &["*/installVersion"],
         note: "Node headers for native addon builds. Refetched by the next `node-gyp rebuild`; needs network.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "golangci-lint",
@@ -277,6 +300,7 @@ pub static CACHES: &[Cache] = &[
         markers: &["trim.txt"],
         note: "Analysis results. The next lint run is slow once, then warm again; no network needed.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "tree-sitter-language-pack",
@@ -288,6 +312,7 @@ pub static CACHES: &[Cache] = &[
         markers: &["*/.download.lock", "*/manifest.json"],
         note: "Downloaded parser bundles, one directory per release. Refetched on first use; needs network.",
         in_all: true,
+        read_only: false,
     },
     Cache {
         id: "huggingface",
@@ -299,6 +324,7 @@ pub static CACHES: &[Cache] = &[
         note: "Downloaded models and datasets, often gigabytes each, some gated or withdrawn. \
                Only removed when named; refetching needs network and may need a login.",
         in_all: false,
+        read_only: false,
     },
 ];
 
