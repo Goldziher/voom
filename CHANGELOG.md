@@ -29,9 +29,34 @@ All notable changes to this project are documented here. The format follows
   then runs `fstrim` in the VM and reports the host bytes returned. A missing docker or stopped
   daemon is a one-line skip, never a failure. `[docker] enabled` / `max_age` set it from the user
   config. See ADR 0017.
+- `voom git-prune --stale-worktrees <DURATION>`, as on a sweep.
+- A checkout whose `.git` file points at a git administration directory that no longer exists is
+  reported as `dangling` with its size, and never removed: nothing can prove it safe. See ADR 0016.
 
 ### Changed
 
+- **Sizing and removal walk through directory descriptors, many times faster.** Every directory is
+  opened with `openat` against its parent, and on macOS listed with `getattrlistbulk(2)` — names,
+  types, allocated sizes, link counts and inodes for a whole directory per call, instead of an
+  `fstatat` per entry. Sizing and removal default to I/O-sized pools (eight workers per core, up
+  to 128) rather than one per core. Over twenty Bazel output bases under two endpoint-security
+  agents the Bazel stage went from 440 s to 128 s, with sizes identical to `du` to the byte.
+- **Removal is parallel inside each artifact, single-pass, and bounded.** It is the same walk with
+  `unlinkat` in it, post-order, counting what it frees as it goes, so a Bazel output base is no
+  longer measured and then walked again to be deleted. Every removal shares one pool, sixteen
+  wide unless `-j` says otherwise: unlinking stops scaling well before reading does (100,000
+  files: `rm -rf` 58 s; voom 19 s on sixteen workers, 101 s on 128). It never crosses onto
+  another filesystem mounted inside an artifact, and keeps going past an entry it cannot remove.
+- **A Bazel output base is removed with its permissions repaired.** Bazel writes its outputs
+  read-only, so removal restored the owner's bits only under `--force`, and an orphaned base
+  without it failed part-way. Never the base's parent, never a hard-linked file.
+- **The Bazel stage is scoped to the swept trees.** `voom ~/code/worktrees` considers only output
+  bases whose workspace lies under it; what names no workspace (an unmarked base, install bases,
+  the download cache) only when a swept tree covers the home directory. `--clean-caches=bazel`
+  remains machine-wide.
+- **`--format json` is one document holding every stage.** The sweep's document gains `bazel`,
+  `docker` and `worktrees` keys (`null` when the stage did not run), where those stages used to
+  be one summary line each on stderr — a 200 GB Bazel finding was easy to miss there.
 - **Worktree cleanup says why it kept each worktree.** With `-v`, every kept worktree is listed
   with its reason (not merged into the default branch, locked, missing, outside the swept paths,
   current). A merged pull request whose head is not the checkout's `HEAD` (squash-merged, then
@@ -59,11 +84,6 @@ All notable changes to this project are documented here. The format follows
 - `claude-prune` says why a job is kept when `state.json` proves nothing: no file, not JSON, never
   finished (no `lastTerminalAt`, as for a job parked on a question), or an unreadable timestamp,
   where it said "no readable state.json" for all four. In JSON, `detail.reason` carries the code.
-### Added
-
-- `voom git-prune --stale-worktrees <DURATION>`, as on a sweep.
-- A checkout whose `.git` file points at a git administration directory that no longer exists is
-  reported as `dangling` with its size, and never removed: nothing can prove it safe. See ADR 0016.
 
 ### Fixed
 
