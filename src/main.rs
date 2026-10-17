@@ -172,7 +172,15 @@ fn prune(cli: &Cli) -> anyhow::Result<i32> {
         let early = overlap.then(|| scope.spawn(|| bazel_prune(cli, &options)));
         let docker = scope.spawn(|| docker_prune(cli, &options));
         let result = voom::run::run(&options).context("scanning");
-        (result, early.map(std::thread::ScopedJoinHandle::join), docker.join())
+        // The sweep is done; Bazel's removals may not be, and they can be most of a real run.
+        let waiting = (!options.dry_run && early.as_ref().is_some_and(|handle| !handle.is_finished()))
+            .then(|| voom::run::removal_progress(options.progress))
+            .flatten();
+        let joined = (result, early.map(std::thread::ScopedJoinHandle::join), docker.join());
+        if let Some(waiting) = waiting {
+            waiting.finish_and_clear();
+        }
+        joined
     });
     let result = result?;
     let early_bazel = match bazel.take() {
