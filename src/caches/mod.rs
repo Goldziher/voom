@@ -89,7 +89,9 @@ pub(crate) const CACHE_DIRS: &[&str] = &[
     "google-cloud-sdk",
     // Installed toolchains and tool extensions
     ".local/share/gh",
+    ".local/share/pnpm",
     "Library/Developer/Toolchains",
+    "Library/pnpm",
     // Editor and agent state
     ".antigravity",
     ".hermes",

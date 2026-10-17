@@ -11,6 +11,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Ten more tool caches**, each proven by a marker its tool writes: `pnpm-store` (the
+  content-addressable store, 20 GB on the machine that found it), `pip`, `homebrew`, `prek`,
+  `pre-commit`, `ms-playwright`, `node-gyp`, `golangci-lint`, `tree-sitter-language-pack` and
+  `huggingface`. A cache marker may now be a relative path (`v11/index.db`) or sit one directory
+  down (`*/installVersion`). `huggingface` is excluded from a bare `--clean-caches` because models
+  are expensive to fetch again; name it to remove it.
+- `--sizes`, for `--list-caches`. See Changed.
+- `claude-prune` reports an eligible job's scratch size in a dry run and in report-only mode, and
+  `bytes` in its JSON is no longer `null` there.
+
 - **`voom docker-prune`, and `--docker` on a sweep.** Removes dangling images, unused images older
   than `--max-age` (default `7d`, mapped to `until=`) and idle build cache; with `--volumes` also
   anonymous unmounted volumes, with `--volumes-all` all unmounted volumes. Never touches a
@@ -19,6 +29,20 @@ All notable changes to this project are documented here. The format follows
   then runs `fstrim` in the VM and reports the host bytes returned. A missing docker or stopped
   daemon is a one-line skip, never a failure. `[docker] enabled` / `max_age` set it from the user
   config. See ADR 0017.
+
+### Changed
+
+- **`--list-caches` no longer measures by default.** Sizing 70 GB took 11 to 21 seconds, to print a
+  table. The listing is now instant; `--sizes` adds the figures.
+- Directories the user may not read (`EPERM`/`EACCES`, the privacy-protected folders under
+  `~/Library` on macOS) are one footer line with a count instead of a list of walk errors; `-v`
+  lists them. A walk error's `path` is now filled in the JSON, which carried `null` and the path
+  only inside `detail`, and each has an `inaccessible` flag.
+- A directory read interrupted by a signal (`EINTR`) is walked again, up to three times, before it
+  is reported at all.
+- `claude-prune` says why a job is kept when `state.json` proves nothing: no file, not JSON, never
+  finished (no `lastTerminalAt`, as for a job parked on a question), or an unreadable timestamp,
+  where it said "no readable state.json" for all four. In JSON, `detail.reason` carries the code.
 
 ## [0.10.0] - 2026-10-14
 

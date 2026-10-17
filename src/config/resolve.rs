@@ -331,7 +331,12 @@ impl Resolver {
         let clear_all = clean_caches.iter().any(|id| id == "all");
         if clear_all {
             clean_caches.retain(|id| id != "all");
-            clean_caches.extend(crate::caches::CACHES.iter().map(|cache| cache.id.to_owned()));
+            clean_caches.extend(
+                crate::caches::CACHES
+                    .iter()
+                    .filter(|cache| cache.in_all)
+                    .map(|cache| cache.id.to_owned()),
+            );
             clean_caches.push(crate::caches::BAZEL_ID.to_owned());
         }
         clean_caches.sort_unstable();

@@ -218,3 +218,40 @@ for its own sake:
 - **`--clear-caches` is an accepted spelling of `--clean-caches`.** `clear` is the verb people
   reach for and grep for first; it is a clap `visible_alias`, so both spellings appear in help
   and behave identically. The deletion rails are untouched.
+
+## Amendment — the audit's missing 36 GB, and a listing that does not measure — 2026-10-17
+
+A dry-run audit of one macOS machine found about 36 GB of regenerable caches the table did not
+name, and `--list-caches` taking 11 to 21 seconds because it measured 70 GB to print a table.
+
+**New entries, each on a marker its tool writes:** `pnpm-store` (`v11/index.db`, `v10/index`,
+`v3/files`), `pip` (`http-v2`, `wheels`, `selfcheck`), `homebrew` (`.cleaned`,
+`all_commands_list.txt`), `prek` (`config-tracking.json`, `prek.log`), `pre-commit` (`db.db`),
+`ms-playwright` (`.links`), `node-gyp` (`*/installVersion`), `golangci-lint` (`trim.txt`),
+`tree-sitter-language-pack` (`*/.download.lock`, `*/manifest.json`) and `huggingface`
+(`hub/.locks`). Two mechanisms were needed. A marker may be a relative path or sit one level down
+behind `*/`, because pnpm and node-gyp keep their bookkeeping inside a version directory — the
+version directory alone would be exactly the shard-name proof this ADR refuses. `Library/pnpm`
+and `.local/share/pnpm` joined `CACHE_DIRS`: they hold pnpm's global installs beside the store,
+and the entry reaches the store by name without opening its neighbour.
+
+**`huggingface` is the first entry outside a bare `--clean-caches`** (`Cache::in_all`). Every other
+entry costs a re-download; models are gigabytes, some gated or withdrawn. It is scoped to `hub/`
+because its parent also holds the login token.
+
+**Not shipped, and why.** Chrome's cache (`~/Library/Caches/Google/Chrome`) carries no
+`CACHEDIR.TAG` or other marker the browser writes. puppeteer (`~/.cache/puppeteer`) holds only
+directories named for browsers, and those are installed programs. JetBrains
+(`~/Library/Caches/JetBrains`) has no fixed marker, and its per-product system directories hold
+Local History, which is work. `~/Library/Caches/uv-venvs` is a path chosen by the user's own
+tooling, not a tool's default, so no location names a tool; each virtualenv in it carries a
+`CACHEDIR.TAG`, which `--clean-tagged` already honours when the directory is a scan root.
+`ai-rulez`, `colima` and `liter-llm` hold hash- or version-named directories only.
+
+**`--list-caches` no longer measures.** The listing is instant; `--sizes` adds the figures, from
+the same sizer as the sweep. This reverses the 0.6.1 amendment's "how much disk it holds" default:
+measuring was the whole cost, and a table of paths answers "what is here" without it.
+
+**Bare `--clean-caches` and `=all` do not differ.** One audit pair disagreed by a 168 MB `target/`;
+that directory was created by a concurrent build between the two runs. A test now pins the two
+spellings to the same plan.
