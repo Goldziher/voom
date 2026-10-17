@@ -473,7 +473,11 @@ impl Guard {
             return Outcome::WouldRemove;
         }
 
-        match remove_in_pool(&verified, removal).0 {
+        let (result, counted) = remove_in_pool(&verified, removal);
+        if result.is_ok() && counted.is_none() {
+            note_freed(bytes);
+        }
+        match result {
             Ok(()) => Outcome::Removed,
             // A file vanishing between the walk and the removal is a race, not a failure: the
             // desired state was reached by someone else.
@@ -507,6 +511,9 @@ impl Guard {
         let Some(freed) = counted.or(before) else {
             return (Outcome::Removed, 0);
         };
+        if counted.is_none() && result.is_ok() {
+            note_freed(freed);
+        }
         match result {
             Ok(()) => (Outcome::Removed, freed),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => (Outcome::Refused(Refusal::Vanished), 0),
@@ -568,6 +575,21 @@ impl Guard {
             failure,
         }
     }
+}
+
+/// Bytes every removal in the process has freed so far, for a progress line.
+static FREED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Records bytes a removal has just freed.
+pub(crate) fn note_freed(bytes: u64) {
+    FREED.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Bytes every removal in this process has freed so far. Only ever grows; a progress line reads
+/// it while removals run, and nothing decides anything by it.
+#[must_use]
+pub fn freed_so_far() -> u64 {
+    FREED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// How many workers unlink at once when `-j` is not given, across every removal in the process.

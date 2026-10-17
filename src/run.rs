@@ -262,6 +262,7 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
                 force: options.force,
             };
             let started = Instant::now();
+            let progress = (!options.dry_run).then(|| removal_progress(options.progress)).flatten();
             let entries = remove_all(selected.to_remove, &guard, removal);
 
             // A covered artifact is only *covered* if the removal that was supposed to take it actually
@@ -290,6 +291,9 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
                 }
             }
             let retried = remove_all(uncovered, &guard, removal);
+            if let Some(progress) = progress {
+                progress.finish_and_clear();
+            }
             collected.delete += started.elapsed();
 
             Ok((entries, retried))
@@ -467,7 +471,11 @@ struct Selected {
 }
 
 /// Removes each artifact, in parallel, recording an outcome per artifact.
-fn remove_all(to_remove: Vec<(Finding, Measured)>, guard: &Guard, removal: Removal) -> Vec<Entry> {
+fn remove_all(mut to_remove: Vec<(Finding, Measured)>, guard: &Guard, removal: Removal) -> Vec<Entry> {
+    // Largest first. Unlinking is bounded by the machine rather than by voom, so the order is the
+    // one lever left on how soon space comes back: a 40 GB build cache goes before a thousand
+    // `__pycache__/`s. The report is sorted separately, so this is invisible in it.
+    to_remove.sort_by_key(|(_, measured)| std::cmp::Reverse(measured.bytes));
     to_remove
         .into_par_iter()
         .map(|(finding, measured)| {
@@ -481,6 +489,44 @@ fn remove_all(to_remove: Vec<(Finding, Measured)>, guard: &Guard, removal: Remov
             }
         })
         .collect()
+}
+
+/// A live count of the bytes removal has freed, across every stage of the process, or nothing
+/// when it would be noise.
+///
+/// Removal is the long stage of a real run — on a machine whose endpoint-security agents vet
+/// every unlink, tens of millions of files take hours — and a spinner alone says only that
+/// something is still happening.
+#[must_use]
+pub fn removal_progress(enabled: bool) -> Option<ProgressBar> {
+    if !enabled || !std::io::stderr().is_terminal() {
+        return None;
+    }
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_draw_target(ProgressDrawTarget::stderr());
+    spinner.enable_steady_tick(Duration::from_millis(120));
+    let ticker = spinner.clone();
+    let started = Instant::now();
+    std::thread::spawn(move || {
+        while !ticker.is_finished() {
+            let freed = crate::delete::freed_so_far();
+            let seconds = started.elapsed().as_secs_f64().max(1.0);
+            #[expect(
+                clippy::cast_precision_loss,
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a display rate, not a figure anything is decided by"
+            )]
+            let rate = (freed as f64 / seconds) as u64;
+            ticker.set_message(format!(
+                "removing — {} freed ({}/s)",
+                humansize::format_size(freed, humansize::DECIMAL),
+                humansize::format_size(rate, humansize::DECIMAL)
+            ));
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    });
+    Some(spinner)
 }
 
 /// A spinner for the scan phase, or nothing when it would be noise.

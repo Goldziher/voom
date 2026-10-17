@@ -268,6 +268,7 @@ impl Remover {
     fn count(&self, dev: u64, ino: u64, nlink: u64, bytes: u64) {
         if !self.seen.counted_inode(dev, ino, nlink) {
             self.freed.fetch_add(bytes, Ordering::Relaxed);
+            crate::delete::note_freed(bytes);
         }
     }
 
@@ -435,7 +436,10 @@ impl Remover {
             result => result,
         };
         match result {
-            Ok(()) => self.freed.fetch_add(sub.bytes, Ordering::Relaxed),
+            Ok(()) => {
+                crate::delete::note_freed(sub.bytes);
+                self.freed.fetch_add(sub.bytes, Ordering::Relaxed)
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
             Err(error) => {
                 self.fail(error);
