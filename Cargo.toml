@@ -65,11 +65,12 @@ tempfile = { version = "3.27", optional = true }
 thiserror = "2.0"
 toml = "1.1"
 
-# `chflags(2)` has no std route: `std::os::darwin::fs::MetadataExt::st_flags` reads the BSD
-# flags and nothing in std sets them, and `--force` has to clear UF_IMMUTABLE before it can
-# unlink. Target-gated so no other platform grows a dependency for it; libc is already compiled
-# on every build via dirs-sys, notify and mio, so this adds a manifest line, not a crate.
-[target.'cfg(target_vendor = "apple")'.dependencies]
+# The descriptor-relative walk in `src/tree` (`openat`, `fstatat`, `unlinkat`, and on Apple
+# platforms `getattrlistbulk(2)` and `fchflags(2)`) has no std route: std's `read_dir` resolves
+# every directory from its full path and stats every entry separately. Unix-only; libc is
+# already compiled on every build via dirs-sys, notify and mio, so this adds a manifest line,
+# not a crate.
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]

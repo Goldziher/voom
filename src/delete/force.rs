@@ -75,20 +75,25 @@ const BACKOFF: [Duration; 3] = [
 /// The sleeps block a rayon worker. That is bounded by [`BACKOFF`] and by how rare a failure is,
 /// and it only happens under `--force`, but it is a real cost on a tree with many held
 /// artifacts and a low `-j`.
-pub(super) fn remove(verified: &Verified, removal: Removal) -> std::io::Result<()> {
+///
+/// The second value is what the removal itself counted as freed across every attempt, where the
+/// platform's walk counts it (a directory on unix) — so a caller that has not measured the tree
+/// beforehand still learns what it took. `None` means only the caller's own measurement knows.
+pub(super) fn remove(verified: &Verified, removal: Removal) -> (std::io::Result<()>, Option<u64>) {
     let mut repaired = false;
     let mut attempt = 0;
+    let mut freed: Option<u64> = None;
 
     loop {
         let result = if verified.is_dir {
-            std::fs::remove_dir_all(verified.canonical())
+            remove_dir(verified.canonical(), removal.force, &mut freed)
         } else {
             std::fs::remove_file(verified.canonical())
         };
 
-        let Err(error) = result else { return Ok(()) };
+        let Err(error) = result else { return (Ok(()), freed) };
         if !removal.force {
-            return Err(error);
+            return (Err(error), freed);
         }
 
         match error.kind() {
@@ -103,7 +108,7 @@ pub(super) fn remove(verified: &Verified, removal: Removal) -> std::io::Result<(
             // coming out at once, and not reproducible against any of them alone.
             std::io::ErrorKind::DirectoryNotEmpty => {
                 let Some(wait) = BACKOFF.get(attempt) else {
-                    return Err(error);
+                    return (Err(error), freed);
                 };
                 std::thread::sleep(*wait);
                 attempt += 1;
@@ -117,7 +122,7 @@ pub(super) fn remove(verified: &Verified, removal: Removal) -> std::io::Result<(
             // them alone.
             _ if RemovalFailure::from_io(&error).kind() == FailureKind::Exhausted => {
                 let Some(wait) = BACKOFF.get(attempt) else {
-                    return Err(error);
+                    return (Err(error), freed);
                 };
                 std::thread::sleep(*wait);
                 attempt += 1;
@@ -129,9 +134,23 @@ pub(super) fn remove(verified: &Verified, removal: Removal) -> std::io::Result<(
                 repair(verified.canonical());
                 repaired = true;
             }
-            _ => return Err(error),
+            _ => return (Err(error), freed),
         }
     }
+}
+
+/// One attempt at a directory: on unix the descriptor-relative parallel walk in `crate::tree`,
+/// which repairs inline under `--force` and counts what it unlinks; elsewhere `std`'s.
+#[cfg(unix)]
+fn remove_dir(path: &Path, force: bool, freed: &mut Option<u64>) -> std::io::Result<()> {
+    let removed = crate::tree::remove_dir(path, force);
+    *freed = Some(freed.unwrap_or(0) + removed.freed);
+    removed.error.map_or(Ok(()), Err)
+}
+
+#[cfg(not(unix))]
+fn remove_dir(path: &Path, _force: bool, _freed: &mut Option<u64>) -> std::io::Result<()> {
+    std::fs::remove_dir_all(path)
 }
 
 /// Clears what stops an unlink *inside* an artifact that has already passed every rail.

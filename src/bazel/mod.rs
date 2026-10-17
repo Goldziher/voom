@@ -28,7 +28,6 @@ pub use report::{document, render_human, render_json};
 
 use crate::delete::{Guard, Outcome, Removal};
 use crate::error::Result;
-use crate::size::measure_fully;
 
 /// The JSON shape's version, versioned separately from the sweep's because it is a separate
 /// document sharing only the envelope.
@@ -374,7 +373,7 @@ pub fn prune(options: &BazelPruneOptions) -> Result<BazelPruneResult> {
     // by a removal: latency-bound work that serial execution leaves the disk idle for. The
     // install bases wait for the output bases only because they ask which of them survived. The
     // shared cache is separate from both and runs beside them.
-    let pool = build_pool(options.jobs)?;
+    let pool = crate::run::build_pool(options.jobs)?;
     let (mut found, cache_found) = pool.install(|| {
         rayon::join(
             || {
@@ -418,15 +417,6 @@ pub fn prune(options: &BazelPruneOptions) -> Result<BazelPruneResult> {
         dry_run: options.dry_run,
         elapsed: started.elapsed(),
     })
-}
-
-/// Builds the scoped worker pool for the fan-out, as `run.rs` does for the sweep.
-fn build_pool(jobs: Option<usize>) -> Result<rayon::ThreadPool> {
-    let jobs = jobs.map_or(0, |jobs| jobs.max(1));
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(jobs)
-        .build()
-        .map_err(|source| crate::error::Error::ThreadPool { jobs, source })
 }
 
 /// One root's immediate subdirectories, with `install/` expanded one level: its children are
@@ -494,8 +484,12 @@ fn finish_removal(path: PathBuf, state: OutputBaseState, guard: &Guard, removal:
             outcome: None,
         };
     }
-    let measured = measure_fully(&path);
-    let outcome = guard.remove(&path, measured.bytes, removal);
+    // Bazel writes its outputs read-only by design — `bazel clean` restores the owner's bits
+    // before it unlinks — so a base is always removed with the same repair, which `--force`
+    // would otherwise gate. It changes nothing a rail decides and never reaches the base's
+    // parent.
+    let removal = Removal { force: true, ..removal };
+    let (outcome, bytes) = guard.reclaim(&path, removal);
     if matches!(outcome, Outcome::Removed)
         && let Some(owner) = state.owner()
     {
@@ -504,7 +498,7 @@ fn finish_removal(path: PathBuf, state: OutputBaseState, guard: &Guard, removal:
     OutputBase {
         path,
         state,
-        bytes: Some(measured.bytes),
+        bytes: Some(bytes),
         outcome: Some(outcome),
     }
 }
