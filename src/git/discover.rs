@@ -20,7 +20,7 @@ use ignore::{WalkBuilder, WalkState};
 
 use super::{DOT_GIT, GitPruneOptions, Skipped};
 use crate::caches::CacheRoots;
-use crate::classify::is_dependency_dir;
+use crate::classify::{Classifier, Selection, Verdict, is_dependency_dir};
 use crate::delete::{PROTECTED_PATHS, paths_equal};
 use crate::scan::NEVER_DESCEND;
 
@@ -79,6 +79,10 @@ fn walk(root: &Path, options: &GitPruneOptions, into: &mut Vec<PathBuf>) {
     // Shared by reference: every worker asks the same set, and `&CacheRoots` is `Copy`, which is
     // what lets the per-thread visitor be a `move` closure without cloning the set per thread.
     let caches = &caches;
+    // The sweep's own classifier, so the walk prunes build output exactly where a sweep would
+    // remove it: a `target/` is skipped only beside the marker that proves it.
+    let classifier = Classifier::new(Selection::all()).expect("the catalog compiles");
+    let classifier = &classifier;
     let (sender, receiver) = std::sync::mpsc::channel();
 
     let mut builder = WalkBuilder::new(root);
@@ -105,27 +109,90 @@ fn walk(root: &Path, options: &GitPruneOptions, into: &mut Vec<PathBuf>) {
                 return WalkState::Continue;
             };
             let path = entry.path();
-            let file_type = entry.file_type();
-            let is_symlink = file_type.is_some_and(|file_type| file_type.is_symlink());
-
-            if let Some(work_tree) = repository_at(entry.file_name(), path, is_symlink) {
-                let _ = sender.send(work_tree.to_path_buf());
-                // A repository inside a repository is a submodule, and is reached through its
-                // own `.git` file rather than by walking the superproject's object store.
-                return WalkState::Skip;
-            }
-            if !file_type.is_some_and(|file_type| file_type.is_dir()) {
+            if !entry.file_type().is_some_and(|file_type| file_type.is_dir()) {
                 return WalkState::Continue;
             }
             if options.exclude.matched(path).is_some() || caches.contains(path) || is_pruned(entry.file_name()) {
                 return WalkState::Skip;
             }
-            WalkState::Continue
+            if entry.depth() > 0 && matches!(classifier.classify(root, path, true), Verdict::Artifact(_)) {
+                return WalkState::Skip;
+            }
+            match probe(path) {
+                Probe::None => WalkState::Continue,
+                Probe::Repository => {
+                    let _ = sender.send(path.to_path_buf());
+                    WalkState::Continue
+                }
+                // Reported, but its checkout is not searched: it shares the main repository's
+                // object store, so everything housekeeping needs is already known, and a
+                // monorepo checkout holds more files than every other directory put together.
+                Probe::LinkedWorktree => {
+                    let _ = sender.send(path.to_path_buf());
+                    WalkState::Skip
+                }
+            }
         })
     });
 
     drop(sender);
     into.extend(receiver);
+}
+
+/// What a directory's `.git` says about it.
+enum Probe {
+    /// No repository here.
+    None,
+    /// A main repository, a submodule or a `--separate-git-dir` checkout: its interior can hold
+    /// further repositories, so the walk continues.
+    Repository,
+    /// A linked worktree, which the walk reports and does not enter.
+    LinkedWorktree,
+}
+
+/// Classifies the `.git` entry of `dir` with one `lstat`, and one bounded read for a file.
+///
+/// A symlinked `.git` is not followed, for the same reason nothing else in voom is.
+fn probe(dir: &Path) -> Probe {
+    let dot_git = dir.join(DOT_GIT);
+    let Ok(metadata) = std::fs::symlink_metadata(&dot_git) else {
+        return Probe::None;
+    };
+    if metadata.file_type().is_dir() {
+        return Probe::Repository;
+    }
+    if !metadata.file_type().is_file() {
+        return Probe::None;
+    }
+    let linked = crate::io::read_capped_text(&dot_git, CONTROL_FILE_MAX_BYTES)
+        .and_then(|contents| {
+            contents.lines().find_map(|line| {
+                line.trim()
+                    .strip_prefix("gitdir:")
+                    .map(|gitdir| PathBuf::from(gitdir.trim()))
+            })
+        })
+        .is_some_and(|gitdir| is_linked_gitdir(&gitdir, dir));
+    if linked {
+        Probe::LinkedWorktree
+    } else {
+        Probe::Repository
+    }
+}
+
+/// Whether a `gitdir:` target is a linked worktree's private directory.
+///
+/// Only a hint for the walk, never an identity: [`locate`] still reads `commondir` before voom
+/// acts on anything. A directory whose parent is named `worktrees` is the default layout, and a
+/// `commondir` file is what git writes for every layout, including a worktree whose
+/// administration has since been deleted along with its parent.
+fn is_linked_gitdir(gitdir: &Path, work_tree: &Path) -> bool {
+    let absolute = if gitdir.is_absolute() {
+        gitdir.to_path_buf()
+    } else {
+        work_tree.join(gitdir)
+    };
+    absolute.parent().and_then(Path::file_name) == Some(OsStr::new("worktrees")) || absolute.join("commondir").is_file()
 }
 
 /// Whether a directory is one the discovery walk never enters.
@@ -669,6 +736,109 @@ mod tests {
         assert!(
             matches!(&resolved[..], [Resolution::Refused(_, Skipped::EscapesRoot)]),
             "{resolved:?}"
+        );
+    }
+
+    fn discovered(root: &Path) -> Vec<PathBuf> {
+        let mut found = repositories(&GitPruneOptions {
+            roots: vec![root.to_path_buf()],
+            ..GitPruneOptions::default()
+        });
+        found.sort();
+        found
+    }
+
+    /// A linked worktree's `.git` file, as `git worktree add` writes it.
+    fn link_worktree(fixture: &Path, main: &str, name: &str, checkout: &str) {
+        let private = fixture.join(main).join(".git/worktrees").join(name);
+        std::fs::create_dir_all(&private).expect("the private directory");
+        std::fs::write(private.join("commondir"), "../..\n").expect("a commondir file");
+        std::fs::create_dir_all(fixture.join(checkout)).expect("the checkout");
+        std::fs::write(
+            fixture.join(checkout).join(".git"),
+            format!("gitdir: {}\n", private.display()),
+        )
+        .expect("the .git file");
+    }
+
+    #[test]
+    fn should_find_a_repository_nested_inside_another() {
+        let fixture = tree(&["outer/.git/HEAD", "outer/vendored/inner/.git/HEAD", "outer/src/main.rs"]);
+
+        assert_eq!(
+            discovered(fixture.path()),
+            vec![
+                fixture.path().join("outer"),
+                fixture.path().join("outer/vendored/inner")
+            ]
+        );
+    }
+
+    #[test]
+    fn should_not_walk_into_a_linked_worktrees_checkout() {
+        let fixture = tree(&[
+            "main/.git/HEAD",
+            "main/src.txt",
+            "feature/nested/.git/HEAD",
+            "feature/src.txt",
+        ]);
+        link_worktree(fixture.path(), "main", "feature", "feature");
+
+        assert_eq!(
+            discovered(fixture.path()),
+            vec![fixture.path().join("feature"), fixture.path().join("main")],
+            "the checkout is reported, its interior is not searched"
+        );
+    }
+
+    #[test]
+    fn should_report_a_linked_worktree_whose_administration_is_gone() {
+        let fixture = tree(&["stray/nested/.git/HEAD"]);
+        std::fs::write(
+            fixture.path().join("stray/.git"),
+            format!(
+                "gitdir: {}\n",
+                fixture.path().join("gone/.git/worktrees/stray").display()
+            ),
+        )
+        .expect("the .git file");
+
+        assert_eq!(discovered(fixture.path()), vec![fixture.path().join("stray")]);
+    }
+
+    #[test]
+    fn should_still_walk_into_a_submodule_checkout() {
+        let fixture = tree(&[
+            "super/.git/HEAD",
+            "super/sub/inner/.git/HEAD",
+            "super/.git/modules/sub/HEAD",
+        ]);
+        std::fs::write(fixture.path().join("super/sub/.git"), "gitdir: ../.git/modules/sub\n").expect("the .git file");
+
+        assert_eq!(
+            discovered(fixture.path()),
+            vec![
+                fixture.path().join("super"),
+                fixture.path().join("super/sub"),
+                fixture.path().join("super/sub/inner")
+            ]
+        );
+    }
+
+    /// Pruning an artifact directory needs the same proof the sweep demands: `target/` beside a
+    /// `Cargo.toml` is build output, a bare `target/` is somebody's directory and is searched.
+    #[test]
+    fn should_prune_proven_artifact_directories_and_search_unproven_ones() {
+        let fixture = tree(&[
+            "crate/Cargo.toml",
+            "crate/target/debug/clone/.git/HEAD",
+            "loose/target/clone/.git/HEAD",
+            "app/node_modules/pkg/.git/HEAD",
+        ]);
+
+        assert_eq!(
+            discovered(fixture.path()),
+            vec![fixture.path().join("loose/target/clone")]
         );
     }
 }
