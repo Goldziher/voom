@@ -128,12 +128,24 @@ pub fn run(options: &RunOptions) -> Result<RunResult> {
 /// # Errors
 ///
 /// [`Error::ThreadPool`] if the pool cannot be built.
-fn build_pool(jobs: Option<usize>) -> Result<rayon::ThreadPool> {
-    let jobs = jobs.map_or(0, |jobs| jobs.max(1));
+pub(crate) fn build_pool(jobs: Option<usize>) -> Result<rayon::ThreadPool> {
+    let jobs = jobs.map_or_else(io_threads, |jobs| jobs.max(1));
     rayon::ThreadPoolBuilder::new()
         .num_threads(jobs)
         .build()
         .map_err(|source| Error::ThreadPool { jobs, source })
+}
+
+/// How many workers size and remove when `-j` is not given.
+///
+/// Sizing and removal are a `getattrlistbulk` or `unlinkat` per directory and spend their time
+/// waiting on the filesystem, so a worker per core leaves it idle between requests — the same
+/// argument the walk makes for oversubscribing (`scan::walker_threads`). Measured over twenty
+/// Bazel output bases under two endpoint-security agents: 334 s on eighteen workers, 162 s on
+/// sixty-four, 143 s on a hundred and twenty-eight.
+fn io_threads() -> usize {
+    let cores = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
+    (cores * 8).clamp(8, 128)
 }
 
 /// Resolves the roots to their real locations, drops duplicates, and drops any root that sits

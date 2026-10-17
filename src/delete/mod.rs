@@ -473,12 +473,62 @@ impl Guard {
             return Outcome::WouldRemove;
         }
 
-        match force::remove(&verified, removal) {
+        match force::remove(&verified, removal).0 {
             Ok(()) => Outcome::Removed,
             // A file vanishing between the walk and the removal is a race, not a failure: the
             // desired state was reached by someone else.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Outcome::Refused(Refusal::Vanished),
             Err(error) => Self::failed(&verified, bytes, &error),
+        }
+    }
+
+    /// Checks the rails and removes without measuring first, returning what the removal freed.
+    ///
+    /// For a caller that needs the size only to report it — a Bazel output base, whose every
+    /// entry would otherwise be visited twice, once to be counted and once to be unlinked. The
+    /// removal walk counts as it unlinks, so a real run visits each entry once; a dry run, which
+    /// has nothing to unlink, measures instead, and the two agree by construction because both
+    /// count through the same walk.
+    ///
+    /// The second value is the artifact's size: what was freed, plus for a partial removal what
+    /// is left.
+    #[must_use]
+    pub fn reclaim(&self, path: &Path, removal: Removal) -> (Outcome, u64) {
+        let verified = match self.check(path) {
+            Ok(verified) => verified,
+            Err(refusal) => return (Outcome::Refused(refusal), 0),
+        };
+        if removal.dry_run {
+            return (Outcome::WouldRemove, crate::size::measure(&verified.canonical));
+        }
+
+        let before = (!cfg!(unix) || !verified.is_dir).then(|| crate::size::measure(&verified.canonical));
+        let (result, counted) = force::remove(&verified, removal);
+        let Some(freed) = counted.or(before) else {
+            return (Outcome::Removed, 0);
+        };
+        match result {
+            Ok(()) => (Outcome::Removed, freed),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (Outcome::Refused(Refusal::Vanished), 0),
+            Err(error) => {
+                let failure = RemovalFailure::from_io(&error);
+                let remaining = if verified.is_dir {
+                    crate::size::measure(&verified.canonical)
+                } else {
+                    freed
+                };
+                if counted.is_none() || freed == 0 {
+                    return (Outcome::Failed(failure), remaining);
+                }
+                (
+                    Outcome::PartiallyRemoved {
+                        freed,
+                        remaining,
+                        failure,
+                    },
+                    freed + remaining,
+                )
+            }
         }
     }
 

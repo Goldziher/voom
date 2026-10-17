@@ -23,7 +23,7 @@ use rayon::prelude::*;
 /// about space *reclaimed* and a sparse or block-padded file reclaims what it occupies, not
 /// what it reports as its length.
 #[cfg(unix)]
-fn file_size(metadata: &std::fs::Metadata) -> u64 {
+pub(crate) fn file_size(metadata: &std::fs::Metadata) -> u64 {
     use std::os::unix::fs::MetadataExt;
     metadata.blocks() * 512
 }
@@ -33,7 +33,7 @@ fn file_size(metadata: &std::fs::Metadata) -> u64 {
 /// Off unix there is no portable allocated-size call, so this is the apparent size. See the
 /// module documentation for what that changes.
 #[cfg(not(unix))]
-fn file_size(metadata: &std::fs::Metadata) -> u64 {
+pub(crate) fn file_size(metadata: &std::fs::Metadata) -> u64 {
     metadata.len()
 }
 
@@ -102,8 +102,10 @@ pub fn measure_fully(path: &Path) -> Measured {
         };
     }
 
-    let seen = Links::default();
-    let below = measure_dir(path, FANOUT_DEPTH, &seen);
+    #[cfg(unix)]
+    let below = crate::tree::measure_below(path);
+    #[cfg(not(unix))]
+    let below = measure_dir(path, FANOUT_DEPTH, &Links::default());
     Measured {
         bytes: file_size(&metadata) + below.bytes,
         unreadable: below.unreadable,
@@ -126,7 +128,7 @@ pub fn measure_fully(path: &Path) -> Measured {
 /// without walking the rest of the filesystem, and erring toward the larger number matches every
 /// other tool the user will compare against.
 #[derive(Debug, Default)]
-struct Links {
+pub(crate) struct Links {
     // Off unix there is no portable link count through `std`, so nothing is ever inserted and
     // the set would be an array of mutexes no code reads. Windows deserves the empty struct
     // rather than a warning about a field that cannot be used there.
@@ -141,13 +143,11 @@ const LINK_SHARDS: usize = 16;
 impl Links {
     /// Whether this inode's bytes have already been counted; records it if not.
     #[cfg(unix)]
-    fn counted(&self, metadata: &std::fs::Metadata) -> bool {
-        use std::os::unix::fs::MetadataExt;
-
-        if metadata.nlink() <= 1 {
+    pub(crate) fn counted_inode(&self, dev: u64, ino: u64, nlink: u64) -> bool {
+        if nlink <= 1 {
             return false;
         }
-        let key = (metadata.dev(), metadata.ino());
+        let key = (dev, ino);
         #[expect(clippy::cast_possible_truncation, reason = "a shard index, not a value")]
         let shard = (key.1 as usize) % LINK_SHARDS;
         // A poisoned shard means another thread panicked mid-measurement, which nothing here
@@ -178,6 +178,7 @@ impl Links {
 /// Ten is also more than enough to divide the work. Branching even twice per level is a
 /// thousand independent tasks, and a build tree reaches its wide directories (`target/debug/
 /// deps/`, `build/`) within three or four.
+#[cfg(not(unix))]
 const FANOUT_DEPTH: u32 = 10;
 
 /// The recursive half of [`measure`], dividing each level across `rayon` until the bound.
@@ -187,6 +188,7 @@ const FANOUT_DEPTH: u32 = 10;
 /// 127 GB total on the tree this was measured against — so `measure_all`'s per-artifact
 /// parallelism left the largest tree to a single thread while every other core idled. Dividing
 /// inside it took a `~/workspace` dry run from 6.88 s to 4.63 s (hyperfine, 8 runs).
+#[cfg(not(unix))]
 fn measure_dir(dir: &Path, fanout: u32, seen: &Links) -> Measured {
     let (mut total, subdirectories) = list(dir, seen);
     if fanout == 0 {
@@ -209,6 +211,7 @@ fn measure_dir(dir: &Path, fanout: u32, seen: &Links) -> Measured {
 }
 
 /// Everything below one directory, on one thread, with an explicit stack and no depth bound.
+#[cfg(not(unix))]
 fn measure_serially(root: &Path, seen: &Links) -> Measured {
     let mut total = Measured::default();
     let mut stack = vec![root.to_path_buf()];
@@ -225,6 +228,7 @@ fn measure_serially(root: &Path, seen: &Links) -> Measured {
 /// A directory that cannot be listed contributes nothing rather than failing the run — a size is
 /// an estimate in a report, not a precondition for anything — but it is *counted*, so the report
 /// can say the figure is a lower bound instead of presenting it as the whole truth.
+#[cfg(not(unix))]
 fn list(dir: &Path, seen: &Links) -> (Measured, Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return (
@@ -262,10 +266,12 @@ fn list(dir: &Path, seen: &Links) -> (Measured, Vec<PathBuf>) {
 /// The trait survives the change so the guarantee stays named at the call site rather than
 /// resting on a reader knowing what `DirEntry::metadata` does; `should_not_follow_a_symlink_when_measuring`
 /// is what actually holds it, and it was checked against both routes.
+#[cfg(not(unix))]
 trait NoFollow {
     fn metadata_no_follow(&self) -> std::io::Result<std::fs::Metadata>;
 }
 
+#[cfg(not(unix))]
 impl NoFollow for std::fs::DirEntry {
     fn metadata_no_follow(&self) -> std::io::Result<std::fs::Metadata> {
         self.metadata()
