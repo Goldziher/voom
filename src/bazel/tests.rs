@@ -10,6 +10,7 @@ fn options(root: &Path) -> BazelPruneOptions {
         max_age: DEFAULT_MAX_AGE,
         clear_all: false,
         jobs: None,
+        scope: None,
     }
 }
 
@@ -337,4 +338,58 @@ fn should_not_clear_a_cache_or_install_directory_outside_a_bazel_root() {
         root.join("install/spare/A-server.jar").exists(),
         "an unrelated `install/` is not Bazel's"
     );
+}
+
+/// A sweep of one tree is a request about the workspaces in it: an orphan whose workspace lived
+/// elsewhere is not this run's to measure or remove.
+#[test]
+fn should_only_consider_bases_whose_workspace_lies_under_the_sweep() {
+    let fixture = tree(&[
+        "_bazel_dev/inside/execroot/armis/BUILD",
+        "_bazel_dev/outside/execroot/armis/BUILD",
+        "swept/keep",
+    ]);
+    let root = fixture.path().join("_bazel_dev");
+    let swept = fixture.path().join("swept").canonicalize().unwrap();
+    std::fs::write(
+        root.join("inside/DO_NOT_BUILD_HERE"),
+        swept.join("gone-worktree").display().to_string(),
+    )
+    .unwrap();
+    std::fs::write(root.join("outside/DO_NOT_BUILD_HERE"), "/nonexistent/elsewhere").unwrap();
+
+    let mut scoped = options(&root);
+    scoped.scope = Some(vec![swept]);
+    scoped.dry_run = true;
+    let result = prune(&scoped).expect("the root resolves");
+
+    let paths: Vec<_> = result
+        .output_bases
+        .iter()
+        .map(|base| base.path.file_name().unwrap().to_owned())
+        .collect();
+    assert_eq!(paths, ["inside"]);
+    assert!(root.join("outside").exists());
+}
+
+/// What names no workspace is machine-level, so a sweep of a tree that does not cover the home
+/// directory leaves it alone — and `--clear-caches=bazel`, which is explicit, still reaches it.
+#[test]
+fn should_leave_machine_level_candidates_to_a_sweep_that_covers_home() {
+    let fixture = tree(&[
+        "_bazel_dev/unmarked/execroot/armis/BUILD",
+        "_bazel_dev/install/abc/A-server.jar",
+        "_bazel_dev/cache/repos/v1/file",
+        "swept/keep",
+    ]);
+    let root = fixture.path().join("_bazel_dev");
+    let swept = fixture.path().join("swept").canonicalize().unwrap();
+
+    let mut scoped = options(&root);
+    scoped.scope = Some(vec![swept.clone()]);
+    scoped.dry_run = true;
+    assert!(prune(&scoped).expect("the root resolves").output_bases.is_empty());
+
+    scoped.clear_all = true;
+    assert!(!prune(&scoped).expect("the root resolves").output_bases.is_empty());
 }

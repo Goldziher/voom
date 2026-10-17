@@ -172,27 +172,58 @@ fn prune(cli: &Cli) -> anyhow::Result<i32> {
         Some(joined) => Some(joined.map_err(|_| anyhow::anyhow!("the bazel housekeeping panicked"))??),
         None => None,
     };
+    // A docker problem is a note and nothing more; it must not fail the sweep.
+    let docker = docker.ok().and_then(Result::ok).flatten();
+    let json = matches!(cli.prune.format, voom::cli::Format::Json);
 
-    let mut out = anstream::stdout().lock();
-    voom::cli::render(&result, &cli.prune, &mut out).context("writing the report")?;
-    out.flush().context("flushing the report")?;
-    drop(out);
+    // Human output streams each stage as it finishes; JSON waits for every stage so that stdout
+    // is one document holding all of them, rather than the sweep alone with the rest reduced to
+    // summary lines on stderr — which is where a 200 GB Bazel finding used to hide.
+    if !json {
+        let mut out = anstream::stdout().lock();
+        voom::cli::render(&result, &cli.prune, &mut out).context("writing the report")?;
+        out.flush().context("flushing the report")?;
+    }
 
-    let worktree_code = if cli.prune.remove_merged_worktrees {
+    let worktrees = if cli.prune.remove_merged_worktrees {
         merged_worktrees(cli, &result.repositories, &options.roots)?
     } else {
-        exit::SUCCESS
+        None
     };
+    if let (false, Some(worktrees)) = (json, &worktrees) {
+        let mut out = anstream::stdout().lock();
+        writeln!(out)?;
+        voom::worktrees::render_human(worktrees, &mut out).context("writing the worktree report")?;
+        out.flush().context("flushing the worktree report")?;
+    }
     let bazel = match early_bazel {
         Some(bazel) => bazel,
         None => bazel_prune(cli, &options)?,
     };
-    let bazel_code = report_bazel(cli, bazel.as_ref())?;
-    // A docker problem is a note on stderr and nothing more; it must not fail the sweep.
-    if let Some(docker) = docker.ok().and_then(Result::ok).flatten() {
-        report_docker(cli, &docker)?;
+
+    if json {
+        let mut document = voom::report::json::document(&result);
+        document["bazel"] = bazel.as_ref().map_or(serde_json::Value::Null, voom::bazel::document);
+        document["docker"] = docker.as_ref().map_or(serde_json::Value::Null, voom::docker::document);
+        document["worktrees"] = worktrees
+            .as_ref()
+            .map_or(serde_json::Value::Null, voom::worktrees::document);
+        let mut out = anstream::stdout().lock();
+        serde_json::to_writer_pretty(&mut out, &document).context("writing the report")?;
+        writeln!(out)?;
+        out.flush().context("flushing the report")?;
+    } else {
+        report_bazel(bazel.as_ref())?;
+        if let Some(docker) = &docker {
+            report_docker(docker)?;
+        }
     }
+
     let code = result.exit_code(cli.prune.exit_code);
+    let worktree_code = worktrees
+        .as_ref()
+        .map_or(exit::SUCCESS, |worktrees| worktrees.exit_code());
+    let bazel_code = bazel.as_ref().map_or(exit::SUCCESS, |bazel| bazel.exit_code());
     Ok([code, worktree_code, bazel_code]
         .into_iter()
         .find(|code| *code != exit::SUCCESS)
@@ -228,9 +259,8 @@ fn machine_config(
 }
 
 /// Prints the Docker stage after the other reports. Silent when docker had nothing to say; a skip
-/// is one line on stderr, and JSON runs get a one-line summary there too so stdout stays a single
-/// document.
-fn report_docker(cli: &Cli, result: &voom::docker::DockerPruneResult) -> anyhow::Result<()> {
+/// is one line on stderr. JSON runs carry the stage in the single document instead.
+fn report_docker(result: &voom::docker::DockerPruneResult) -> anyhow::Result<()> {
     if let Some(skip) = &result.skipped {
         writeln!(anstream::stderr(), "voom: docker: {} (skipped)", skip.reason)?;
         return Ok(());
@@ -238,28 +268,10 @@ fn report_docker(cli: &Cli, result: &voom::docker::DockerPruneResult) -> anyhow:
     if !result.has_news() {
         return Ok(());
     }
-
-    match cli.prune.format {
-        voom::cli::Format::Human => {
-            let mut out = anstream::stdout().lock();
-            writeln!(out)?;
-            voom::docker::render_human(result, &mut out).context("writing the docker report")?;
-            out.flush().context("flushing the docker report")?;
-        }
-        voom::cli::Format::Json => {
-            let totals = result.totals();
-            writeln!(
-                anstream::stderr(),
-                "voom: docker: {} matched, {} bytes{}{}",
-                totals.candidates,
-                totals.bytes,
-                totals
-                    .host_bytes_returned
-                    .map_or_else(String::new, |bytes| format!(", {bytes} returned to the host")),
-                if result.dry_run { ", dry run" } else { "" }
-            )?;
-        }
-    }
+    let mut out = anstream::stdout().lock();
+    writeln!(out)?;
+    voom::docker::render_human(result, &mut out).context("writing the docker report")?;
+    out.flush().context("flushing the docker report")?;
     Ok(())
 }
 
@@ -273,53 +285,45 @@ fn bazel_prune(
     let Some(resolved) = machine_config(run_options)? else {
         return Ok(None);
     };
-    let Some(options) = cli.prune.bazel_options(&resolved) else {
+    let Some(mut options) = cli.prune.bazel_options(&resolved) else {
         return Ok(None);
     };
+    options.scope = Some(
+        run_options
+            .roots
+            .iter()
+            .filter_map(|root| root.canonicalize().ok())
+            .collect(),
+    );
     voom::bazel::prune(&options)
         .context("pruning bazel output bases")
         .map(Some)
 }
 
-/// Prints the Bazel stage after the sweep's report. Silent when there was nothing to do; JSON
-/// runs get a one-line summary on stderr so stdout stays a single document.
-fn report_bazel(cli: &Cli, result: Option<&voom::bazel::BazelPruneResult>) -> anyhow::Result<i32> {
+/// Prints the Bazel stage after the sweep's report. Silent when there was nothing to do. JSON
+/// runs carry the stage in the single document instead.
+fn report_bazel(result: Option<&voom::bazel::BazelPruneResult>) -> anyhow::Result<()> {
     let Some(result) = result else {
-        return Ok(exit::SUCCESS);
+        return Ok(());
     };
     let totals = result.totals();
     if totals.removed == 0 && totals.refused == 0 {
-        return Ok(result.exit_code());
+        return Ok(());
     }
-
-    match cli.prune.format {
-        voom::cli::Format::Human => {
-            let mut out = anstream::stdout().lock();
-            writeln!(out)?;
-            voom::bazel::render_human(result, &mut out).context("writing the bazel report")?;
-            out.flush().context("flushing the bazel report")?;
-        }
-        voom::cli::Format::Json => {
-            writeln!(
-                anstream::stderr(),
-                "voom: bazel: {} removed, {} refused ({} bytes{})",
-                totals.removed,
-                totals.refused,
-                totals.bytes,
-                if result.dry_run { ", dry run" } else { "" }
-            )?;
-        }
-    }
-    Ok(result.exit_code())
+    let mut out = anstream::stdout().lock();
+    writeln!(out)?;
+    voom::bazel::render_human(result, &mut out).context("writing the bazel report")?;
+    out.flush().context("flushing the bazel report")?;
+    Ok(())
 }
 
-/// `--remove-merged-worktrees` after a sweep: human output follows the sweep report, JSON gets a
-/// one-line summary on stderr so stdout stays a single document.
+/// `--remove-merged-worktrees` after a sweep. `None` when the walk passed no repository at all,
+/// which is said on stderr.
 fn merged_worktrees(
     cli: &Cli,
     repositories: &[std::path::PathBuf],
     roots: &[std::path::PathBuf],
-) -> anyhow::Result<i32> {
+) -> anyhow::Result<Option<voom::worktrees::WorktreePruneResult>> {
     if repositories.is_empty() {
         // Not "0 removed": the walk passed no repository at all, which is a different claim. An
         // `--exclude` covering `.git` is the usual cause, since repositories are found by it.
@@ -328,7 +332,7 @@ fn merged_worktrees(
             "voom: worktrees: the walk found no git repositories, so none were examined \
              (an --exclude matching `.git` hides them)"
         )?;
-        return Ok(exit::SUCCESS);
+        return Ok(None);
     }
     let result = voom::worktrees::prune(
         repositories,
@@ -345,24 +349,5 @@ fn merged_worktrees(
                 .context("reading --stale-worktrees")?,
         },
     );
-    match cli.prune.format {
-        voom::cli::Format::Human => {
-            let mut out = anstream::stdout().lock();
-            writeln!(out)?;
-            voom::worktrees::render_human(&result, &mut out).context("writing the worktree report")?;
-            out.flush().context("flushing the worktree report")?;
-        }
-        voom::cli::Format::Json => {
-            let totals = result.totals();
-            writeln!(
-                anstream::stderr(),
-                "voom: worktrees: {} removed, {} merged with local changes, {} failed{}",
-                totals.removed,
-                totals.local_changes,
-                totals.failed,
-                if result.dry_run { " (dry run)" } else { "" }
-            )?;
-        }
-    }
-    Ok(result.exit_code())
+    Ok(Some(result))
 }
