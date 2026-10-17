@@ -385,6 +385,7 @@ pub fn prune(options: &BazelPruneOptions) -> Result<BazelPruneResult> {
     // install bases wait for the output bases only because they ask which of them survived. The
     // shared cache is separate from both and runs beside them.
     let pool = crate::run::build_pool(options.jobs)?;
+    crate::delete::limit_removal_workers(options.jobs);
     let (mut found, cache_found) = pool.install(|| {
         rayon::join(
             || {

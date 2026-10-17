@@ -473,7 +473,7 @@ impl Guard {
             return Outcome::WouldRemove;
         }
 
-        match force::remove(&verified, removal).0 {
+        match remove_in_pool(&verified, removal).0 {
             Ok(()) => Outcome::Removed,
             // A file vanishing between the walk and the removal is a race, not a failure: the
             // desired state was reached by someone else.
@@ -503,7 +503,7 @@ impl Guard {
         }
 
         let before = (!cfg!(unix) || !verified.is_dir).then(|| crate::size::measure(&verified.canonical));
-        let (result, counted) = force::remove(&verified, removal);
+        let (result, counted) = remove_in_pool(&verified, removal);
         let Some(freed) = counted.or(before) else {
             return (Outcome::Removed, 0);
         };
@@ -567,6 +567,53 @@ impl Guard {
             remaining,
             failure,
         }
+    }
+}
+
+/// How many workers unlink at once when `-j` is not given, across every removal in the process.
+///
+/// Removal does not scale the way reading does. Unlinking contends on the directory being
+/// emptied and on whatever endpoint-security agent vets each call, so past a point more workers
+/// only queue in the kernel. Measured on a 100,000-file tree under two such agents, against
+/// 58 s for `rm -rf`: 35 s on one worker, 26 s on four, 19 s on sixteen, 42 s on forty-eight and
+/// 101 s on the hundred and twenty-eight that sizing wants. So sizing and removal get separate
+/// widths, and this one is a constant rather than a multiple of the cores.
+const REMOVAL_WORKERS: usize = 16;
+
+/// An explicit `-j`, recorded before the first removal; zero means none was given.
+static REMOVAL_JOBS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Holds removal to `-j` workers instead of [`REMOVAL_WORKERS`]. The pool is built once per
+/// process, so only a call made before the first removal has any effect.
+pub fn limit_removal_workers(jobs: Option<usize>) {
+    if let Some(jobs) = jobs {
+        REMOVAL_JOBS.store(jobs.max(1), std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// The one pool every removal runs in, so that artifacts removed side by side share its width
+/// rather than each fanning out across the sizing pool.
+fn removal_pool() -> Option<&'static rayon::ThreadPool> {
+    static POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let jobs = match REMOVAL_JOBS.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => REMOVAL_WORKERS,
+            jobs => jobs,
+        };
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(jobs)
+            .thread_name(|index| format!("voom-remove-{index}"))
+            .build()
+            .ok()
+    })
+    .as_ref()
+}
+
+/// Runs one verified removal in the removal pool.
+fn remove_in_pool(verified: &Verified, removal: Removal) -> (std::io::Result<()>, Option<u64>) {
+    match removal_pool() {
+        Some(pool) => pool.install(|| force::remove(verified, removal)),
+        None => force::remove(verified, removal),
     }
 }
 
