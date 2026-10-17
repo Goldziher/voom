@@ -983,6 +983,26 @@ fn should_remove_a_tagged_directory_no_marker_could_prove() {
     assert_eq!(result.entries.len(), 1, "exactly one finding: {:?}", result.entries);
 }
 
+/// uv tags every virtualenv it creates, and `uv tool install` puts each tool in one under
+/// `~/.local/share/uv/tools/` — so the tag alone would uninstall working commands. A tagged
+/// directory that is a virtualenv is not this route's to take.
+#[test]
+fn should_never_remove_a_tagged_virtualenv() {
+    let root = TempDir::new().unwrap();
+    let tool = root.path().join("uv/tools/acli");
+    support::tag(&tool);
+    fs::write(tool.join("pyvenv.cfg"), b"home = /usr/bin\n").unwrap();
+    fs::create_dir_all(tool.join("bin")).unwrap();
+    fs::write(tool.join("bin/acli"), b"#!/bin/sh\n").unwrap();
+
+    run(&support::options_tagged(root.path())).unwrap();
+
+    assert!(
+        tool.join("bin/acli").exists(),
+        "an installed tool survives a tagged sweep"
+    );
+}
+
 /// **The data-loss regression test for ADR 0013.** An identically shaped directory that never
 /// declared itself must survive, and must survive for the same reason every other negative
 /// fixture does: nothing proved it.
