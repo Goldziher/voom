@@ -144,3 +144,34 @@ condition that, on this machine, hits directories voom does not want to sweep an
 honest limitation, not a resolved one: the interrupted entry's remaining, unvisited siblings in
 that subtree are genuinely not seen on that run — they are not merely deferred to a retry that
 happens later.
+
+## Amendment — 2026-10-17
+
+**Sizing and removal walk through directory descriptors, not paths.** Both visit every entry of
+every artifact, and on a machine running endpoint-security agents (CrowdStrike Falcon and
+CyberArk EPM on the one this was measured on) every `open` is a round trip through them. A
+sampled dry run of a home directory spent 60% of its time in `open` and 30% in `fstatat`, with
+almost no CPU. `src/tree` opens each directory with `openat` against its parent's descriptor —
+one path component resolved instead of the whole path — and on Apple platforms lists it with
+`getattrlistbulk(2)`, which returns names, types, allocated sizes, link counts and inodes for a
+whole directory per call. Elsewhere, and on an Apple filesystem that rejects the call, it is
+`readdir` plus an `fstatat` against the directory descriptor. Records are parsed by their
+returned-attribute bitmap, never a fixed layout: a file's record omits the directory attributes
+entirely even under `FSOPT_PACK_INVAL_ATTRS`, and the first fixed-layout parser read a file's
+name as its size. A test compares both listings field by field, and on twenty real Bazel output
+bases the figures match `du -sk` to the byte.
+
+**Sizing and removal have separate widths.** Reading scales with oversubscription and unlinking
+does not. Over twenty Bazel output bases the Bazel stage took 334 s on eighteen workers, 162 s on
+sixty-four and 143 s on 128, so sizing now defaults to eight workers per core, 8–128, as the walk
+already did. On a 100,000-file tree, removal took 35 s on one worker, 19 s on sixteen, 42 s on
+forty-eight and 101 s on 128 (`rm -rf`: 58 s); two processes removing at once each slowed to
+the same combined rate, so the ceiling is the machine's, not voom's. Removal therefore runs in
+one process-wide pool, sixteen wide unless `-j` is given, shared by every artifact and every
+stage, and takes the largest artifacts first so the most space comes back soonest.
+
+**Removal counts what it frees.** It is the sizing walk with `unlinkat` in it, post-order, so a
+caller that needs a size only to report it — a Bazel output base — is walked once instead of
+measured and then walked again. It never follows a symlink (`O_NOFOLLOW`), never descends into a
+directory with another filesystem mounted on it, and keeps going past an entry it cannot remove,
+reporting the first failure.
