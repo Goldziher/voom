@@ -38,7 +38,8 @@ The `Group` column matches `voom --help`'s own grouping.
 | Selection | `--include <GLOB>` | | | Remove this path whether or not a marker proves it. Repeatable. Outranks every prune, cannot reach inside a pruned directory, and `--exclude` still wins. |
 | Selection | `--clean-caches[=<IDS>]` | | empty | Remove tool caches under the swept tree, each still on its marker. A bare `--clean-caches` (alias `--clear-caches`) removes every cache the table knows about; `--clean-caches=uv,go-build` removes named ones, repeatable or comma-separated. The `=` is required or clap reads the next argument as a path. See `--list-caches`. |
 | Selection | `--clean-tagged` | | off | Remove any directory carrying a valid `CACHEDIR.TAG`, on that declaration alone. Reaches relocated and renamed build directories the catalog cannot name. Also `[tagged] enabled`. |
-| Output | `--list-caches` | | | Print the cache table and exit without scanning. By default only the caches present on this machine, each with its path and size; `--verbose` shows every location the table knows about, its state, and the marker that would prove it. Always exits `0`. |
+| Output | `--list-caches` | | | Print the cache table and exit without scanning. By default only the caches present on this machine, each with its path and nothing measured; `--verbose` shows every location the table knows about, its state, and the marker that would prove it. Always exits `0`. |
+| Output | `--sizes` | | off | With `--list-caches`, measure each cache and print its size with the sweep's own sizer. Off by default because it walks tens of gigabytes. |
 | Selection | `--config <PATH>` | | discovered hierarchy | Use this configuration file instead of resolving `voom.toml` from the tree. |
 | Keep policies | `--min-age <DURATION>` | | unset | Never remove an artifact modified more recently, e.g. `7d`. |
 | Keep policies | `--min-size <SIZE>` | | unset | Skip artifacts smaller than this, e.g. `1MB`. |
@@ -79,7 +80,7 @@ Top level:
 | `roots` | string[] | The scan roots, as given. |
 | `artifacts` | object[] | One per artifact found; see below. |
 | `skipped` | object[] | `{ path, reason, detail }` for every candidate passed over — always populated in JSON. |
-| `walk_errors` | object[] | `{ path, detail, transient }` per directory the walker could not read; `transient` marks an interruption (`EINTR`) rather than a real problem. |
+| `walk_errors` | object[] | `{ path, detail, transient, inaccessible }` per directory the walker could not read; `path` is the directory; `transient` marks an interruption (`EINTR`) that survived three retries; `inaccessible` marks `EPERM`/`EACCES`, which the human report counts in one footer line. |
 | `totals` | object | See below. |
 | `elapsed_ms` | number | The whole run, in milliseconds. `timings_us` below is the same duration broken down, in microseconds — a small tree can finish under one millisecond, at which point this alone reads `0`. |
 | `timings_us` | object | Microsecond stage timings: `total`, `scan`, `policy`, `size`, `delete`, `git`. The stages do not sum to `total` — the residue is configuration loading and worker-pool setup. |
