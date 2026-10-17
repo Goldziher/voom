@@ -9,6 +9,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-17
+
 ### Added
 
 - **Ten more tool caches**, each proven by a marker its tool writes: `pnpm-store` (the
@@ -20,7 +22,6 @@ All notable changes to this project are documented here. The format follows
 - `--sizes`, for `--list-caches`. See Changed.
 - `claude-prune` reports an eligible job's scratch size in a dry run and in report-only mode, and
   `bytes` in its JSON is no longer `null` there.
-
 - **`voom docker-prune`, and `--docker` on a sweep.** Removes dangling images, unused images older
   than `--max-age` (default `7d`, mapped to `until=`) and idle build cache; with `--volumes` also
   anonymous unmounted volumes, with `--volumes-all` all unmounted volumes. Never touches a
@@ -75,7 +76,6 @@ All notable changes to this project are documented here. The format follows
   repositories including a monorepo and 40 of its worktrees): the walk prunes the same build
   output a sweep does and no longer enters linked-worktree checkouts. A repository nested inside a
   linked worktree is no longer discovered by `git-prune`; one nested inside a main checkout still is.
-
 - **`--list-caches` no longer measures by default.** Sizing 70 GB took 11 to 21 seconds, to print a
   table. The listing is now instant; `--sizes` adds the figures.
 - Directories the user may not read (`EPERM`/`EACCES`, the privacy-protected folders under
@@ -772,7 +772,8 @@ nothing; this is the tool.
 - Size accounting sums allocated blocks, so on a copy-on-write filesystem such as APFS the bytes
   reported can exceed the space actually freed where files are shared between clones.
 
-[Unreleased]: https://github.com/Goldziher/voom/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/Goldziher/voom/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/Goldziher/voom/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Goldziher/voom/compare/v0.9.1...v0.10.0
 [0.2.0]: https://github.com/Goldziher/voom/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Goldziher/voom/releases/tag/v0.1.0
