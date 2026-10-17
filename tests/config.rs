@@ -493,6 +493,58 @@ fn should_resolve_the_bazel_section_with_the_flag_above_every_file() {
     assert!(!resolved.bazel, "--no-bazel beats `enabled = true`");
 }
 
+/// `[docker]` is machine-global too, and the one housekeeping stage that is off unless asked: only
+/// `--docker` or an `enabled = true` in the user's own file turns it on.
+#[test]
+fn should_resolve_the_docker_section_off_by_default_with_the_flag_above_every_file() {
+    let root = tree(&["Cargo.toml"]);
+    let resolve = |config: Option<std::path::PathBuf>, flags: Flags| {
+        voom::run::resolver_for(
+            root.path(),
+            &RunOptions {
+                config,
+                flags,
+                ..options(root.path())
+            },
+        )
+        .and_then(|resolver| resolver.root_config())
+        .expect("the configuration resolves")
+    };
+    let machine = root.path().join("machine.toml");
+    std::fs::write(&machine, "[docker]\nenabled = true\nmax_age = \"3d\"\n").expect("a config file");
+
+    assert!(
+        !resolve(None, Flags::default()).docker,
+        "off unless something turns it on"
+    );
+
+    let from_file = resolve(Some(machine.clone()), Flags::default());
+    assert!(from_file.docker);
+    assert_eq!(from_file.docker_max_age, Some(Duration::from_secs(3 * 86_400)));
+
+    let from_flag = resolve(
+        Some(machine),
+        Flags {
+            docker_max_age: Some(Duration::from_secs(86_400)),
+            ..Flags::default()
+        },
+    );
+    assert_eq!(
+        from_flag.docker_max_age,
+        Some(Duration::from_secs(86_400)),
+        "the flag wins"
+    );
+
+    let flag_only = resolve(
+        None,
+        Flags {
+            docker: Some(true),
+            ..Flags::default()
+        },
+    );
+    assert!(flag_only.docker);
+}
+
 #[test]
 fn should_reject_an_unparseable_bazel_max_age_and_name_the_file() {
     let root = tree(&["Cargo.toml"]);
@@ -524,6 +576,8 @@ fn should_refuse_machine_global_sections_in_a_repository_config() {
     for body in [
         "[bazel]\nenabled = true\n",
         "[bazel]\nmax_age = \"1s\"\n",
+        "[docker]\nenabled = true\n",
+        "[docker]\nmax_age = \"1s\"\n",
         "[caches]\nenable = [\"bazel\"]\n",
     ] {
         let root = tree(&["Cargo.toml", "voom.toml"]);

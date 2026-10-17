@@ -1,6 +1,6 @@
 //! Arguments and rendering for the maintenance subcommands: `git-prune`,
-//! `claude-prune`. Split out of `cli/mod.rs` purely to stay under the module size cap — the
-//! three share a shape (a subcommand takes its own paths, its own `--dry-run`, its own
+//! `claude-prune`, `docker-prune`. Split out of `cli/mod.rs` purely to stay under the module size cap — the
+//! share a shape (a subcommand takes its own paths, its own `--dry-run`, its own
 //! `--format`) but nothing that would justify one being written in terms of another.
 
 use std::io;
@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use clap::Args;
 
 use super::{Format, PruneArgs};
+use crate::docker::VolumeScope;
 use crate::error::Result;
 use crate::policy::parse_duration;
 
@@ -199,5 +200,125 @@ pub fn render_claude(
     match args.format {
         Format::Human => crate::claude::render_human(result, out),
         Format::Json => crate::claude::render_json(result, out),
+    }
+}
+
+/// `voom docker-prune` arguments.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "these mirror command-line flags, which are bools by nature"
+)]
+#[derive(Debug, Args)]
+pub struct DockerPruneArgs {
+    /// Report what would be reclaimed, without pruning or trimming anything.
+    #[arg(short = 'n', long)]
+    pub dry_run: bool,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = Format::Human)]
+    pub format: Format,
+
+    /// How old an unused image or idle build-cache record must be before it is pruned, e.g. `7d`.
+    ///
+    /// Dangling images go regardless of age. Mapped to docker's `until=` filter in whole hours,
+    /// rounded up.
+    #[arg(long, value_name = "DURATION")]
+    pub max_age: Option<String>,
+
+    /// Also remove anonymous volumes no container mounts. Volumes are data: off unless given.
+    ///
+    /// Only volumes docker created without a name, which nothing can find again. Named volumes
+    /// need `--volumes-all`.
+    #[arg(long)]
+    pub volumes: bool,
+
+    /// Also remove every volume no container mounts, named ones included. Implies `--volumes`.
+    #[arg(long)]
+    pub volumes_all: bool,
+
+    /// Do not trim the VM's disk afterwards.
+    ///
+    /// On Colima, Lima, Rancher Desktop and podman machine, freed space stays allocated on the
+    /// host until `fstrim` runs in the guest.
+    #[arg(long)]
+    pub no_trim: bool,
+
+    /// How long each prune command and the trim may run, e.g. `15m`.
+    #[arg(long, value_name = "DURATION")]
+    pub timeout: Option<String>,
+}
+
+impl DockerPruneArgs {
+    /// The options for an explicit `voom docker-prune`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidDuration`] for an unparseable `--max-age` or `--timeout`.
+    pub fn to_docker_options(&self) -> Result<crate::docker::DockerPruneOptions> {
+        Ok(crate::docker::DockerPruneOptions {
+            dry_run: self.dry_run,
+            max_age: self
+                .max_age
+                .as_deref()
+                .map(parse_duration)
+                .transpose()?
+                .unwrap_or(crate::docker::DEFAULT_MAX_AGE),
+            volumes: volume_scope(self.volumes, self.volumes_all),
+            trim: !self.no_trim,
+            timeout: self
+                .timeout
+                .as_deref()
+                .map(parse_duration)
+                .transpose()?
+                .unwrap_or(crate::docker::DEFAULT_TIMEOUT),
+        })
+    }
+}
+
+/// The volume scope two flags ask for: `--volumes-all` wins and implies `--volumes`, and neither
+/// leaves volumes alone entirely.
+#[must_use]
+pub fn volume_scope(volumes: bool, all: bool) -> Option<VolumeScope> {
+    match (volumes, all) {
+        (_, true) => Some(VolumeScope::All),
+        (true, false) => Some(VolumeScope::Anonymous),
+        (false, false) => None,
+    }
+}
+
+/// Renders a finished `docker-prune` in the requested format.
+///
+/// # Errors
+///
+/// Propagates write failures from `out`.
+pub fn render_docker(
+    result: &crate::docker::DockerPruneResult,
+    args: &DockerPruneArgs,
+    out: &mut impl io::Write,
+) -> io::Result<()> {
+    match args.format {
+        Format::Human => crate::docker::render_human(result, out),
+        Format::Json => crate::docker::render_json(result, out),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_leave_volumes_alone_unless_a_flag_asks() {
+        assert_eq!(volume_scope(false, false), None);
+    }
+
+    #[test]
+    fn should_remove_only_anonymous_volumes_for_the_plain_flag() {
+        assert_eq!(volume_scope(true, false), Some(VolumeScope::Anonymous));
+    }
+
+    #[test]
+    fn should_let_the_all_flag_imply_volumes_and_win() {
+        assert_eq!(volume_scope(false, true), Some(VolumeScope::All));
+        assert_eq!(volume_scope(true, true), Some(VolumeScope::All));
     }
 }

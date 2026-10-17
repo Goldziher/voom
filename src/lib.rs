@@ -30,6 +30,7 @@ pub mod claude;
 pub mod cli;
 pub mod config;
 pub mod delete;
+pub mod docker;
 pub mod git;
 pub mod policy;
 pub mod report;
