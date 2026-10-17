@@ -104,7 +104,16 @@ pub struct WalkFailure {
     /// the reader to skim past the section where those genuine failures appear, so they are
     /// separated. See [`WalkFailure::transient`].
     pub transient: bool,
+    /// Whether the user simply may not read this directory: `EPERM` or `EACCES`.
+    ///
+    /// On macOS a `$HOME` sweep meets a hundred-odd of these under `~/Library`, protected by the
+    /// system's privacy controls and not by anything the user did wrong. They are expected, not
+    /// actionable, and the report counts them in one line instead of listing each (`-v` does).
+    pub inaccessible: bool,
 }
+
+/// How many times an interrupted directory read is attempted again before it is reported.
+const INTERRUPTED_RETRIES: usize = 3;
 
 /// What one walk found.
 #[derive(Debug, Default)]
@@ -145,6 +154,13 @@ pub fn scan(roots: &[PathBuf], classifier: &Classifier, options: &ScanOptions) -
 }
 
 fn scan_root(root: &Path, classifier: &Classifier, options: &ScanOptions, scan: &mut Scan) {
+    let first_failure = scan.failures.len();
+    walk_into(root, root, classifier, options, scan);
+    retry_interrupted(root, classifier, options, scan, first_failure);
+}
+
+/// Walks `start`, classifying against `root`, and appends what it finds to `scan`.
+fn walk_into(start: &Path, root: &Path, classifier: &Classifier, options: &ScanOptions, scan: &mut Scan) {
     let (sender, receiver) = mpsc::channel();
     let visitor = Visitor {
         root,
@@ -152,7 +168,7 @@ fn scan_root(root: &Path, classifier: &Classifier, options: &ScanOptions, scan: 
         options,
     };
 
-    configure(&mut WalkBuilder::new(root), options)
+    configure(&mut WalkBuilder::new(start), options)
         .build_parallel()
         .run(|| {
             let sender = sender.clone();
@@ -170,6 +186,32 @@ fn scan_root(root: &Path, classifier: &Classifier, options: &ScanOptions, scan: 
             Message::SkippedCount => scan.skipped_count += 1,
             Message::Failure(failure) => scan.failures.push(*failure),
             Message::Repository(path) => scan.repositories.push(path),
+        }
+    }
+}
+
+/// Walks again every directory whose read was interrupted by a signal, from `scan.failures[from..]`.
+///
+/// `EINTR` says a signal landed mid-read, not that the directory cannot be read, and the walker
+/// offers no way to resume the entry it gave up on — so the directory is walked afresh as its own
+/// subtree, classified against the same root. One that is interrupted again is retried, a few
+/// times, and only then left in the report as the interruption it is.
+fn retry_interrupted(root: &Path, classifier: &Classifier, options: &ScanOptions, scan: &mut Scan, from: usize) {
+    for _ in 0..INTERRUPTED_RETRIES {
+        let mut pending = Vec::new();
+        let mut kept = Vec::new();
+        for failure in scan.failures.split_off(from) {
+            match failure.path.clone().filter(|_| failure.transient) {
+                Some(path) => pending.push(path),
+                None => kept.push(failure),
+            }
+        }
+        scan.failures.extend(kept);
+        if pending.is_empty() {
+            return;
+        }
+        for path in pending {
+            walk_into(&path, root, classifier, options, scan);
         }
     }
 }
@@ -792,5 +834,74 @@ mod tests {
         let excludes = PatternSet::default();
         assert!(excludes.is_empty());
         assert_eq!(excludes.matched(Path::new("/anything")), None);
+    }
+
+    /// The walker wraps a read failure in a depth marker, and the path it names was being
+    /// dropped on the way out, so the JSON carried `null` and the path only in the message.
+    #[test]
+    #[cfg(unix)]
+    fn should_name_the_directory_it_cannot_read_and_call_it_inaccessible() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = tree(&["locked/inside.txt", "open/inside.txt"]);
+        let locked = fixture.path().join("locked");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).expect("a mode");
+        let readable = std::fs::read_dir(&locked).is_ok();
+
+        let scan = run(fixture.path(), &verbose());
+
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).expect("a mode");
+        if readable {
+            return; // running as root: nothing to refuse
+        }
+        assert_eq!(scan.failures.len(), 1, "{:?}", scan.failures);
+        assert_eq!(scan.failures[0].path.as_deref(), Some(locked.as_path()));
+        assert!(scan.failures[0].inaccessible);
+        assert!(!scan.failures[0].transient);
+    }
+
+    /// `EINTR` is a signal landing mid-read, not a verdict on the directory. The walker cannot
+    /// resume the entry, so the scan walks the directory again itself rather than reporting it.
+    #[test]
+    fn should_walk_a_directory_again_when_its_read_was_interrupted() {
+        let fixture = tree(&["app/Cargo.toml", "app/target/debug/out"]);
+        let root = fixture.path();
+        let mut scan = Scan {
+            failures: vec![WalkFailure {
+                path: Some(root.join("app")),
+                message: "Interrupted system call (os error 4)".to_owned(),
+                transient: true,
+                inaccessible: false,
+            }],
+            ..Scan::default()
+        };
+        let visitor_root = root.to_path_buf();
+
+        retry_interrupted(&visitor_root, &classifier(), &verbose(), &mut scan, 0);
+
+        assert!(scan.failures.is_empty(), "{:?}", scan.failures);
+        assert_eq!(found(&scan, root), vec!["app/target"]);
+    }
+
+    /// A directory that keeps failing is still reported, as the interruption it is, rather than
+    /// retried forever.
+    #[test]
+    fn should_give_up_on_a_directory_that_stays_interrupted() {
+        let fixture = tree(&["app/Cargo.toml"]);
+        let gone = fixture.path().join("vanished");
+        let mut scan = Scan {
+            failures: vec![WalkFailure {
+                path: Some(gone.clone()),
+                message: "Interrupted system call (os error 4)".to_owned(),
+                transient: true,
+                inaccessible: false,
+            }],
+            ..Scan::default()
+        };
+
+        retry_interrupted(fixture.path(), &classifier(), &verbose(), &mut scan, 0);
+
+        assert_eq!(scan.failures.len(), 1);
+        assert_eq!(scan.failures[0].path.as_deref(), Some(gone.as_path()));
     }
 }
