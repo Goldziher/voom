@@ -14,6 +14,21 @@ use ignore::WalkState;
 use super::{Message, NEVER_DESCEND, ScanOptions, Skipped, WalkFailure};
 use crate::classify::{Classifier, Finding, Provenance, SkipReason, Verdict, is_dependency_dir};
 
+/// The path a walk error is about, however deeply the walker wrapped it.
+///
+/// The walker nests a path inside a depth marker, so matching only the outermost variant
+/// returns nothing for exactly the read failures that carry one — and the report then had the
+/// path only inside the message text.
+fn failing_path(error: &ignore::Error) -> Option<PathBuf> {
+    match error {
+        ignore::Error::WithPath { path, .. } => Some(path.clone()),
+        ignore::Error::WithDepth { err, .. } | ignore::Error::WithLineNumber { err, .. } => failing_path(err),
+        ignore::Error::Loop { child, .. } => Some(child.clone()),
+        ignore::Error::Partial(errors) => errors.iter().find_map(failing_path),
+        _ => None,
+    }
+}
+
 /// Classifies one entry per call, from whichever worker thread produced it.
 #[derive(Clone, Copy)]
 pub(super) struct Visitor<'a> {
@@ -31,21 +46,15 @@ impl Visitor<'_> {
         let entry = match result {
             Ok(entry) => entry,
             Err(error) => {
-                let path = match &error {
-                    ignore::Error::WithPath { path, .. } => Some(path.clone()),
-                    _ => None,
-                };
+                let kind = error.io_error().map(std::io::Error::kind);
                 // `EINTR` means the read was interrupted by a signal, not that the directory
-                // could not be read. The walker's callback gives no way to resume the entry, so
-                // it cannot be retried from here — but it can be told apart from a real failure
-                // instead of being reported as one.
-                let transient = error
-                    .io_error()
-                    .is_some_and(|io| io.kind() == std::io::ErrorKind::Interrupted);
+                // could not be read; `scan_root` walks such a directory again before it is
+                // reported at all. `EPERM` and `EACCES` both surface as `PermissionDenied`.
                 let failure = WalkFailure {
-                    path,
+                    path: failing_path(&error),
                     message: error.to_string(),
-                    transient,
+                    transient: kind == Some(std::io::ErrorKind::Interrupted),
+                    inaccessible: kind == Some(std::io::ErrorKind::PermissionDenied),
                 };
                 // Sends cannot fail here: `scan_root` owns the `Receiver` and holds it until
                 // `WalkBuilder::run` returns, which is after every worker has finished. The

@@ -382,10 +382,18 @@ pub struct PruneArgs {
     /// Print the machine-global tool caches `--clean-caches` can remove, and exit without
     /// scanning.
     ///
-    /// By default only the caches present on this machine, each with its path and size;
+    /// By default only the caches present on this machine, each with its path;
     /// `--verbose` prints the whole table, absent locations and markers included.
     #[arg(long, help_heading = "Output")]
     pub list_caches: bool,
+
+    /// With `--list-caches`, measure each cache and print its size.
+    ///
+    /// Off by default because sizing is the slow part: a machine's caches run to tens of
+    /// gigabytes and millions of files, and the listing is otherwise instant. The figure comes
+    /// from the sizer the sweep uses, so it is what `--clean-caches` would reclaim.
+    #[arg(long, requires = "list_caches", help_heading = "Output")]
+    pub sizes: bool,
 
     /// Remove directories that declare themselves regenerable with a `CACHEDIR.TAG`.
     ///
@@ -626,117 +634,159 @@ pub fn render_suggestions(suggestions: &[crate::suggest::Suggestion], out: &mut 
 
 /// Prints the cache table, resolved against this machine.
 ///
-/// By default only the caches that actually exist here: one line per location, the path and how
-/// much of the disk it holds. `--verbose` prints the whole table — every known location with
-/// whether it is present and whether a marker proves it, the markers themselves, and what
-/// removing each cache costs.
+/// By default only the caches that actually exist here: one line per location. `--verbose`
+/// prints the whole table — every known location with whether it is present and whether a
+/// marker proves it, the markers themselves, and what removing each cache costs. `measure`
+/// adds how much disk each present location holds; it is opt-in because sizing is the only
+/// part of this that is not instant.
 ///
 /// # Errors
 ///
 /// Propagates write failures.
-pub fn render_caches(out: &mut impl io::Write, verbose: bool) -> io::Result<()> {
+pub fn render_caches(out: &mut impl io::Write, verbose: bool, measure: bool) -> io::Result<()> {
+    let home = dirs::home_dir();
+    let sizes = if measure {
+        present_cache_sizes(home.as_deref())
+    } else {
+        std::collections::HashMap::new()
+    };
+    let size_of = |path: &Path| {
+        if measure {
+            humansize::format_size(sizes.get(path).copied().unwrap_or(0), humansize::DECIMAL)
+        } else {
+            String::new()
+        }
+    };
+    if verbose {
+        render_cache_table(out, home.as_deref(), &size_of)
+    } else {
+        render_cache_list(out, home.as_deref(), &size_of)
+    }
+}
+
+/// The whole table: every known location with its state, the markers, and what losing each costs.
+fn render_cache_table(
+    out: &mut impl io::Write,
+    home: Option<&Path>,
+    size_of: &dyn Fn(&Path) -> String,
+) -> io::Result<()> {
     use owo_colors::OwoColorize;
 
-    let home = dirs::home_dir();
-    let sizes = present_cache_sizes(home.as_deref());
-
-    if verbose {
-        for cache in crate::caches::CACHES {
-            writeln!(out, "{} {}", cache.name.bold(), format_args!("({})", cache.id).dimmed())?;
-            for location in cache.locations {
-                // The state is resolved against this machine rather than described in the
-                // abstract, because the question a reader actually has is whether the entry is
-                // worth naming *here* — and "present but unproven" is a real answer that a table
-                // of paths alone could not give.
-                let resolved = home.as_ref().map(|home| home.join(location));
-                let (size, state) = match resolved.as_deref() {
-                    Some(path) if !path.is_dir() => (String::new(), "not on this machine".dimmed().to_string()),
-                    Some(path) => {
-                        let size = humansize::format_size(sizes.get(path).copied().unwrap_or(0), humansize::DECIMAL);
-                        let state = if cache.proven_in(path) {
-                            "present".green().to_string()
-                        } else {
-                            "present, but no marker proves it".yellow().to_string()
-                        };
-                        (size, state)
-                    }
-                    None => (String::new(), "home directory unknown".dimmed().to_string()),
-                };
-                let size = if size.is_empty() {
-                    String::new()
-                } else {
-                    format!("{size:>12}")
-                };
-                writeln!(out, "  ~/{location}  {size}  {state}")?;
-            }
-            writeln!(out, "  markers: {} (inside)", cache.markers.join(", "))?;
-            writeln!(out, "  {}", cache.note.dimmed())?;
-            writeln!(out)?;
+    for cache in crate::caches::CACHES {
+        writeln!(out, "{} {}", cache.name.bold(), format_args!("({})", cache.id).dimmed())?;
+        for location in cache.locations {
+            // The state is resolved against this machine rather than described in the
+            // abstract, because the question a reader actually has is whether the entry is
+            // worth naming *here* — and "present but unproven" is a real answer that a table
+            // of paths alone could not give.
+            let resolved = home.map(|home| home.join(location));
+            let (size, state) = match resolved.as_deref() {
+                Some(path) if !path.is_dir() => (String::new(), "not on this machine".dimmed().to_string()),
+                Some(path) => {
+                    let size = size_of(path);
+                    let state = if cache.proven_in(path) {
+                        "present".green().to_string()
+                    } else {
+                        "present, but no marker proves it".yellow().to_string()
+                    };
+                    (size, state)
+                }
+                None => (String::new(), "home directory unknown".dimmed().to_string()),
+            };
+            let size = if size.is_empty() {
+                String::new()
+            } else {
+                format!("{size:>12}")
+            };
+            writeln!(out, "  ~/{location}  {size}  {state}")?;
         }
-        writeln!(
-            out,
-            "None of these is ever removed unless it lies under the tree being swept, and never \
+        writeln!(out, "  markers: {} (inside)", cache.markers.join(", "))?;
+        if !cache.in_all {
+            writeln!(
+                out,
+                "  {}",
+                "not part of a bare --clean-caches; name it to remove it".yellow()
+            )?;
+        }
+        writeln!(out, "  {}", cache.note.dimmed())?;
+        writeln!(out)?;
+    }
+    writeln!(
+        out,
+        "None of these is ever removed unless it lies under the tree being swept, and never \
              without its marker. A bare `--clean-caches` removes every cache; `--clean-caches=<id>` \
              removes one, comma-separated for several."
-        )?;
-        writeln!(
-            out,
-            "The same ids can sit in `[caches] enable = [\"<id>\"]` in voom.toml."
-        )?;
-        writeln!(
-            out,
-            "{}",
-            "A cache is only reachable when it lies under the tree being swept.".dimmed()
-        )?;
-        writeln!(
-            out,
-            "`bazel` is a reserved id, not a row here: a bare `--clean-caches` or \
+    )?;
+    writeln!(
+        out,
+        "The same ids can sit in `[caches] enable = [\"<id>\"]` in voom.toml."
+    )?;
+    writeln!(
+        out,
+        "{}",
+        "A cache is only reachable when it lies under the tree being swept.".dimmed()
+    )?;
+    writeln!(
+        out,
+        "`bazel` is a reserved id, not a row here: a bare `--clean-caches` or \
              `--clean-caches=bazel` clears Bazel's output bases, install bases and download cache \
              machine-wide, stopping running servers first."
-        )
-    } else {
-        let mut rows: Vec<(&str, String)> = Vec::new();
-        for cache in crate::caches::CACHES {
-            for location in cache.locations {
-                let Some(path) = home.as_ref().map(|home| home.join(location)) else {
-                    continue;
-                };
-                if !path.is_dir() {
-                    continue;
-                }
-                let size = humansize::format_size(sizes.get(&path).copied().unwrap_or(0), humansize::DECIMAL);
-                rows.push((location, size));
+    )
+}
+
+/// The caches present on this machine, one line per location.
+fn render_cache_list(
+    out: &mut impl io::Write,
+    home: Option<&Path>,
+    size_of: &dyn Fn(&Path) -> String,
+) -> io::Result<()> {
+    use owo_colors::OwoColorize;
+
+    let mut rows: Vec<(&str, String)> = Vec::new();
+    for cache in crate::caches::CACHES {
+        for location in cache.locations {
+            let Some(path) = home.map(|home| home.join(location)) else {
+                continue;
+            };
+            if !path.is_dir() {
+                continue;
             }
+            rows.push((location, size_of(&path)));
         }
-        if rows.is_empty() {
-            writeln!(out, "{}", "No known tool caches found on this machine.".bold())?;
-        } else {
-            // The path column is padded to its longest row so the sizes line up.
-            let width = rows
-                .iter()
-                .map(|(location, _)| location.chars().count())
-                .max()
-                .unwrap_or(0);
-            for (location, size) in rows {
+    }
+    if rows.is_empty() {
+        writeln!(out, "{}", "No known tool caches found on this machine.".bold())?;
+    } else {
+        // The path column is padded to its longest row so the sizes line up.
+        let width = rows
+            .iter()
+            .map(|(location, _)| location.chars().count())
+            .max()
+            .unwrap_or(0);
+        for (location, size) in rows {
+            if size.is_empty() {
+                writeln!(out, "  {}", format!("~/{location}").dimmed())?;
+            } else {
                 writeln!(out, "  {}  {size:>12}", format!("~/{location:<width$}").dimmed())?;
             }
         }
-        writeln!(out)?;
-        writeln!(
-            out,
-            "{}",
-            "Only caches present on this machine are listed. None is removed unless it lies under \
-             the swept tree and its marker proves it — `--verbose` for the whole table."
-                .dimmed()
-        )?;
-        writeln!(
-            out,
-            "{}",
-            "`bazel` is also clearable: a bare `--clean-caches` or `--clean-caches=bazel` clears \
-             Bazel's output bases machine-wide, stopping running servers first."
-                .dimmed()
-        )
     }
+    writeln!(out)?;
+    writeln!(
+        out,
+        "{}",
+        "Only caches present on this machine are listed. None is removed unless it lies under \
+             the swept tree and its marker proves it — `--verbose` for the whole table, `--sizes` \
+             for how much each holds."
+            .dimmed()
+    )?;
+    writeln!(
+        out,
+        "{}",
+        "`bazel` is also clearable: a bare `--clean-caches` or `--clean-caches=bazel` clears \
+             Bazel's output bases machine-wide, stopping running servers first."
+            .dimmed()
+    )
 }
 
 /// The size of every known cache location that exists on this machine.

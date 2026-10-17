@@ -23,9 +23,13 @@ use std::path::{Path, PathBuf};
 use humansize::{DECIMAL, format_size};
 use owo_colors::{OwoColorize, Style};
 
+mod failures;
 mod footer;
 mod table;
 
+#[cfg(test)]
+use failures::COLLAPSE_AFTER;
+use failures::failure_lines;
 use table::{Line, write_block};
 
 use super::{Entry, RunResult};
@@ -253,63 +257,6 @@ fn skip_lines(result: &RunResult, base: Option<&Path>) -> Vec<Line> {
         .collect()
 }
 
-/// How many walk errors with one and the same message are listed before the rest collapse into a
-/// count. A `$HOME` sweep on macOS meets a hundred-odd privacy-protected directories under
-/// `~/Library`, every one `Operation not permitted`; listing them all buries the artifacts.
-const COLLAPSE_AFTER: usize = 5;
-
-fn failure_lines(result: &RunResult, verbose: bool, base: Option<&Path>) -> Vec<Line> {
-    let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-    let mut hidden: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
-    let mut lines: Vec<Line> = result
-        .failures
-        .iter()
-        // A transient interruption is not something the reader can act on, and a $HOME sweep
-        // produces a handful every time. Listing them beside real permission failures is what
-        // teaches people to skim the section.
-        .filter(|failure| verbose || !failure.transient)
-        .filter(|failure| {
-            if verbose {
-                return true;
-            }
-            let count = seen.entry(failure.message.as_str()).or_default();
-            *count += 1;
-            if *count > COLLAPSE_AFTER {
-                *hidden.entry(failure.message.as_str()).or_default() += 1;
-                false
-            } else {
-                true
-            }
-        })
-        .map(|failure| Line {
-            label: if failure.transient { "interrupted" } else { "walk error" },
-            label_style: if failure.transient {
-                palette::quiet()
-            } else {
-                palette::failed()
-            },
-            size: None,
-            tag: None,
-            tag_style: palette::quiet(),
-            path: failure
-                .path
-                .as_deref()
-                .map_or_else(|| "-".to_owned(), |path| shorten(path, base)),
-            detail: Some(failure.message.clone()),
-        })
-        .collect();
-    lines.extend(hidden.into_iter().map(|(message, count)| Line {
-        label: "walk error",
-        label_style: palette::failed(),
-        size: None,
-        tag: None,
-        tag_style: palette::quiet(),
-        path: format!("… and {count} more"),
-        detail: Some(format!("{message} (--verbose lists them all)")),
-    }));
-    lines
-}
-
 /// Renders the whole report.
 ///
 /// # Errors
@@ -429,14 +376,16 @@ mod tests {
         let mut result = result(Vec::new(), true);
         result.failures = vec![
             crate::scan::WalkFailure {
-                path: Some(path("/projects/locked")),
-                message: "Permission denied (os error 13)".to_owned(),
+                path: Some(path("/projects/flaky")),
+                message: "Input/output error (os error 5)".to_owned(),
                 transient: false,
+                inaccessible: false,
             },
             crate::scan::WalkFailure {
                 path: Some(path("/projects/containers")),
                 message: "Interrupted system call (os error 4)".to_owned(),
                 transient: true,
+                inaccessible: false,
             },
         ];
         result
@@ -448,7 +397,7 @@ mod tests {
     fn should_not_list_a_transient_interruption_by_default() {
         let text = render_to_string(&interrupted(), HumanOptions::default());
 
-        assert!(text.contains("Permission denied"), "{text}");
+        assert!(text.contains("Input/output error"), "{text}");
         assert!(!text.contains("Interrupted system call"), "{text}");
     }
 
@@ -462,6 +411,7 @@ mod tests {
                 path: Some(path(&format!("/home/Library/protected{index}"))),
                 message: "Operation not permitted (os error 1)".to_owned(),
                 transient: false,
+                inaccessible: false,
             })
             .collect();
 
@@ -480,6 +430,47 @@ mod tests {
             40,
             "{verbose_text}"
         );
+    }
+
+    fn protected(count: usize) -> RunResult {
+        let mut result = result(Vec::new(), true);
+        result.failures = (0..count)
+            .map(|index| crate::scan::WalkFailure {
+                path: Some(path(&format!("/home/Library/protected{index}"))),
+                message: "Operation not permitted (os error 1)".to_owned(),
+                transient: false,
+                inaccessible: true,
+            })
+            .collect();
+        result
+    }
+
+    /// Directories the user may not read are expected on macOS and nothing can be done about
+    /// them, so a default report says how many in one line instead of listing a hundred.
+    #[test]
+    fn should_summarise_inaccessible_directories_in_one_footer_line() {
+        let text = render_to_string(&protected(108), HumanOptions::default());
+
+        assert_eq!(text.matches("Operation not permitted").count(), 0, "{text}");
+        assert!(text.contains("108 directories inaccessible"), "{text}");
+        assert!(text.contains("--verbose"), "{text}");
+        assert!(!text.contains("walk error"), "it is not presented as an error: {text}");
+    }
+
+    #[test]
+    fn should_say_directory_in_the_singular_for_one_inaccessible_directory() {
+        let text = render_to_string(&protected(1), HumanOptions::default());
+
+        assert!(text.contains("1 directory inaccessible"), "{text}");
+    }
+
+    #[test]
+    fn should_list_every_inaccessible_directory_when_asked_for_detail() {
+        let text = render_to_string(&protected(12), verbose());
+
+        assert_eq!(text.matches("Operation not permitted").count(), 12, "{text}");
+        assert!(text.contains("inaccessible"), "{text}");
+        assert!(text.contains("protected11"), "{text}");
     }
 
     #[test]
