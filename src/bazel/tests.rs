@@ -393,3 +393,24 @@ fn should_leave_machine_level_candidates_to_a_sweep_that_covers_home() {
     scoped.clear_all = true;
     assert!(!prune(&scoped).expect("the root resolves").output_bases.is_empty());
 }
+
+/// The second pass after merged-worktree removal: a base the first pass kept as owned, and the
+/// later pass found orphaned and removed, is reported once — as removed.
+#[test]
+fn should_let_a_later_pass_replace_what_an_earlier_one_kept() {
+    let fixture = tree(&["_bazel_dev/abc/execroot/armis/BUILD", "worktree/x"]);
+    let root = fixture.path().join("_bazel_dev");
+    let owner = fixture.path().join("worktree");
+    std::fs::write(root.join("abc/DO_NOT_BUILD_HERE"), owner.display().to_string()).unwrap();
+
+    let mut first = prune(&options(&root)).expect("the root resolves");
+    assert!(matches!(first.output_bases[0].state, OutputBaseState::Owned { .. }));
+
+    std::fs::remove_dir_all(&owner).unwrap();
+    let second = prune(&options(&root)).expect("the root resolves");
+    first.absorb(second);
+
+    assert_eq!(first.output_bases.len(), 1);
+    assert_eq!(first.output_bases[0].outcome, Some(Outcome::Removed));
+    assert_eq!(first.totals().removed, 1);
+}
