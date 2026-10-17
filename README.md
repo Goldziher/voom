@@ -184,6 +184,16 @@ The ecosystem catalog covers build output; it has nothing to say about `~/.cargo
 | `go-mod` | Go module cache | `~/go/pkg/mod` |
 | `npm` | npm cache | `~/.npm/_cacache` |
 | `pnpm` | pnpm metadata cache | `~/Library/Caches/pnpm`, `~/.cache/pnpm` |
+| `pnpm-store` | pnpm content-addressable store | `~/Library/pnpm/store`, `~/.local/share/pnpm/store`, `~/.pnpm-store` |
+| `pip` | pip cache | `~/Library/Caches/pip`, `~/.cache/pip` |
+| `homebrew` | Homebrew downloads | `~/Library/Caches/Homebrew`, `~/.cache/Homebrew` |
+| `prek` | prek cache | `~/.cache/prek` |
+| `pre-commit` | pre-commit cache | `~/.cache/pre-commit` |
+| `ms-playwright` | Playwright browsers | `~/Library/Caches/ms-playwright`, `~/.cache/ms-playwright` |
+| `node-gyp` | node-gyp headers | `~/Library/Caches/node-gyp`, `~/.cache/node-gyp` |
+| `golangci-lint` | golangci-lint cache | `~/Library/Caches/golangci-lint`, `~/.cache/golangci-lint` |
+| `tree-sitter-language-pack` | tree-sitter language pack | `~/Library/Caches/tree-sitter-language-pack`, `~/.cache/tree-sitter-language-pack` |
+| `huggingface` | Hugging Face hub | `~/.cache/huggingface/hub` |
 | `pub` | Dart pub cache | `~/.pub-cache` |
 | `deno` | Deno cache | `~/Library/Caches/deno`, `~/.cache/deno`, `~/.deno` |
 | `poly` | poly cache | `~/.cache/poly`, `~/Library/Caches/poly`, `~/AppData/Local/poly` |
@@ -196,7 +206,8 @@ tool wrote *inside* it, most often the cross-tool [`CACHEDIR.TAG`](https://bford
 None is ever removed without that marker, and unless it lies under the tree being swept:
 
 ```bash
-voom --list-caches                      # the caches on this machine, each with its size
+voom --list-caches                      # the caches on this machine (instant)
+voom --list-caches --sizes              # ... each measured, which walks every one of them
 voom --list-caches --verbose            # ... and every location, marker and note the table knows
 voom --dry-run --clean-caches ~ /tmp    # named caches plus signature-verified tagged build output
 voom --dry-run --clear-caches ~ /tmp    # the same flag, spelled that way
@@ -210,8 +221,15 @@ configuration, unless `[tagged] enabled = false` overrides it; the full CLI flag
 configuration. Cache clearing never implies worktree removal.
 
 By default `--list-caches` prints only the cache locations that actually exist here, each with
-its path and how much disk it holds; `--verbose` shows the whole table — every location the
+its path, without measuring anything; `--sizes` adds how much disk each holds (tens of gigabytes
+take as long to count as to list), and `--verbose` shows the whole table — every location the
 table knows about, whether it is present here, and the marker that would prove it.
+
+`huggingface` is the one entry a bare `--clean-caches` leaves alone: models are gigabytes, some
+gated or withdrawn, so it is removed only by naming it. `pnpm-store` is safe to remove — projects
+hold hard links into it — but the next install of anything not yet linked downloads it again.
+Browsers (Chrome, puppeteer's) and JetBrains' system directories are absent for lack of a marker
+their tools write; JetBrains' also holds Local History.
 
 A cache whose contents are only shard directories — sccache, zig, NuGet, Maven — is deliberately
 absent: the marker would prove nothing the path had not already said. See

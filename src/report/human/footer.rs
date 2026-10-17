@@ -127,6 +127,21 @@ pub(super) fn write_footer(
             writeln!(out, "{GUTTER}{}", "--verbose for why".style(palette::quiet()))?;
         }
     }
+    let inaccessible = result.failures.iter().filter(|failure| failure.inaccessible).count();
+    if inaccessible > 0 {
+        // One line, never a list: macOS protects a hundred-odd directories under `~/Library`
+        // that no user action can open, and each is a line nobody can act on. `-v` lists them.
+        let text = format!(
+            "{inaccessible} {} inaccessible (permission denied){}",
+            if inaccessible == 1 { "directory" } else { "directories" },
+            if options.verbose {
+                ""
+            } else {
+                " — --verbose lists them"
+            },
+        );
+        writeln!(out, "{GUTTER}{}", text.style(palette::quiet()))?;
+    }
     if totals.refused > 0 {
         let text = format!(
             "{} {} refused by a safety rail",

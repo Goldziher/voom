@@ -562,13 +562,13 @@ fn should_accept_force_and_leave_a_dry_run_byte_identical() {
     );
 }
 
-/// `--list-caches` lists only the caches present on this machine, each with its path and size,
-/// and exits without ever scanning — a tree must stay untouched regardless of what it holds.
+/// `--list-caches` lists only the caches present on this machine, each with its path, and exits
+/// without ever scanning or measuring — a tree must stay untouched regardless of what it holds.
 /// Driven with a fake `HOME`, so a machine that happens to lack, say, a Cargo registry does not
 /// change what the command prints.
 #[test]
 #[cfg(unix)]
-fn should_list_only_present_caches_with_their_sizes() {
+fn should_list_only_present_caches_without_measuring_them() {
     let home = TempDir::new().unwrap();
 
     let registry = home.path().join(".cargo/registry");
@@ -592,8 +592,8 @@ fn should_list_only_present_caches_with_their_sizes() {
         .success()
         .stdout(contains("~/.cargo/registry"))
         .stdout(contains("~/.npm/_cacache"))
-        // The registry holds ~1.5 MB, so the size column proves it measured rather than counted.
-        .stdout(contains("1.5"))
+        // Sizing a machine's caches walks tens of gigabytes, so it is asked for with `--sizes`.
+        .stdout(contains("MB").not())
         .stdout(contains("~/.cache/uv").not());
 
     assert_eq!(
@@ -601,6 +601,33 @@ fn should_list_only_present_caches_with_their_sizes() {
         before,
         "listing the cache table must not scan or remove"
     );
+}
+
+/// `--sizes` measures what the listing names, with the sweep's own sizer, so the figure is what
+/// `--clean-caches` would reclaim.
+#[test]
+#[cfg(unix)]
+fn should_size_the_listing_when_asked() {
+    let home = TempDir::new().unwrap();
+    let registry = home.path().join(".cargo/registry");
+    fs::create_dir_all(registry.join("src")).unwrap();
+    fs::write(registry.join("CACHEDIR.TAG"), b"Signature: 8e477066c4a3e6a4\n").unwrap();
+    fs::write(registry.join("src/lib.rs"), vec![0xA5; 1_500_000]).unwrap();
+
+    voom()
+        .env("HOME", home.path())
+        .args(["--list-caches", "--sizes"])
+        .assert()
+        .success()
+        .stdout(contains("~/.cargo/registry"))
+        .stdout(contains("1.5"));
+
+    voom()
+        .env("HOME", home.path())
+        .args(["--list-caches", "--sizes", "--verbose"])
+        .assert()
+        .success()
+        .stdout(contains("1.5"));
 }
 
 /// `--verbose` prints the whole table — every known location with its state, the markers, and
@@ -627,7 +654,6 @@ fn should_list_the_whole_table_when_verbose() {
         .stdout(contains("Cargo registry"))
         .stdout(contains("(cargo-registry)"))
         .stdout(contains("~/.cargo/registry"))
-        .stdout(contains("1.5"))
         .stdout(contains("present"))
         .stdout(contains("~/.npm/_cacache"))
         .stdout(contains("present, but no marker proves it"))
@@ -708,6 +734,107 @@ fn should_clean_every_proven_cache_with_an_explicit_all() {
         !home.path().join(".cargo/registry").exists() && !home.path().join(".cargo/git").exists(),
         "--clean-caches=all removes every proven cache, exactly as the bare flag does"
     );
+}
+
+/// Plants a tool cache the way its tool leaves it: the directory, and one proving marker.
+#[cfg(unix)]
+fn plant_cache(home: &Path, location: &str, marker: &str) -> std::path::PathBuf {
+    let dir = home.join(location);
+    let proof = dir.join(marker);
+    fs::create_dir_all(proof.parent().unwrap()).unwrap();
+    fs::write(proof, b"x").unwrap();
+    fs::write(dir.join("payload.bin"), vec![0xA5; 4096]).unwrap();
+    dir
+}
+
+/// The bare flag and `=all` are documented as one request. Run side by side over the same home
+/// they must agree on every path, and the audit that found one extra directory in `=all` was in
+/// fact racing a concurrent build that created `target/` between the two runs.
+#[test]
+#[cfg(unix)]
+fn should_plan_the_same_removals_for_a_bare_flag_and_for_all() {
+    let home = TempDir::new().unwrap();
+    plant_cache(home.path(), ".cargo/registry", "CACHEDIR.TAG");
+    plant_cache(home.path(), "Library/pnpm/store", "v11/index.db");
+    plant_cache(home.path(), ".cache/huggingface/hub", ".locks");
+    let tagged = home.path().join("work/relocated-target");
+    fs::create_dir_all(&tagged).unwrap();
+    fs::write(
+        tagged.join("CACHEDIR.TAG"),
+        b"Signature: 8a477f597d28d172789f06886806bc55\n",
+    )
+    .unwrap();
+
+    let planned = |flag: &str| -> Vec<String> {
+        let output = voom()
+            .env("HOME", home.path())
+            .args(["--dry-run", "--no-git", "--no-bazel", "--format", "json", flag])
+            .arg(home.path())
+            .output()
+            .unwrap();
+        let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let mut paths: Vec<String> = document["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|artifact| artifact["path"].as_str().unwrap().to_owned())
+            .collect();
+        paths.sort();
+        paths
+    };
+
+    let bare = planned("--clean-caches");
+    assert_eq!(bare, planned("--clean-caches=all"));
+    assert!(bare.iter().any(|path| path.ends_with("relocated-target")), "{bare:?}");
+    assert!(bare.iter().any(|path| path.ends_with("Library/pnpm/store")), "{bare:?}");
+}
+
+/// Models are gigabytes and sometimes gated, so the bare flag leaves them and only their id
+/// removes them.
+#[test]
+#[cfg(unix)]
+fn should_remove_the_expensive_caches_only_when_named() {
+    let home = TempDir::new().unwrap();
+    let models = plant_cache(home.path(), ".cache/huggingface/hub", ".locks");
+    let pip = plant_cache(home.path(), "Library/Caches/pip", "http-v2");
+
+    voom()
+        .env("HOME", home.path())
+        .args(["--no-git", "--no-bazel", "--clean-caches"])
+        .arg(home.path())
+        .assert()
+        .success();
+    assert!(models.exists(), "a bare --clean-caches keeps the models");
+    assert!(!pip.exists(), "and still removes the proven pip cache");
+
+    voom()
+        .env("HOME", home.path())
+        .args(["--no-git", "--no-bazel", "--clean-caches=huggingface"])
+        .arg(home.path())
+        .assert()
+        .success();
+    assert!(!models.exists(), "naming it removes it");
+}
+
+/// pnpm's store sits under `Library/pnpm`, beside the global installs, so the walk must prune
+/// the parent and still reach the store by name — and only the store.
+#[test]
+#[cfg(unix)]
+fn should_remove_the_pnpm_store_without_touching_the_global_installs() {
+    let home = TempDir::new().unwrap();
+    let store = plant_cache(home.path(), "Library/pnpm/store", "v11/index.db");
+    let global = home.path().join("Library/pnpm/global/5/node_modules/tool");
+    fs::create_dir_all(&global).unwrap();
+
+    voom()
+        .env("HOME", home.path())
+        .args(["--no-git", "--no-bazel", "--clean-caches=pnpm-store"])
+        .arg(home.path())
+        .assert()
+        .success();
+
+    assert!(!store.exists());
+    assert!(global.exists(), "the global installs beside the store are not a cache");
 }
 
 /// `--clean-caches=<ids>` removes only the named caches, so the command can stay explicit about
