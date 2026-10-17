@@ -56,6 +56,17 @@ pub fn is_tagged(dir: &Path) -> bool {
     file.read_exact(&mut head).is_ok() && head == *SIGNATURE
 }
 
+/// Whether `dir` is a Python virtual environment: it holds the `pyvenv.cfg` every venv creator
+/// writes at its root.
+///
+/// A venv is regenerable in the sense the tag means, which is why uv tags them. But a tool
+/// installed into one (`uv tool install`, `pipx`) is a working command, and removing it is an
+/// uninstall rather than a cache clear.
+#[must_use]
+pub fn is_virtualenv(dir: &Path) -> bool {
+    std::fs::symlink_metadata(dir.join("pyvenv.cfg")).is_ok_and(|metadata| metadata.is_file())
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;

@@ -215,3 +215,14 @@ Worktree removal remains a separate explicit request.
 The scope is still the supplied scan roots: with no path, `.` is scanned. Home and temporary
 build caches require roots such as `voom -n --clear-caches ~ /tmp`; enabling the bundle does not
 turn a current-directory sweep into a whole-machine sweep.
+
+## Amendment — 2026-10-17
+
+**A tagged virtualenv is not taken by its tag.** uv writes a valid `CACHEDIR.TAG` into every
+virtualenv it creates, including the ones `uv tool install` puts each tool in under
+`~/.local/share/uv/tools/`. A full `--clean-caches` dry run on a real home directory planned to
+remove five of them — `acli` among them, the command the machine's whole workflow runs through.
+A venv is regenerable in the sense the tag means, but removing an installed tool is an
+uninstall, not a cache clear. A tagged directory holding `pyvenv.cfg` is therefore left to the
+catalog: a project's `.venv` remains the opt-in `python.venv`, and an installed tool is nobody's
+to remove. `should_never_remove_a_tagged_virtualenv` pins it.

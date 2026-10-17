@@ -229,6 +229,13 @@ impl Visitor<'_> {
         if !self.options.clean_tagged || !is_dir || !crate::tagged::is_tagged(path) {
             return false;
         }
+        // uv tags every virtualenv it creates, its tool installs included, so the tag alone
+        // would take `~/.local/share/uv/tools/<tool>` — an installed command, not a cache. A
+        // tagged directory holding `pyvenv.cfg` is left to the catalog, where a project's
+        // `.venv` is the opt-in `python.venv` and an installed tool is nobody's to remove.
+        if crate::tagged::is_virtualenv(path) {
+            return false;
+        }
         let finding = Finding {
             path: path.to_path_buf(),
             provenance: Provenance::Tagged,

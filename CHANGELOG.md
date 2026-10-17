@@ -90,6 +90,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **`--clean-tagged` (and a full `--clean-caches`) no longer removes virtualenvs.** uv tags every
+  venv it creates, tool installs included, so the tag alone took `~/.local/share/uv/tools/<tool>`
+  — an installed command. A tagged directory holding `pyvenv.cfg` is left to the catalog.
 - `--github-merged-worktrees` no longer reports a GitHub failure for a `HEAD` that exists only
   locally (HTTP 422 `No commit found for SHA`); it is simply not merged.
 
