@@ -980,3 +980,49 @@ fn should_reject_an_unknown_cache_id() {
         .stderr(contains("not a known cache"));
     assert_eq!(snapshot(tree.path()), snapshot(tree.path()), "nothing was touched");
 }
+
+/// `all` carries the machine-wide Bazel clear, which stops servers other work may be building
+/// with; `-bazel` takes exactly that back out and leaves the rest of the table.
+#[test]
+#[cfg(unix)]
+fn should_take_an_id_back_out_of_clean_caches_all() {
+    let home = TempDir::new().unwrap();
+    let pip = plant_cache(home.path(), "Library/Caches/pip", "http-v2");
+    let bazel_root = home.path().join("_bazel_dev");
+    let workspace = home.path().join("workspace");
+    fs::create_dir_all(bazel_root.join("base/execroot")).unwrap();
+    fs::create_dir_all(&workspace).unwrap();
+    fs::write(
+        bazel_root.join("base/DO_NOT_BUILD_HERE"),
+        workspace.display().to_string(),
+    )
+    .unwrap();
+
+    let planned = |flag: &str| -> serde_json::Value {
+        let output = voom()
+            .env("HOME", home.path())
+            .env(voom::bazel::ROOTS_ENV, &bazel_root)
+            .args(["--dry-run", "--no-git", "--format", "json", flag])
+            .arg(home.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    let has_pip = |document: &serde_json::Value| {
+        document["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|artifact| artifact["path"].as_str() == pip.to_str())
+    };
+    let base_state = |document: &serde_json::Value| document["bazel"]["output_bases"][0]["state"].clone();
+
+    let all = planned("--clean-caches=all");
+    assert!(has_pip(&all));
+    assert_eq!(base_state(&all), "cleared");
+
+    let without = planned("--clean-caches=all,-bazel");
+    assert!(has_pip(&without), "the rest of the table stays");
+    assert_eq!(base_state(&without), "owned", "the live base is no longer cleared");
+}

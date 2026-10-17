@@ -339,9 +339,20 @@ impl Resolver {
             );
             clean_caches.push(crate::caches::BAZEL_ID.to_owned());
         }
+        // `-id` takes one back out, so `all,-bazel` is every cache without the machine-wide Bazel
+        // clear — which stops running servers and so is the wrong half of `all` on a machine
+        // where other work is building.
+        let excluded: Vec<String> = clean_caches
+            .iter()
+            .filter_map(|id| id.strip_prefix('-').map(str::to_owned))
+            .collect();
+        clean_caches.retain(|id| !id.starts_with('-') && !excluded.contains(id));
         clean_caches.sort_unstable();
         clean_caches.dedup();
-        let unknown = crate::caches::unknown_ids(&clean_caches);
+        let unknown = crate::caches::unknown_ids(&clean_caches)
+            .into_iter()
+            .chain(crate::caches::unknown_ids(&excluded))
+            .collect::<Vec<_>>();
         if let Some(id) = unknown.first() {
             return Err(Error::UnknownCache { id: id.clone() });
         }
