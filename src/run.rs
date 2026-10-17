@@ -479,7 +479,7 @@ fn remove_all(mut to_remove: Vec<(Finding, Measured)>, guard: &Guard, removal: R
     to_remove
         .into_par_iter()
         .map(|(finding, measured)| {
-            let outcome = guard.remove(&finding.path, measured.bytes, removal);
+            let outcome = guard.remove(&finding.path, measured.bytes, removal_for(&finding, removal));
             Entry {
                 path: finding.path.clone(),
                 finding,
@@ -489,6 +489,15 @@ fn remove_all(mut to_remove: Vec<(Finding, Measured)>, guard: &Guard, removal: R
             }
         })
         .collect()
+}
+
+/// The removal settings for one finding: a cache its tool writes read-only is removed with its
+/// owner bits restored, as the tool's own clean command does, whether or not `--force` was given.
+fn removal_for(finding: &Finding, removal: Removal) -> Removal {
+    match finding.provenance {
+        crate::classify::Provenance::Cache { cache } if cache.read_only => Removal { force: true, ..removal },
+        _ => removal,
+    }
 }
 
 /// A live count of the bytes removal has freed, across every stage of the process, or nothing

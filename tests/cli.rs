@@ -1026,3 +1026,33 @@ fn should_take_an_id_back_out_of_clean_caches_all() {
     assert!(has_pip(&without), "the rest of the table stays");
     assert_eq!(base_state(&without), "owned", "the live base is no longer cleared");
 }
+
+/// Go writes its module cache read-only on purpose; `go clean -modcache` restores the bits
+/// before it unlinks, and so must voom, or the cache comes out part-way without `--force`.
+#[test]
+#[cfg(unix)]
+fn should_remove_a_read_only_module_cache_whole_without_force() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = TempDir::new().unwrap();
+    let cache = plant_cache(home.path(), "go/pkg/mod", "cache");
+    let module = cache.join("example.com/lib@v1.0.0");
+    fs::create_dir_all(&module).unwrap();
+    fs::write(module.join("lib.go"), "package lib\n").unwrap();
+    fs::set_permissions(&module, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let output = voom()
+        .env("HOME", home.path())
+        .args(["--no-git", "--no-bazel", "--clean-caches=go-mod", "--format", "json"])
+        .arg(home.path())
+        .output()
+        .unwrap();
+
+    let survived = module.exists();
+    if survived {
+        fs::set_permissions(&module, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    assert!(!survived, "the read-only module directory went with the cache");
+    assert!(!cache.exists());
+}

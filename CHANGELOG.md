@@ -50,6 +50,9 @@ All notable changes to this project are documented here. The format follows
 - **A Bazel output base is removed with its permissions repaired.** Bazel writes its outputs
   read-only, so removal restored the owner's bits only under `--force`, and an orphaned base
   without it failed part-way. Never the base's parent, never a hard-linked file.
+- **A cache its tool writes read-only is removed whole.** Go's module cache is `0555` by design
+  and came out part-way without `--force`; it is now removed with the owner's bits restored, as
+  `go clean -modcache` does. The catalog marks such entries `read_only`.
 - **The Bazel stage is scoped to the swept trees.** `voom ~/code/worktrees` considers only output
   bases whose workspace lies under it; what names no workspace (an unmarked base, install bases,
   the download cache) only when a swept tree covers the home directory. `--clean-caches=bazel`
