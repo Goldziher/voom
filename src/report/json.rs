@@ -111,6 +111,7 @@ pub fn document(result: &RunResult) -> Value {
                 "path": failure.path.as_ref().map(|path| path.display().to_string()),
                 "detail": failure.message,
                 "transient": failure.transient,
+                "inaccessible": failure.inaccessible,
             }))
             .collect::<Vec<_>>(),
         "totals": {
@@ -270,17 +271,36 @@ mod tests {
                 path: Some(std::path::PathBuf::from("/projects/locked")),
                 message: "Permission denied (os error 13)".to_owned(),
                 transient: false,
+                inaccessible: false,
             },
             crate::scan::WalkFailure {
                 path: Some(std::path::PathBuf::from("/projects/containers")),
                 message: "Interrupted system call (os error 4)".to_owned(),
                 transient: true,
+                inaccessible: false,
             },
         ];
 
         let errors = document(&result)["walk_errors"].clone();
         assert_eq!(errors[0]["transient"], serde_json::json!(false));
         assert_eq!(errors[1]["transient"], serde_json::json!(true));
+    }
+
+    /// Consumers filter on these, so each failure says whether it is the expected kind, and the
+    /// path is a field of its own rather than something to be parsed out of `detail`.
+    #[test]
+    fn should_flag_inaccessible_directories_and_carry_their_path() {
+        let mut result = crate::report::fixtures::result(Vec::new(), true);
+        result.failures = vec![crate::scan::WalkFailure {
+            path: Some(std::path::PathBuf::from("/home/Library/Weather")),
+            message: "Operation not permitted (os error 1)".to_owned(),
+            transient: false,
+            inaccessible: true,
+        }];
+
+        let error = document(&result)["walk_errors"][0].clone();
+        assert_eq!(error["inaccessible"], serde_json::json!(true));
+        assert_eq!(error["path"], serde_json::json!("/home/Library/Weather"));
     }
 
     #[test]
