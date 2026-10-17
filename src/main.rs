@@ -222,8 +222,10 @@ fn prune(cli: &Cli) -> anyhow::Result<i32> {
     let code = result.exit_code(cli.prune.exit_code);
     let worktree_code = worktrees
         .as_ref()
-        .map_or(exit::SUCCESS, |worktrees| worktrees.exit_code());
-    let bazel_code = bazel.as_ref().map_or(exit::SUCCESS, |bazel| bazel.exit_code());
+        .map_or(exit::SUCCESS, voom::worktrees::WorktreePruneResult::exit_code);
+    let bazel_code = bazel
+        .as_ref()
+        .map_or(exit::SUCCESS, voom::bazel::BazelPruneResult::exit_code);
     Ok([code, worktree_code, bazel_code]
         .into_iter()
         .find(|code| *code != exit::SUCCESS)
