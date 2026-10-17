@@ -45,6 +45,13 @@ const FANOUT_DEPTH: u32 = 10;
 /// The owner bits a directory needs to be listed and emptied.
 const DIRECTORY_BITS: u32 = 0o700;
 
+/// Waits before emptying a directory again after something wrote into it during its removal.
+const RESWEEP_BACKOFF: [Duration; 3] = [
+    Duration::from_millis(10),
+    Duration::from_millis(50),
+    Duration::from_millis(250),
+];
+
 /// Waits between attempts to open a directory while the process is out of descriptors.
 const EXHAUSTED_BACKOFF: [Duration; 4] = [
     Duration::from_millis(1),
@@ -418,8 +425,41 @@ impl Remover {
     }
 
     /// Removes a directory that has just been emptied.
+    ///
+    /// A directory something wrote into between being emptied and being unlinked is emptied
+    /// again, a few times, before it is reported. A real sweep met this on `go-build`, `uv` and
+    /// Homebrew caches that other work was using while they went; each left a residue that the
+    /// next run had to take.
     fn remove_empty(&self, parent: RawFd, sub: &Sub, parent_repairable: bool) {
-        let result = match sys::unlink_at(parent, &sub.name, true) {
+        let mut result = self.unlink_empty(parent, sub, parent_repairable);
+        for wait in RESWEEP_BACKOFF {
+            if !matches!(&result, Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty) {
+                break;
+            }
+            std::thread::sleep(wait);
+            let again = Sub {
+                name: sub.name.clone(),
+                bytes: sub.bytes,
+                flags: sub.flags,
+            };
+            if let Some(Frame { fd, pending, .. }) = self.open_and_empty(parent, again) {
+                self.remove_serially(&fd, pending);
+            }
+            result = self.unlink_empty(parent, sub, parent_repairable);
+        }
+        match result {
+            Ok(()) => {
+                crate::delete::note_freed(sub.bytes);
+                self.freed.fetch_add(sub.bytes, Ordering::Relaxed);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => self.fail(error),
+        }
+    }
+
+    /// One attempt at unlinking an emptied directory, repairing what `--force` allows.
+    fn unlink_empty(&self, parent: RawFd, sub: &Sub, parent_repairable: bool) -> std::io::Result<()> {
+        match sys::unlink_at(parent, &sub.name, true) {
             Err(error) if self.repair && denied(&error) => {
                 // The directory's own immutable flag stops its removal as surely as its
                 // parent's mode does; the first is inside the artifact whatever the parent is.
@@ -434,18 +474,7 @@ impl Remover {
                 sys::unlink_at(parent, &sub.name, true)
             }
             result => result,
-        };
-        match result {
-            Ok(()) => {
-                crate::delete::note_freed(sub.bytes);
-                self.freed.fetch_add(sub.bytes, Ordering::Relaxed)
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
-            Err(error) => {
-                self.fail(error);
-                0
-            }
-        };
+        }
     }
 }
 
@@ -588,5 +617,30 @@ mod tests {
         let removed = remove_dir(&root.path().join("file.txt"), false);
         assert!(removed.error.is_some());
         assert!(root.path().join("file.txt").exists());
+    }
+
+    /// A build still writing into a cache as it goes: files appear in the directories voom has
+    /// just emptied. The removal empties them again rather than leaving a residue.
+    #[test]
+    fn should_take_files_written_into_a_directory_while_it_is_being_removed() {
+        let root = tree(&["keep.txt"]);
+        let artifact = root.path().join("artifact");
+        for index in 0..40 {
+            std::fs::create_dir_all(artifact.join(format!("d{index}"))).unwrap();
+            std::fs::write(artifact.join(format!("d{index}/f")), b"x").unwrap();
+        }
+        let writer_dir = artifact.clone();
+        let writer = std::thread::spawn(move || {
+            for round in 0..300 {
+                let _ = std::fs::write(writer_dir.join(format!("d{}/late{round}", round % 40)), b"late");
+                std::thread::sleep(Duration::from_micros(300));
+            }
+        });
+
+        let removed = remove_dir(&artifact, false);
+        writer.join().unwrap();
+
+        assert!(removed.error.is_none(), "{:?}", removed.error);
+        assert!(!artifact.exists(), "nothing the writer added survived");
     }
 }

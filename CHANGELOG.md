@@ -90,6 +90,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **A directory something writes into while it is removed is emptied again** (three times, with a
+  short wait) before it is reported. A real sweep left residues in `go-build`, `uv` and Homebrew
+  caches other work was using, and the next run had to take them.
 - **`--clean-tagged` (and a full `--clean-caches`) no longer removes virtualenvs.** uv tags every
   venv it creates, tool installs included, so the tag alone took `~/.local/share/uv/tools/<tool>`
   — an installed command. A tagged directory holding `pyvenv.cfg` is left to the catalog.
