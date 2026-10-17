@@ -1,0 +1,19 @@
+{
+  "Images": [
+    {"Containers": "0", "CreatedAt": "2000-01-01 00:00:00 +0000 UTC", "ID": "sha256:old", "Repository": "old/unused", "Tag": "1", "UniqueSize": "1GB"},
+    {"Containers": "1", "CreatedAt": "2000-01-01 00:00:00 +0000 UTC", "ID": "sha256:used", "Repository": "old/inuse", "Tag": "1", "UniqueSize": "2GB"},
+    {"Containers": "0", "CreatedAt": "2999-01-01 00:00:00 +0000 UTC", "ID": "sha256:young", "Repository": "young/unused", "Tag": "1", "UniqueSize": "4GB"},
+    {"Containers": "0", "CreatedAt": "2999-01-01 00:00:00 +0000 UTC", "ID": "sha256:dangling", "Repository": "<none>", "Tag": "<none>", "UniqueSize": "100MB"}
+  ],
+  "Containers": [],
+  "Volumes": [
+    {"Labels": "com.docker.volume.anonymous=", "Links": "0", "Name": "anon", "Size": "10MB"},
+    {"Labels": "", "Links": "0", "Name": "named", "Size": "20MB"},
+    {"Labels": "", "Links": "1", "Name": "mounted", "Size": "30MB"}
+  ],
+  "BuildCache": [
+    {"InUse": "false", "LastUsedAt": "2000-01-01 00:00:00.5 +0000 UTC", "Size": "500MB"},
+    {"InUse": "true", "LastUsedAt": "2000-01-01 00:00:00 +0000 UTC", "Size": "700MB"},
+    {"InUse": "false", "LastUsedAt": "2999-01-01 00:00:00 +0000 UTC", "Size": "900MB"}
+  ]
+}

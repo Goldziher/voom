@@ -7,7 +7,7 @@ use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 
 mod housekeeping;
 
-pub use housekeeping::{ClaudePruneArgs, GitPruneArgs, render_claude, render_git};
+pub use housekeeping::{ClaudePruneArgs, DockerPruneArgs, GitPruneArgs, render_claude, render_docker, render_git};
 
 use crate::catalog::CATALOG;
 use crate::config::resolve::Flags;
@@ -69,6 +69,12 @@ pub enum Command {
     /// Reports only, unless `--remove` is given: nothing on disk reliably says a job is done,
     /// only how long it has been quiet. See `adrs/0015-claude-code-job-scratch.md`.
     ClaudePrune(ClaudePruneArgs),
+    /// Reclaim Docker disk space: dangling images, unused images past an age, idle build cache,
+    /// and then the VM's freed blocks.
+    ///
+    /// Never removes containers or anything a container uses. Volumes only with `--volumes`. See
+    /// `adrs/0017-docker-housekeeping.md`.
+    DockerPrune(DockerPruneArgs),
 }
 
 /// `voom suggest` arguments.
@@ -210,6 +216,30 @@ pub struct PruneArgs {
     /// How long an output base may go unbuilt in before the sweep treats it as stale, e.g. `14d`.
     #[arg(long, value_name = "DURATION", help_heading = "Behaviour")]
     pub bazel_max_age: Option<String>,
+
+    /// Also prune Docker beside the sweep: dangling images, unused images older than
+    /// `--docker-max-age`, idle build cache, then trim the VM's disk.
+    ///
+    /// Off by default because it talks to a daemon. Never touches containers or anything a
+    /// container uses. A missing docker, a stopped daemon or a refused socket is one line on
+    /// stderr, never a failure. Also `[docker] enabled = true`.
+    #[arg(long, help_heading = "Behaviour")]
+    pub docker: bool,
+
+    /// How old an unused Docker image or idle build-cache record must be, e.g. `7d`.
+    #[arg(long, value_name = "DURATION", help_heading = "Behaviour")]
+    pub docker_max_age: Option<String>,
+
+    /// With `--docker`, also remove anonymous volumes no container mounts. Volumes are data.
+    ///
+    /// Only volumes docker created without a name; `--docker-volumes-all` also takes named ones.
+    /// Command line only, never `voom.toml`.
+    #[arg(long, requires = "docker", help_heading = "Behaviour")]
+    pub docker_volumes: bool,
+
+    /// With `--docker`, also remove every volume no container mounts, named ones included.
+    #[arg(long, requires = "docker", help_heading = "Behaviour")]
+    pub docker_volumes_all: bool,
 
     /// Retry a failed removal, repairing permissions inside the artifact first.
     ///
@@ -440,6 +470,18 @@ impl PruneArgs {
         Some(options)
     }
 
+    /// The Docker housekeeping a sweep runs beside the artifacts, or `None` unless `--docker` or
+    /// `[docker] enabled` asked for it.
+    #[must_use]
+    pub fn docker_options(&self, resolved: &crate::config::Resolved) -> Option<crate::docker::DockerPruneOptions> {
+        resolved.docker.then(|| crate::docker::DockerPruneOptions {
+            dry_run: self.dry_run,
+            max_age: resolved.docker_max_age.unwrap_or(crate::docker::DEFAULT_MAX_AGE),
+            volumes: housekeeping::volume_scope(self.docker_volumes, self.docker_volumes_all),
+            ..crate::docker::DockerPruneOptions::default()
+        })
+    }
+
     /// Turns flags into the overrides that sit above every configuration layer.
     ///
     /// # Errors
@@ -460,6 +502,10 @@ impl PruneArgs {
             git: self.no_git.then_some(false),
             bazel: self.no_bazel.then_some(false),
             bazel_max_age: self.bazel_max_age.as_deref().map(parse_duration).transpose()?,
+            // Only ever `Some(true)`: the flag can turn Docker on, and nothing turns it off,
+            // because it is already off.
+            docker: self.docker.then_some(true),
+            docker_max_age: self.docker_max_age.as_deref().map(parse_duration).transpose()?,
         })
     }
 

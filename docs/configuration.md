@@ -30,6 +30,10 @@ enabled = false      # skip the housekeeping a sweep otherwise does here
 enabled = false      # skip the Bazel housekeeping a sweep otherwise does
 max_age = "14d"      # how long an output base may go unbuilt in before it is stale (default 7d)
 
+[docker]             # machine-global: user config or --config only
+enabled = true       # prune Docker in every sweep; off by default (a daemon is involved)
+max_age = "7d"       # how old an unused image or idle build-cache record must be (default 7d)
+
 [caches]             # machine-global: user config or --config only
 enable = ["uv"]      # opt into a named tool cache — additive across the hierarchy, never subtractive
 
@@ -57,8 +61,8 @@ matches paths the walk actually visits: it cannot reach outside the roots you na
 cannot reach *inside* a directory the walk skips whole. For a dependency directory prefer
 `--clean-dependencies` or `--enable`, which still prove the marker.
 
-`[bazel]` and `[caches]` are **machine-global**: they act on state outside the tree being swept
-(Bazel output bases, tool caches). They are read only from `~/.config/voom/config.toml` or an
+`[bazel]`, `[docker]` and `[caches]` are **machine-global**: they act on state outside the tree being
+swept (Bazel output bases, Docker, tool caches). They are read only from `~/.config/voom/config.toml` or an
 explicit `--config`, never from a repository's `voom.toml`, so cloning a repository can never let
 it clear your machine's caches. A repository that sets one is a hard error, not a silent no-op.
 
