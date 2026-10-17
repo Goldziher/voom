@@ -160,16 +160,15 @@ fn prune(cli: &Cli) -> anyhow::Result<i32> {
 
     let options = cli.prune.to_run_options()?;
 
-    // Bazel's housekeeping is machine-global and shares nothing with the sweep, so the two run
-    // side by side and the Bazel report waits for the sweep's. Merged-worktree removal is the one
-    // thing that feeds it — a removed worktree's output base is then an orphan in the same run —
-    // so with that opt-in the Bazel stage keeps its place after the sweep.
-    let overlap = !cli.prune.remove_merged_worktrees;
+    // Bazel's housekeeping is machine-global and shares nothing with the sweep, so the two always
+    // run side by side. Merged-worktree removal is the one thing that feeds it — a removed
+    // worktree's output base is then an orphan in the same run — and that is answered by a
+    // second, cheap pass afterwards rather than by holding the whole stage back (see below).
     //
     // Docker is just as independent, and a prune is mostly waiting on a daemon, so it overlaps
     // with everything.
     let (result, mut bazel, docker) = std::thread::scope(|scope| {
-        let early = overlap.then(|| scope.spawn(|| bazel_prune(cli, &options)));
+        let early = Some(scope.spawn(|| bazel_prune(cli, &options)));
         let docker = scope.spawn(|| docker_prune(cli, &options));
         let result = voom::run::run(&options).context("scanning");
         // The sweep is done; Bazel's removals may not be, and they can be most of a real run.
@@ -211,10 +210,21 @@ fn prune(cli: &Cli) -> anyhow::Result<i32> {
         voom::worktrees::render_human(worktrees, cli.prune.verbose, &mut out).context("writing the worktree report")?;
         out.flush().context("flushing the worktree report")?;
     }
-    let bazel = match early_bazel {
+    let mut bazel = match early_bazel {
         Some(bazel) => bazel,
         None => bazel_prune(cli, &options)?,
     };
+    // Worktrees this run removed have just orphaned their output bases. A second pass reads
+    // only each base's marker and server pid, and takes what the first could not have.
+    let removed_worktrees = worktrees
+        .as_ref()
+        .is_some_and(|worktrees| !worktrees.dry_run && worktrees.totals().removed > 0);
+    if removed_worktrees
+        && let Some(first) = bazel.as_mut()
+        && let Some(second) = bazel_prune(cli, &options)?
+    {
+        first.absorb(second);
+    }
 
     if json {
         let mut document = voom::report::json::document(&result);

@@ -279,6 +279,24 @@ impl BazelPruneResult {
         totals
     }
 
+    /// Folds in a later pass over the same roots: every base it attempted replaces what this
+    /// result said of the same path — typically a base kept as owned that the later pass found
+    /// orphaned. A base this pass removed is gone by then, so nothing is counted twice.
+    pub fn absorb(&mut self, later: Self) {
+        for base in later.output_bases {
+            if base.outcome.is_none() {
+                continue;
+            }
+            match self.output_bases.iter_mut().find(|known| known.path == base.path) {
+                Some(known) if known.outcome.is_none() => *known = base,
+                Some(_) => {}
+                None => self.output_bases.push(base),
+            }
+        }
+        self.output_bases.sort_by(|left, right| left.path.cmp(&right.path));
+        self.elapsed += later.elapsed;
+    }
+
     /// The process exit code: zero unless a removal was attempted and failed outright.
     #[must_use]
     pub fn exit_code(&self) -> i32 {
