@@ -336,11 +336,11 @@ include = ["~/scratch/build-junk"] # swept without a marker — explicit intent
 min_age = "7d"                     # never remove something modified more recently
 ```
 
-`[caches]` and `[bazel]` drive removal outside the swept tree, so they are read only from
+`[caches]`, `[bazel]` and `[docker]` drive removal outside the swept tree, so they are read only from
 `~/.config/voom/config.toml` or an explicit `--config`, never from a repository's `voom.toml`; a
 repository that sets one is a hard error rather than a silent no-op.
 
-Keep policies, per-ecosystem and per-path overrides, `[ecosystems]`, `[git]`, `[bazel]` and the Windows
+Keep policies, per-ecosystem and per-path overrides, `[ecosystems]`, `[git]`, `[bazel]`, `[docker]` and the Windows
 quoting rule are in the [configuration reference](docs/configuration.md).
 `voom config show [PATH]` prints the merged result and the files it came from.
 
@@ -471,6 +471,39 @@ worker pool, and says nothing when there is nothing to do; `--no-bazel` skips it
 `--bazel-max-age` sets the age. `--clear-caches` is the exception to age: it clears Bazel completely — every output base,
 install base and cached download, live workspaces included, after stopping their servers. The
 next build starts cold. See [ADR 0014](adrs/0014-bazel-output-base-housekeeping.md).
+
+## Docker housekeeping
+
+Docker keeps images, build cache and volumes until told otherwise, and on macOS and Windows keeps
+them inside a VM whose disk image on the host **never shrinks by itself**: a prune frees space in
+the guest, and the host gets it back only when `fstrim` runs there. voom does both.
+
+```bash
+voom docker-prune -n                          # what would go, and what the VM trim would start from
+voom docker-prune                             # prune, trim the VM, report the host bytes returned
+voom docker-prune --max-age 14d               # images and cache unused for two weeks, not one
+voom docker-prune --volumes                   # also anonymous volumes no container mounts
+voom -n --docker ~/code                       # a sweep that prunes Docker beside the artifacts
+```
+
+Off in a sweep unless `--docker` (or `[docker] enabled = true`) asks, because it talks to a
+daemon. What it removes:
+
+- **dangling images**, and **images no container was made from** that are older than the age
+  (`7d`, `--max-age` / `--docker-max-age`, mapped to Docker's `until=` in whole hours);
+- **build cache** nothing has read for that long;
+- with `--volumes` (`--docker-volumes` in a sweep), **anonymous volumes** no container mounts;
+  `--volumes-all` also takes named ones, which is data loss if one held a database you wanted.
+
+It never removes a container, and never an image or volume a container — running or stopped —
+refers to. A dry run is the same plan with the commands withheld; the real run reports the bytes
+Docker itself printed.
+
+After a real run on Colima, Lima, Rancher Desktop or a podman machine, voom runs `fstrim` in the VM
+and reports how much the host disk image shrank (`st_blocks` before and after). Docker Desktop and
+OrbStack trim for themselves, a native Linux daemon has no VM, and an unrecognised endpoint is left
+alone. `--no-trim` skips it. A missing `docker`, a stopped daemon or a refused socket is one line
+and exit `0`, never a failed sweep. See [ADR 0017](adrs/0017-docker-housekeeping.md).
 
 ## Claude Code job scratch
 

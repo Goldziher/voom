@@ -34,6 +34,9 @@ pub struct ConfigFile {
     /// Bazel housekeeping (ADR 0014), which an ordinary sweep runs after the artifacts.
     #[serde(default)]
     pub bazel: BazelSection,
+    /// Docker housekeeping (ADR 0017), which a sweep runs only when asked.
+    #[serde(default)]
+    pub docker: DockerSection,
     /// Named machine-global tool caches to remove (ADR 0012). Empty unless asked.
     #[serde(default)]
     pub caches: CachesSection,
@@ -87,6 +90,18 @@ pub struct BazelSection {
     pub enabled: Option<bool>,
     /// How long an output base may go unbuilt in before it is stale, e.g. `"14d"`. Unset
     /// inherits the layer above; `--bazel-max-age` overrides every layer.
+    pub max_age: Option<String>,
+}
+
+/// `[docker]`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DockerSection {
+    /// Whether an ordinary sweep prunes Docker. Unset inherits the layer above, and the default
+    /// is off; `--docker` turns it on for one run.
+    pub enabled: Option<bool>,
+    /// How old an unused image or idle build-cache record must be, e.g. `"7d"`. Unset inherits
+    /// the layer above; `--docker-max-age` overrides every layer.
     pub max_age: Option<String>,
 }
 

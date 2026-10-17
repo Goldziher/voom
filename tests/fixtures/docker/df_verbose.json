@@ -1,0 +1,24 @@
+{
+  "Images": [
+    {"Containers": "0", "CreatedAt": "2026-10-14 22:28:15 +0200 CEST", "CreatedSince": "2 days ago", "Digest": "", "ID": "sha256:b944db88c674", "Repository": "erlang", "SharedSize": "555.8MB", "Size": "2.39GB", "Tag": "27", "UniqueSize": "1.831GB"},
+    {"Containers": "1", "CreatedAt": "2026-10-11 17:20:03 +0200 CEST", "CreatedSince": "5 days ago", "Digest": "", "ID": "sha256:56677b5ced82", "Repository": "armis/dazel", "SharedSize": "1GB", "Size": "3.62GB", "Tag": "latest", "UniqueSize": "2.62GB"},
+    {"Containers": "0", "CreatedAt": "2026-10-08 19:12:40 +0200 CEST", "CreatedSince": "8 days ago", "Digest": "", "ID": "sha256:d9c68c2c5116", "Repository": "golang", "SharedSize": "990MB", "Size": "2.49GB", "Tag": "1.26-bookworm", "UniqueSize": "1.5GB"},
+    {"Containers": "0", "CreatedAt": "2026-10-08 19:12:40 +0200 CEST", "CreatedSince": "8 days ago", "Digest": "", "ID": "sha256:d9c68c2c5116", "Repository": "golang", "SharedSize": "990MB", "Size": "2.49GB", "Tag": "1.26", "UniqueSize": "1.5GB"},
+    {"Containers": "0", "CreatedAt": "2026-10-16 08:00:00 +0200 CEST", "CreatedSince": "1 day ago", "Digest": "", "ID": "sha256:aaaaaaaaaaaa", "Repository": "<none>", "SharedSize": "0B", "Size": "100MB", "Tag": "<none>", "UniqueSize": "100MB"},
+    {"Containers": "N/A", "CreatedAt": "2026-01-01 00:00:00 +0000 UTC", "CreatedSince": "9 months ago", "Digest": "", "ID": "sha256:bbbbbbbbbbbb", "Repository": "busybox", "SharedSize": "N/A", "Size": "4MB", "Tag": "1", "UniqueSize": "4MB"}
+  ],
+  "Containers": [
+    {"ID": "ff50fc1e1e45", "Image": "armis/dazel", "Names": "dazel", "State": "running", "Status": "Up 5 days", "Size": "208MB"}
+  ],
+  "Volumes": [
+    {"Driver": "local", "Labels": "com.docker.volume.anonymous=", "Links": "0", "Name": "59b839e7f0c7", "Size": "111.6kB"},
+    {"Driver": "local", "Labels": "com.docker.volume.anonymous=", "Links": "1", "Name": "11111111", "Size": "2MB"},
+    {"Driver": "local", "Labels": "", "Links": "0", "Name": "pgdata", "Size": "800MB"},
+    {"Driver": "local", "Labels": "", "Links": "2", "Name": "redisdata", "Size": "50MB"}
+  ],
+  "BuildCache": [
+    {"CacheType": "regular", "ID": "kxyvtkziwvwt", "InUse": "false", "LastUsedAt": "2026-09-08 06:22:34.821884134 +0000 UTC", "Size": "115MB"},
+    {"CacheType": "regular", "ID": "inuseinuse", "InUse": "true", "LastUsedAt": "2026-08-01 06:22:34.821884134 +0000 UTC", "Size": "900MB"},
+    {"CacheType": "regular", "ID": "recentrecent", "InUse": "false", "LastUsedAt": "2026-10-16 06:22:34.821884134 +0000 UTC", "Size": "300MB"}
+  ]
+}
