@@ -75,9 +75,16 @@ fn days(age: Duration) -> u64 {
     age.as_secs() / (24 * 60 * 60)
 }
 
+/// `, 1.2 GiB` when the scratch was measured, and nothing when there was none to measure.
+fn size_phrase(bytes: Option<u64>) -> String {
+    bytes.map_or_else(String::new, |bytes| {
+        format!(", {}", humansize::format_size(bytes, humansize::BINARY))
+    })
+}
+
 fn row(job: &Job, dry_run: bool, remove: bool, base: Option<&Path>) -> Row {
     let (label, style, detail) = match (&job.state, &job.outcome) {
-        (JobState::Unproven, _) => ("kept", palette::kept(), Some("no readable state.json".to_owned())),
+        (JobState::Unproven(reason), _) => ("kept", palette::kept(), Some(reason.to_string())),
         (JobState::Live { session_id }, _) => (
             "kept",
             palette::live(),
@@ -91,12 +98,12 @@ fn row(job: &Job, dry_run: bool, remove: bool, base: Option<&Path>) -> Row {
         (JobState::Eligible { age }, Some(Outcome::Removed)) => (
             "removed",
             palette::removed(),
-            Some(format!("quiet for {} days", days(*age))),
+            Some(format!("quiet for {} days{}", days(*age), size_phrase(job.bytes))),
         ),
         (JobState::Eligible { age }, Some(Outcome::WouldRemove)) => (
             if dry_run { "would remove" } else { "removed" },
             palette::would_remove(),
-            Some(format!("quiet for {} days", days(*age))),
+            Some(format!("quiet for {} days{}", days(*age), size_phrase(job.bytes))),
         ),
         (JobState::Eligible { age }, Some(Outcome::Refused(refusal))) => (
             "refused",
@@ -125,8 +132,9 @@ fn row(job: &Job, dry_run: bool, remove: bool, base: Option<&Path>) -> Row {
             "eligible",
             palette::kept(),
             Some(format!(
-                "quiet for {} days — rerun with --remove to reclaim it",
-                days(*age)
+                "quiet for {} days{} — rerun with --remove to reclaim it",
+                days(*age),
+                size_phrase(job.bytes),
             )),
         ),
     };
@@ -191,20 +199,32 @@ fn write_block(rows: &[Row], out: &mut impl io::Write) -> io::Result<()> {
 
 fn write_footer(result: &ClaudePruneResult, out: &mut impl io::Write) -> io::Result<()> {
     let totals = result.totals();
-    let verb = match (result.remove, result.dry_run) {
-        (false, _) => "found (rerun with --remove to reclaim any)",
-        (true, true) => "would be reclaimed",
-        (true, false) => "reclaimed",
-    };
-    writeln!(
-        out,
-        "{} {} found, {} {verb} ({}) in {:.2?}",
-        totals.found.bold(),
-        jobs_word(totals.found),
-        totals.removed.bold(),
-        humansize::format_size(totals.bytes, humansize::BINARY),
-        result.elapsed
-    )?;
+    if result.remove {
+        let verb = if result.dry_run {
+            "would be reclaimed"
+        } else {
+            "reclaimed"
+        };
+        writeln!(
+            out,
+            "{} {} found, {} {verb} ({}) in {:.2?}",
+            totals.found.bold(),
+            jobs_word(totals.found),
+            totals.removed.bold(),
+            humansize::format_size(totals.bytes, humansize::BINARY),
+            result.elapsed
+        )?;
+    } else {
+        writeln!(
+            out,
+            "{} {} found, {} eligible ({}; rerun with --remove to reclaim) in {:.2?}",
+            totals.found.bold(),
+            jobs_word(totals.found),
+            totals.eligible.bold(),
+            humansize::format_size(totals.eligible_bytes, humansize::BINARY),
+            result.elapsed
+        )?;
+    }
     if totals.refused > 0 {
         writeln!(
             out,
@@ -250,7 +270,7 @@ pub fn document(result: &ClaudePruneResult) -> Value {
 
 fn job_value(job: &Job) -> Value {
     let (state, detail) = match &job.state {
-        JobState::Unproven => ("unproven", json!(null)),
+        JobState::Unproven(reason) => ("unproven", json!({ "reason": reason.code() })),
         JobState::Live { session_id } => ("live", json!({ "session_id": session_id })),
         JobState::TooRecent { age } => ("too_recent", json!({ "age_days": days(*age) })),
         JobState::Eligible { age } => ("eligible", json!({ "age_days": days(*age) })),
@@ -287,6 +307,7 @@ pub fn render_json(result: &ClaudePruneResult, out: &mut impl io::Write) -> io::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::claude::Unproven;
 
     fn result(jobs: Vec<Job>, remove: bool, dry_run: bool) -> ClaudePruneResult {
         ClaudePruneResult {
@@ -304,7 +325,7 @@ mod tests {
             state: JobState::Eligible {
                 age: Duration::from_secs(age_days * 86400),
             },
-            bytes: outcome.is_some().then_some(4096),
+            bytes: Some(4096),
             outcome,
         }
     }
@@ -320,6 +341,44 @@ mod tests {
         let text = String::from_utf8(buffer).expect("the report is UTF-8");
         assert!(text.contains("eligible"), "{text}");
         assert!(text.contains("--remove"), "{text}");
+    }
+
+    /// A dry run exists to say what would be reclaimed, so the size is in the row and in the JSON
+    /// even though nothing was asked to be removed.
+    #[test]
+    fn should_report_the_size_of_an_eligible_job_without_remove() {
+        let result = result(vec![eligible("/home/dev/.claude/jobs/old", 30, None)], false, false);
+        let mut buffer = Vec::new();
+        render_human(&result, &mut buffer).expect("writing to a Vec cannot fail");
+        let text = String::from_utf8(buffer).expect("the report is UTF-8");
+        assert!(text.contains("4 KiB"), "{text}");
+        assert_eq!(document(&result)["jobs"][0]["bytes"], json!(4096));
+    }
+
+    #[test]
+    fn should_total_the_eligible_scratch_in_a_report_only_footer() {
+        let result = result(vec![eligible("/home/dev/.claude/jobs/old", 30, None)], false, false);
+        let mut buffer = Vec::new();
+        render_human(&result, &mut buffer).expect("writing to a Vec cannot fail");
+        let text = String::from_utf8(buffer).expect("the report is UTF-8");
+        assert!(text.contains("(4 KiB; rerun with --remove to reclaim)"), "{text}");
+    }
+
+    #[test]
+    fn should_give_the_reason_a_job_is_unproven() {
+        let job = Job {
+            path: PathBuf::from("/home/dev/.claude/jobs/parked"),
+            state: JobState::Unproven(Unproven::NotFinished),
+            bytes: None,
+            outcome: None,
+        };
+        let result = result(vec![job], false, false);
+        let mut buffer = Vec::new();
+        render_human(&result, &mut buffer).expect("writing to a Vec cannot fail");
+        let text = String::from_utf8(buffer).expect("the report is UTF-8");
+        assert!(text.contains("has not finished"), "{text}");
+        assert!(!text.contains("no readable state.json"), "{text}");
+        assert_eq!(document(&result)["jobs"][0]["detail"]["reason"], json!("not_finished"));
     }
 
     #[test]

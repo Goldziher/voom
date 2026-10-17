@@ -79,12 +79,50 @@ pub struct ClaudePruneOptions {
     pub one_file_system: bool,
 }
 
+/// Why a job's `state.json` proves nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unproven {
+    /// The file is missing, unreadable, or larger than any real one.
+    NoStateFile,
+    /// The file is there and is not the JSON object Claude Code writes.
+    Unparsable,
+    /// A valid file with no `lastTerminalAt`: the job has not finished, as a job parked on a
+    /// question has not. The common case, and nothing is wrong with the file.
+    NotFinished,
+    /// A `lastTerminalAt` that is not the timestamp shape Claude Code writes.
+    BadTimestamp,
+}
+
+impl Unproven {
+    /// A stable, prose-free code for the JSON report.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::NoStateFile => "no_state_file",
+            Self::Unparsable => "unparsable",
+            Self::NotFinished => "not_finished",
+            Self::BadTimestamp => "bad_timestamp",
+        }
+    }
+}
+
+impl std::fmt::Display for Unproven {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::NoStateFile => "no readable state.json",
+            Self::Unparsable => "state.json is not valid JSON",
+            Self::NotFinished => "has not finished — state.json records no lastTerminalAt",
+            Self::BadTimestamp => "lastTerminalAt is not a timestamp voom recognises",
+        })
+    }
+}
+
 /// What was found about one job, in the order removal actually checks it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JobState {
-    /// No `state.json`, or it named neither field this reads. The same rule as an unproven
-    /// catalog artifact: no claim, nothing removed.
-    Unproven,
+    /// `state.json` does not establish when the job finished. The same rule as an unproven
+    /// catalog artifact: no claim, nothing removed — and the reason says which way it fell short.
+    Unproven(Unproven),
     /// A process on this machine right now carries the recorded session on its command line.
     /// Hard-blocked regardless of age or flags — the one positive fact available.
     Live {
@@ -112,7 +150,8 @@ pub struct Job {
     pub path: PathBuf,
     /// What was found.
     pub state: JobState,
-    /// The scratch directory's size, measured only when removal was attempted.
+    /// The scratch directory's size, measured for every eligible job whether or not removal was
+    /// asked for — it is what a dry run exists to say.
     pub bytes: Option<u64>,
     /// What happened, only when removal was attempted.
     pub outcome: Option<Outcome>,
@@ -131,6 +170,10 @@ pub struct Totals {
     pub kept: usize,
     /// Bytes reclaimed, or that would be.
     pub bytes: u64,
+    /// Jobs that would qualify for removal, whether or not removal was asked for.
+    pub eligible: usize,
+    /// Their scratch, measured.
+    pub eligible_bytes: u64,
 }
 
 /// Everything one round produced.
@@ -157,6 +200,10 @@ impl ClaudePruneResult {
             ..Totals::default()
         };
         for job in &self.jobs {
+            if matches!(job.state, JobState::Eligible { .. }) {
+                totals.eligible += 1;
+                totals.eligible_bytes += job.bytes.unwrap_or(0);
+            }
             match (&job.state, &job.outcome) {
                 (JobState::Eligible { .. }, Some(Outcome::Removed | Outcome::WouldRemove)) => {
                     totals.removed += 1;
@@ -225,15 +272,12 @@ pub fn prune(options: &ClaudePruneOptions) -> Result<ClaudePruneResult> {
         .map(|path| {
             let state = state_of(&path, options.min_age, now);
             let scratch = path.join(SCRATCH_DIR_NAME);
-            let (bytes, outcome) = if matches!(state, JobState::Eligible { .. }) && options.remove && scratch.is_dir() {
-                let measured = measure_fully(&scratch);
-                (
-                    Some(measured.bytes),
-                    Some(guard.remove(&scratch, measured.bytes, removal)),
-                )
-            } else {
-                (None, None)
-            };
+            let measured =
+                (matches!(state, JobState::Eligible { .. }) && scratch.is_dir()).then(|| measure_fully(&scratch).bytes);
+            let outcome = measured
+                .filter(|_| options.remove)
+                .map(|bytes| guard.remove(&scratch, bytes, removal));
+            let bytes = measured;
             Job {
                 path,
                 state,
@@ -266,11 +310,15 @@ fn immediate_subdirectories(root: &Path) -> Vec<PathBuf> {
 }
 
 fn state_of(job_dir: &Path, min_age: Duration, now: SystemTime) -> JobState {
-    let Some(state) = read_state(job_dir) else {
-        return JobState::Unproven;
+    let state = match read_state(job_dir) {
+        Ok(state) => state,
+        Err(reason) => return JobState::Unproven(reason),
     };
-    let Some(last_terminal_at) = state.last_terminal_at.as_deref().and_then(parse_utc_timestamp) else {
-        return JobState::Unproven;
+    let Some(last_terminal_at) = state.last_terminal_at.as_deref() else {
+        return JobState::Unproven(Unproven::NotFinished);
+    };
+    let Some(last_terminal_at) = parse_utc_timestamp(last_terminal_at) else {
+        return JobState::Unproven(Unproven::BadTimestamp);
     };
     if let Some(session_id) = state.session_id.as_deref()
         && is_resumed(session_id)
@@ -287,9 +335,10 @@ fn state_of(job_dir: &Path, min_age: Duration, now: SystemTime) -> JobState {
     }
 }
 
-fn read_state(job_dir: &Path) -> Option<State> {
-    let contents = crate::io::read_capped_text(&job_dir.join(STATE_FILE_NAME), STATE_FILE_MAX_BYTES)?;
-    serde_json::from_str(&contents).ok()
+fn read_state(job_dir: &Path) -> std::result::Result<State, Unproven> {
+    let contents = crate::io::read_capped_text(&job_dir.join(STATE_FILE_NAME), STATE_FILE_MAX_BYTES)
+        .ok_or(Unproven::NoStateFile)?;
+    serde_json::from_str(&contents).map_err(|_| Unproven::Unparsable)
 }
 
 /// Whether any process on this machine has the session on its command line right now.
@@ -508,7 +557,83 @@ mod tests {
 
         let result = prune(&options(&root)).expect("the root resolves");
 
-        assert_eq!(result.jobs[0].state, JobState::Unproven);
+        assert_eq!(result.jobs[0].state, JobState::Unproven(Unproven::Unparsable));
+    }
+
+    #[test]
+    fn should_say_a_job_without_a_state_file_has_none() {
+        let fixture = tree(&["jobs/bare/tmp/scratch.bin"]);
+        let root = fixture.path().join("jobs");
+
+        let result = prune(&options(&root)).expect("the root resolves");
+
+        assert_eq!(result.jobs[0].state, JobState::Unproven(Unproven::NoStateFile));
+    }
+
+    /// The real case: a job parked on a question has a perfectly good `state.json` and has
+    /// never finished, so it has no `lastTerminalAt`. "No readable state.json" was false.
+    #[test]
+    fn should_say_a_job_that_never_finished_has_not_finished() {
+        let fixture = tree(&["jobs/blocked/tmp/scratch.bin"]);
+        let root = fixture.path().join("jobs");
+        std::fs::write(
+            root.join("blocked/state.json"),
+            r#"{"state": "blocked", "sessionId": "s", "needs": "confirm?"}"#,
+        )
+        .unwrap();
+
+        let result = prune(&options(&root)).expect("the root resolves");
+
+        assert_eq!(result.jobs[0].state, JobState::Unproven(Unproven::NotFinished));
+        assert!(root.join("blocked/tmp").exists());
+    }
+
+    #[test]
+    fn should_say_a_timestamp_it_cannot_read_is_unreadable() {
+        let fixture = tree(&["jobs/odd/tmp/scratch.bin"]);
+        let root = fixture.path().join("jobs");
+        write_state(&root.join("odd"), "s", "last Tuesday");
+
+        let result = prune(&options(&root)).expect("the root resolves");
+
+        assert_eq!(result.jobs[0].state, JobState::Unproven(Unproven::BadTimestamp));
+    }
+
+    /// The size is the whole point of a dry run, and it is cheap now, so it is measured whether
+    /// or not `--remove` was given.
+    #[test]
+    fn should_size_an_eligible_jobs_scratch_without_remove() {
+        let fixture = tree(&["jobs/ancient/tmp/scratch.bin"]);
+        let root = fixture.path().join("jobs");
+        std::fs::write(root.join("ancient/tmp/scratch.bin"), vec![1u8; 100_000]).unwrap();
+        write_state(
+            &root.join("ancient"),
+            "session-nobody-is-running",
+            "2000-01-01T00:00:00.000Z",
+        );
+
+        let mut report_only = options(&root);
+        report_only.remove = false;
+        let result = prune(&report_only).expect("the root resolves");
+
+        assert!(
+            result.jobs[0].bytes.is_some_and(|bytes| bytes >= 100_000),
+            "{:?}",
+            result.jobs[0].bytes
+        );
+        assert!(result.jobs[0].outcome.is_none());
+        assert!(root.join("ancient/tmp").exists());
+    }
+
+    #[test]
+    fn should_not_size_a_job_it_will_not_touch() {
+        let fixture = tree(&["jobs/fresh/tmp/scratch.bin"]);
+        let root = fixture.path().join("jobs");
+        write_state(&root.join("fresh"), "session-nobody-is-running", &humantime_like_now());
+
+        let result = prune(&options(&root)).expect("the root resolves");
+
+        assert_eq!(result.jobs[0].bytes, None);
     }
 
     /// A timestamp near "now" for a fixture, without adding a dependency merely to format one.
