@@ -122,7 +122,8 @@ fn step_detail(step: &Step) -> Option<String> {
 
 fn row(repository: &Repository, dry_run: bool, base: Option<&Path>) -> Row {
     let (label, style) = match repository.status() {
-        Status::Pruned if dry_run => ("would prune", palette::would_prune()),
+        Status::Pruned if dry_run && repository.has_pending_work() => ("would prune", palette::would_prune()),
+        Status::Pruned if dry_run => ("nothing to prune", palette::quiet()),
         Status::Pruned => ("pruned", palette::pruned()),
         Status::Skipped => ("skipped", palette::skipped()),
         Status::Failed => ("failed", palette::failed()),
@@ -221,13 +222,17 @@ fn write_block(rows: &[Row], out: &mut impl io::Write) -> io::Result<()> {
 
 fn write_footer(result: &GitPruneResult, out: &mut impl io::Write) -> io::Result<()> {
     let totals = result.totals();
-    let verb = if result.dry_run { "would be pruned" } else { "pruned" };
+    let (verb, count) = if result.dry_run {
+        ("would be pruned", totals.would_prune)
+    } else {
+        ("pruned", totals.pruned)
+    };
     writeln!(
         out,
         "{} {}, {} {verb} in {:.2?}",
         totals.repositories.bold(),
         repositories_word(totals.repositories),
-        totals.pruned.bold(),
+        count.bold(),
         result.elapsed
     )?;
     // Totals of different kinds get their own lines, the way the sweep's footer separates them.
@@ -275,6 +280,7 @@ pub fn document(result: &GitPruneResult) -> Value {
         "totals": {
             "repositories": totals.repositories,
             "pruned": totals.pruned,
+            "would_prune": totals.would_prune,
             "skipped": totals.skipped,
             "failed": totals.failed,
         },
@@ -284,7 +290,8 @@ pub fn document(result: &GitPruneResult) -> Value {
 
 fn repository_value(repository: &Repository, dry_run: bool) -> Value {
     let status = match repository.status() {
-        Status::Pruned if dry_run => "would_prune",
+        Status::Pruned if dry_run && repository.has_pending_work() => "would_prune",
+        Status::Pruned if dry_run => "nothing_to_prune",
         Status::Pruned => "pruned",
         Status::Skipped => "skipped",
         Status::Failed => "failed",
@@ -512,16 +519,53 @@ mod tests {
     }
 
     #[test]
-    fn should_mark_a_dry_run_as_would_prune() {
+    fn should_mark_a_dry_run_as_would_prune_only_when_git_has_something_to_remove() {
         let document = document(&result(
-            vec![repository(
-                "/projects/api",
-                vec![succeeded(StepKind::WorktreePrune, "")],
-            )],
+            vec![
+                repository(
+                    "/projects/api",
+                    vec![succeeded(StepKind::WorktreePrune, "1 stale worktree would be pruned")],
+                ),
+                repository(
+                    "/projects/quiet",
+                    vec![
+                        succeeded(StepKind::WorktreePrune, ""),
+                        succeeded(StepKind::CountObjects, "3 loose objects"),
+                    ],
+                ),
+            ],
             true,
         ));
         assert_eq!(document["repositories"][0]["status"], "would_prune");
+        assert_eq!(document["repositories"][1]["status"], "nothing_to_prune");
+        assert_eq!(document["totals"]["would_prune"], 1);
         assert_eq!(document["dry_run"], true);
+    }
+
+    #[test]
+    fn should_not_label_a_dry_run_repository_would_prune_when_nothing_would_be_pruned() {
+        let text = rendered(&result(
+            vec![
+                repository(
+                    "/projects/api",
+                    vec![succeeded(StepKind::WorktreePrune, "1 stale worktree would be pruned")],
+                ),
+                repository(
+                    "/projects/quiet",
+                    vec![
+                        succeeded(StepKind::WorktreePrune, ""),
+                        succeeded(StepKind::CountObjects, ""),
+                    ],
+                ),
+            ],
+            true,
+        ));
+        let text = anstream::adapter::strip_str(&text).to_string();
+        let line = |name: &str| text.lines().find(|line| line.contains(name)).expect("a row").to_owned();
+
+        assert!(line("api").contains("would prune"), "{text}");
+        assert!(line("quiet").contains("nothing to prune"), "{text}");
+        assert!(text.contains("1 would be pruned"), "{text}");
     }
 
     #[test]

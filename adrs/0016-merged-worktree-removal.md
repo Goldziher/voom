@@ -113,3 +113,41 @@ classifying arbitrary `deps` or `.venv` paths by name alone. They apply only to 
 entries: modified, staged and untracked content still keeps the checkout. Configuration, notes,
 databases and other ignored evidence remain protected. No automatic evidence archive, forceful
 submodule removal or default worktree-removal behavior is introduced.
+
+## Amendment — 2026-10-17: Keep reasons, dangling checkouts, a staged status
+
+**Every kept worktree has a reason.** Not merged, locked, missing, outside the swept paths, current
+directory, merged-with-local-changes and unchecked are all stated, in the `-v` human report and in
+the JSON document (`state` and `reason` per worktree). `LocalChanges`, `Unchecked`, the two cases
+below and the totals appear without `-v`; the rest are counted. A local-only `HEAD` is a plain
+"not merged" for the hosted proof: GitHub answers HTTP 422 `No commit found for SHA` for a commit
+it has never seen, which is an answer and not an authentication or network failure. When the proof
+is requested and GitHub has never seen the `HEAD`, one further lookup by branch
+(`pulls?state=closed&head=<owner>:<branch>`) lets the report say that a pull request for the branch
+merged but this checkout's `HEAD` is not its head (squash-merged, then amended). That is reported
+as `head_differs` and still kept: the exact-head rule is unchanged, only the explanation improved.
+A merged pull request that contains the `HEAD` without being headed by it gets the same state.
+
+**Dangling checkouts are reported, never removed.** A checkout whose `.git` file names
+`<main>/.git/worktrees/<name>` that no longer exists cannot be examined by git at all: no `HEAD`
+to test for ancestry or reachability, no index to compare with the tree, no reflog. Removal needs
+every one of those proofs, and none of them can be rebuilt. The tempting substitute — remove it if
+nothing in it is newer than the administration's disappearance — has no moment to compare against:
+the deletion leaves no timestamp except the `worktrees/` directory's own mtime, which any later
+`worktree add` or `prune` moves, so it bounds nothing from below and a file edited after the loss
+would pass. Reachability cannot be proven either, because the commit it sat on is unrecorded. voom
+therefore lists such a checkout below a swept root, not the current directory, as `dangling` with
+its size and the missing gitdir, counts it in the totals, and leaves the decision to the user. The
+repository it belonged to is derived from the gitdir path for grouping only. Outside every swept
+root or the current directory it is kept for the same reasons as any worktree.
+
+**The working-tree check is staged, with the same verdict.** `git status --ignored=matching`
+enumerates every directory of the checkout, including `node_modules` and Bazel trees, and took
+10-60 s per worktree of the monorepo. The check now asks first for tracked changes only
+(`--untracked-files=no`, answered from the index in about a second). Any tracked change that is
+not a deleted build-output file keeps the worktree there; only a checkout that passes runs the full
+status. The first stage's entries are a subset of the second's and classified by the same function,
+so the keep/remove decision is identical (an ignored `.env` still keeps, ignored build output still
+does not); only the *count* in a `LocalChanges` result is a lower bound when the first stage
+decided. Status is run with `GIT_OPTIONAL_LOCKS=0`, so it never rewrites the index of a checkout
+another session may be using. `--stale-worktrees` is also accepted by `git-prune`.

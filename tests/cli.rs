@@ -820,6 +820,26 @@ fn should_require_worktree_cleanup_for_github_merge_lookups() {
     assert!(prune.github_merged_worktrees);
 }
 
+#[test]
+fn should_accept_a_stale_age_for_worktrees_on_git_prune_only_with_worktree_cleanup() {
+    use clap::Parser;
+    use voom::cli::{Cli, Command as CliCommand};
+
+    assert!(Cli::try_parse_from(["voom", "git-prune", "--stale-worktrees", "30d"]).is_err());
+    let parsed = Cli::try_parse_from([
+        "voom",
+        "git-prune",
+        "--remove-merged-worktrees",
+        "--stale-worktrees",
+        "30d",
+    ])
+    .expect("git-prune accepts a stale age with worktree cleanup");
+    let Some(CliCommand::GitPrune(prune)) = parsed.command else {
+        panic!("git-prune was parsed");
+    };
+    assert_eq!(prune.stale_worktrees.as_deref(), Some("30d"));
+}
+
 /// A mistyped id removes nothing and must fail rather than report success, which would be
 /// indistinguishable from an empty cache.
 #[test]
