@@ -367,9 +367,13 @@ pub struct PruneArgs {
     /// here. `bazel` is a reserved id, not a table row: `--clean-caches=bazel` (or a bare
     /// `--clean-caches`) clears Bazel's output bases, install bases and download cache
     /// machine-wide, stopping running servers first.
+    ///
+    /// An id prefixed with `-` is taken back out: `--clean-caches=all,-bazel` is the whole table
+    /// without the Bazel clear.
     #[arg(
         long,
         visible_alias = "clear-caches",
+        allow_hyphen_values = true,
         value_name = "IDS",
         num_args = 0..=1,
         require_equals = true,
