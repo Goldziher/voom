@@ -86,6 +86,7 @@ pub fn run(options: &RunOptions) -> Result<RunResult> {
 
     let roots = normalize_roots(&options.roots)?;
     let pool = build_pool(options.jobs)?;
+    crate::delete::limit_removal_workers(options.jobs);
 
     // Sizing and removal fan out over rayon, which otherwise runs on a process-wide pool sized
     // to every logical core. `-j` is the escape hatch for spinning disks and network
