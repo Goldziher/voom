@@ -248,6 +248,11 @@ tooling, not a tool's default, so no location names a tool; each virtualenv in i
 `CACHEDIR.TAG`, which `--clean-tagged` already honours when the directory is a scan root.
 `ai-rulez`, `colima` and `liter-llm` hold hash- or version-named directories only.
 
+**A cache its tool writes read-only is marked `read_only`.** Go's module cache is `0555` by
+design, so a removal without `--force` stopped part-way; the entry now records the trait and the
+sweep restores the owner's bits as `go clean -modcache` does, without turning `--force` on for
+anything else. See ADR 0006.
+
 **`--list-caches` no longer measures.** The listing is instant; `--sizes` adds the figures, from
 the same sizer as the sweep. This reverses the 0.6.1 amendment's "how much disk it holds" default:
 measuring was the whole cost, and a table of paths answers "what is here" without it.

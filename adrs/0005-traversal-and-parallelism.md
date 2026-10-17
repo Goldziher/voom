@@ -175,3 +175,12 @@ caller that needs a size only to report it — a Bazel output base — is walked
 measured and then walked again. It never follows a symlink (`O_NOFOLLOW`), never descends into a
 directory with another filesystem mounted on it, and keeps going past an entry it cannot remove,
 reporting the first failure.
+
+**An interrupted directory read is retried.** `EINTR` says a signal landed mid-read, not that the
+directory cannot be read, so a directory whose read is interrupted is walked again as its own
+subtree root — classified against the same root, its place in the marker-climb bound unchanged —
+up to three times, and only then left in the report as the interruption it is. This asks the
+walker for no capability the paragraph above found missing: it re-roots the walk rather than
+resuming an entry, which is why it is affordable where replacing the walker was not. It
+supersedes that paragraph's "they are not retried" conclusion; `INTERRUPTED_RETRIES` in
+`src/scan/mod.rs` is the bound.

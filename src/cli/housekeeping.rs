@@ -1,6 +1,6 @@
 //! Arguments and rendering for the maintenance subcommands: `git-prune`,
 //! `claude-prune`, `docker-prune`. Split out of `cli/mod.rs` purely to stay under the module size cap — the
-//! share a shape (a subcommand takes its own paths, its own `--dry-run`, its own
+//! three share a shape (a subcommand takes its own paths, its own `--dry-run`, its own
 //! `--format`) but nothing that would justify one being written in terms of another.
 
 use std::io;

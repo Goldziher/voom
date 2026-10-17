@@ -230,3 +230,21 @@ reach by its real path**. The reason is structural rather than incidental. A lin
 either below a scan root, in which case the walk arrives by the real name and descending is a
 duplicate, or it is not, in which case containment (rail 5) would refuse everything found there —
 so descending buys a wall of refusals and no reclaimable bytes. `follow_links(false)` stays.
+
+## Amendment — permission repair without `--force` — 2026-10-17
+
+Two removals repair mode bits without the flag, because the tool that owns the directory does the
+same when it cleans up and denies nothing by holding back:
+
+- **A cache its tool writes read-only.** Go's module cache is `0555` by design, so a removal
+  without `--force` stopped part-way. It is now removed with the owner's bits restored, exactly
+  as `go clean -modcache` does. The catalog marks such an entry `read_only`; only those entries
+  take this path.
+- **A Bazel output base.** Bazel writes its outputs read-only by design and `bazel clean`
+  restores the bits before unlinking, so an output base is removed with the same repair.
+
+This is the same permission repair the `--force` amendment describes, on the same `Verified`
+path, reached only after `Guard::check` has decided every rail — it changes what a rail decides
+in neither direction. It stays bounded to inside the artifact and never reaches the artifact's
+parent, and `--force` remains the flag a user passes for their own read-only trees. `--force` is
+still filed under **Behaviour**, not **Safety**.

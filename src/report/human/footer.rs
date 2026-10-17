@@ -67,7 +67,6 @@ pub(super) fn ecosystem_summary(result: &RunResult) -> Option<String> {
     }
 }
 
-/// The plural of `noun` for `count`. Every noun the footer uses takes a plain `s`.
 /// Bytes left behind by every partial removal in the run.
 fn remaining_bytes(result: &RunResult) -> u64 {
     result
@@ -80,6 +79,7 @@ fn remaining_bytes(result: &RunResult) -> u64 {
         .sum()
 }
 
+/// The plural of `noun` for `count`. Every noun the footer uses takes a plain `s`.
 fn plural(count: usize, noun: &str) -> String {
     if count == 1 {
         noun.to_owned()
