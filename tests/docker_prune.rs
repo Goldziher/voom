@@ -345,10 +345,13 @@ fn should_prune_docker_beside_a_sweep_and_keep_json_stdout_a_single_document() {
         .expect("the binary runs");
 
     assert!(output.status.success());
-    let sweep: Value = serde_json::from_slice(&output.stdout).expect("stdout is exactly the sweep's document");
-    assert!(sweep["schema_version"].is_number());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("voom: docker: 3 matched"), "{stderr}");
+    let document: Value = serde_json::from_slice(&output.stdout).expect("stdout is exactly one document");
+    assert!(document["schema_version"].is_number());
+    assert!(
+        document["docker"].is_object(),
+        "the docker stage is part of the document: {document}"
+    );
+    assert!(document["bazel"].is_null(), "--no-bazel leaves the bazel stage out");
     assert!(
         !sandbox.log().contains("prune"),
         "-n withholds the prunes: {}",

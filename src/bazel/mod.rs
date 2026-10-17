@@ -94,6 +94,14 @@ pub struct BazelPruneOptions {
     pub one_file_system: bool,
     /// How long an output base, or a shared-cache entry, may sit unused before it is stale.
     pub max_age: Duration,
+    /// The trees the sweep was asked to clean, canonicalized; `None` for no limit.
+    ///
+    /// A sweep of `~/code/worktrees` is a request about those workspaces, so only an output base
+    /// whose workspace lies under one of these is considered. What belongs to no workspace — an
+    /// unmarked base, the install bases, the download cache — is machine-level, and considered
+    /// only when a scope covers the home directory. `clear_all` is explicit and machine-wide,
+    /// and ignores this.
+    pub scope: Option<Vec<PathBuf>>,
     /// Remove everything under a `_bazel_<user>` root — live workspaces, install bases and the
     /// shared cache included — stopping any running server first.
     pub clear_all: bool,
@@ -114,6 +122,7 @@ impl BazelPruneOptions {
             max_age: DEFAULT_MAX_AGE,
             clear_all: false,
             jobs: None,
+            scope: None,
         }
     }
 }
@@ -358,14 +367,16 @@ pub fn prune(options: &BazelPruneOptions) -> Result<BazelPruneResult> {
         force: options.force,
     };
 
+    let scope = Scope::new(options);
     let mut output_bases = Vec::new();
     let mut install_bases = Vec::new();
     let mut caches = Vec::new();
     for candidate in candidates {
         match candidate {
-            Candidate::OutputBase(path) => output_bases.push(path),
-            Candidate::InstallBase(path) => install_bases.push(path),
-            Candidate::Cache(path) => caches.push(path),
+            Candidate::OutputBase(path) if scope.holds_base(&path) => output_bases.push(path),
+            Candidate::InstallBase(path) if scope.machine => install_bases.push(path),
+            Candidate::Cache(path) if scope.machine => caches.push(path),
+            _ => {}
         }
     }
 
@@ -417,6 +428,40 @@ pub fn prune(options: &BazelPruneOptions) -> Result<BazelPruneResult> {
         dry_run: options.dry_run,
         elapsed: started.elapsed(),
     })
+}
+
+/// Which candidates a run's scope reaches. See [`BazelPruneOptions::scope`].
+struct Scope {
+    roots: Option<Vec<PathBuf>>,
+    /// Whether machine-level candidates are in reach.
+    machine: bool,
+}
+
+impl Scope {
+    fn new(options: &BazelPruneOptions) -> Self {
+        let roots = (!options.clear_all).then(|| options.scope.clone()).flatten();
+        let machine = roots.as_ref().is_none_or(|roots| {
+            dirs::home_dir()
+                .and_then(|home| home.canonicalize().ok())
+                .is_some_and(|home| roots.iter().any(|root| home.starts_with(root)))
+        });
+        Self { roots, machine }
+    }
+
+    /// Whether an output base is in reach: by its workspace when it names one, as a
+    /// machine-level candidate when it does not.
+    fn holds_base(&self, output_base: &Path) -> bool {
+        let Some(roots) = &self.roots else {
+            return true;
+        };
+        let Some(owner) = read_owner(output_base) else {
+            return self.machine;
+        };
+        // An orphaned owner no longer exists to be canonicalized; its recorded path is what
+        // Bazel resolved when it wrote the marker, which is already absolute and real.
+        let owner = owner.canonicalize().unwrap_or(owner);
+        roots.iter().any(|root| owner.starts_with(root))
+    }
 }
 
 /// One root's immediate subdirectories, with `install/` expanded one level: its children are
