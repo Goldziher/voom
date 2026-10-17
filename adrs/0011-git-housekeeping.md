@@ -265,3 +265,21 @@ One consequence worth stating plainly, because it did not survive review either:
 command in the report is now built once and used for both the spawn and the record. They were
 built separately, so the report — and every test reading it — could describe a command that was
 not the one that ran.
+
+## Amendment — 2026-10-17: A faster subcommand walk, and a truthful dry run
+
+The subcommand's discovery walk dominated `voom git-prune` over a directory of worktrees: 53 s of a
+65 s run, almost all of it inside the full checkouts of a monorepo's linked worktrees. It now
+prunes what a sweep prunes — `.git`, dependency directories, and any directory the classifier
+proves is build output (a `target/` beside a `Cargo.toml`, a `dist/` beside a `package.json`) —
+and, when it meets a linked worktree (a `.git` file naming a `worktrees/<name>` directory or one
+holding a `commondir`), reports the checkout and does not enter it. The repository it belongs to
+shares its object store with the one it was created from, which is found at its own `.git`. A
+repository nested inside a main checkout, and a submodule, are still entered; a repository nested
+inside a linked worktree is not found by the subcommand. The sweep is unaffected, since it meets
+every `.git` anyway.
+
+A dry run labels a repository `would prune` only when git reported something to remove (a stale
+worktree record, a gone remote branch). A repository where git has nothing to do reads `nothing to
+prune`; the JSON status is `nothing_to_prune`, `totals.would_prune` counts the former, and the
+footer counts it instead of every repository whose commands merely succeeded.

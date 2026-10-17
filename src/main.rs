@@ -79,6 +79,13 @@ fn docker_prune_command(args: &voom::cli::DockerPruneArgs) -> anyhow::Result<i32
     Ok(exit::SUCCESS)
 }
 
+fn stale_after(value: Option<&str>) -> anyhow::Result<Option<std::time::Duration>> {
+    value
+        .map(voom::policy::parse_duration)
+        .transpose()
+        .context("reading --stale-worktrees")
+}
+
 /// `voom git-prune`: git's own housekeeping, run on its own.
 fn git_prune(cli: &Cli, args: &voom::cli::GitPruneArgs) -> anyhow::Result<i32> {
     let options = args.to_git_options(&cli.prune)?;
@@ -96,13 +103,13 @@ fn git_prune(cli: &Cli, args: &voom::cli::GitPruneArgs) -> anyhow::Result<i32> {
             &options.roots,
             voom::worktrees::WorktreeOptions {
                 dry_run: args.dry_run,
-                stale_after: None,
+                stale_after: stale_after(args.stale_worktrees.as_deref())?,
                 github_merged: args.github_merged_worktrees,
             },
         );
         let mut out = anstream::stdout().lock();
         match args.format {
-            voom::cli::Format::Human => voom::worktrees::render_human(&worktrees, &mut out),
+            voom::cli::Format::Human => voom::worktrees::render_human(&worktrees, cli.prune.verbose, &mut out),
             voom::cli::Format::Json => voom::worktrees::render_json(&worktrees, &mut out),
         }
         .context("writing the worktree report")?;
@@ -193,7 +200,7 @@ fn prune(cli: &Cli) -> anyhow::Result<i32> {
     if let (false, Some(worktrees)) = (json, &worktrees) {
         let mut out = anstream::stdout().lock();
         writeln!(out)?;
-        voom::worktrees::render_human(worktrees, &mut out).context("writing the worktree report")?;
+        voom::worktrees::render_human(worktrees, cli.prune.verbose, &mut out).context("writing the worktree report")?;
         out.flush().context("flushing the worktree report")?;
     }
     let bazel = match early_bazel {
@@ -342,13 +349,7 @@ fn merged_worktrees(
         voom::worktrees::WorktreeOptions {
             dry_run: cli.prune.dry_run,
             github_merged: cli.prune.github_merged_worktrees,
-            stale_after: cli
-                .prune
-                .stale_worktrees
-                .as_deref()
-                .map(voom::policy::parse_duration)
-                .transpose()
-                .context("reading --stale-worktrees")?,
+            stale_after: stale_after(cli.prune.stale_worktrees.as_deref())?,
         },
     );
     Ok(Some(result))

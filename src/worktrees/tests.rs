@@ -365,12 +365,15 @@ fn should_require_exact_merged_pull_head_and_base_repository() {
         "head": {"sha": head}, "merged_at": "2026-10-14T00:00:00Z",
         "base": {"repo": {"full_name": "Goldziher/voom"}}
     }]);
-    assert!(github::merged_response(response.to_string().as_bytes(), "Goldziher/voom", head).unwrap());
-    assert!(!github::merged_response(response.to_string().as_bytes(), "someone/voom", head).unwrap());
-    assert!(!github::merged_response(response.to_string().as_bytes(), "Goldziher/voom", "other").unwrap());
+    let hosted = |response: &serde_json::Value, repository: &str, head: &str| {
+        github::classify(response.to_string().as_bytes(), repository, head).unwrap()
+    };
+    assert_eq!(hosted(&response, "Goldziher/voom", head), github::Hosted::Merged);
+    assert_eq!(hosted(&response, "someone/voom", head), github::Hosted::NotMerged);
+    assert_ne!(hosted(&response, "Goldziher/voom", "other"), github::Hosted::Merged);
     let mut closed = response;
     closed[0]["merged_at"] = serde_json::Value::Null;
-    assert!(!github::merged_response(closed.to_string().as_bytes(), "Goldziher/voom", head).unwrap());
+    assert_eq!(hosted(&closed, "Goldziher/voom", head), github::Hosted::NotMerged);
 }
 
 fn detached_ahead(main: &Path, name: &str) -> PathBuf {
@@ -382,6 +385,17 @@ fn detached_ahead(main: &Path, name: &str) -> PathBuf {
 }
 
 fn judge_hosted(main: &Path, path: &Path, dry_run: bool, proof: &Result<bool, String>) -> Worktree {
+    let proof = proof.clone().map(|merged| {
+        if merged {
+            github::Hosted::Merged
+        } else {
+            github::Hosted::NotMerged
+        }
+    });
+    judge_with(main, path, dry_run, &proof)
+}
+
+fn judge_with(main: &Path, path: &Path, dry_run: bool, proof: &Result<github::Hosted, String>) -> Worktree {
     let entries = parse_listing(&git(main, &["worktree", "list", "--porcelain"]).unwrap());
     let entry = entries
         .iter()
@@ -393,7 +407,7 @@ fn judge_hosted(main: &Path, path: &Path, dry_run: bool, proof: &Result<bool, St
         main,
         MergeProof {
             default_sha: Some(&sha),
-            hosted_merge: &|_| proof.clone(),
+            hosted_merge: &|_, _| proof.clone(),
         },
         &[main.parent().unwrap().to_path_buf()],
         None,
@@ -498,11 +512,11 @@ fn should_refuse_a_head_changed_while_hosted_merge_proof_was_checked() {
         &main,
         MergeProof {
             default_sha: None,
-            hosted_merge: &|_| {
+            hosted_merge: &|_, _| {
                 std::fs::write(path.join("new.txt"), "new work").unwrap();
                 run(&path, &["add", "new.txt"]);
                 run(&path, &["commit", "-q", "-m", "new work"]);
-                Ok(true)
+                Ok(github::Hosted::Merged)
             },
         },
         &[main.parent().unwrap().to_path_buf()],
@@ -529,4 +543,259 @@ fn should_keep_ignored_files_that_share_a_dependency_directory_name() {
             (0, 1)
         );
     }
+}
+
+/// The verdict a single full `git status` gives, which `working_tree` must agree with.
+fn full_status_verdict(path: &Path) -> (usize, usize) {
+    let status = git_bytes(
+        path,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=normal",
+            "--ignored=matching",
+        ],
+    )
+    .expect("status runs");
+    classify_status_in(&status, Some(path))
+}
+
+#[test]
+fn should_reach_the_verdict_of_a_full_status_in_every_working_tree_state() {
+    type Mutation = fn(&Path);
+    let cases: &[(&str, Mutation)] = &[
+        ("clean", |_| {}),
+        ("deleted dist", |path| {
+            std::fs::remove_file(path.join("dist/app.js")).unwrap();
+        }),
+        ("deleted source", |path| {
+            std::fs::remove_file(path.join("src.txt")).unwrap();
+        }),
+        ("modified", |path| {
+            std::fs::write(path.join("src.txt"), "edited").unwrap();
+        }),
+        ("staged", |path| {
+            std::fs::write(path.join("src.txt"), "edited").unwrap();
+            run(path, &["add", "src.txt"]);
+        }),
+        ("untracked", |path| std::fs::write(path.join("notes.txt"), "n").unwrap()),
+        ("untracked directory", |path| {
+            std::fs::create_dir_all(path.join("scratch/deep")).unwrap();
+            std::fs::write(path.join("scratch/deep/a"), "n").unwrap();
+        }),
+        ("empty untracked directory", |path| {
+            std::fs::create_dir_all(path.join("empty")).unwrap();
+        }),
+        ("ignored env", |path| {
+            std::fs::write(path.join(".gitignore"), "*.env\n").unwrap();
+            run(path, &["add", ".gitignore"]);
+            run(path, &["commit", "-q", "-m", "ignore"]);
+            std::fs::write(path.join("local.env"), "secret").unwrap();
+        }),
+        ("ignored build output", |path| {
+            std::fs::write(path.join(".gitignore"), "target/\n").unwrap();
+            run(path, &["add", ".gitignore"]);
+            run(path, &["commit", "-q", "-m", "ignore"]);
+            std::fs::create_dir_all(path.join("target/debug")).unwrap();
+            std::fs::write(path.join("target/debug/out"), "bin").unwrap();
+        }),
+        ("ignored build output and an ignored env", |path| {
+            std::fs::write(path.join(".gitignore"), "target/\n*.env\n").unwrap();
+            run(path, &["add", ".gitignore"]);
+            run(path, &["commit", "-q", "-m", "ignore"]);
+            std::fs::create_dir_all(path.join("target")).unwrap();
+            std::fs::write(path.join("target/out"), "bin").unwrap();
+            std::fs::write(path.join("a.env"), "secret").unwrap();
+        }),
+        ("a nested repository", |path| {
+            std::fs::create_dir_all(path.join("vendor-clone")).unwrap();
+            run(&path.join("vendor-clone"), &["init", "-q"]);
+        }),
+    ];
+    for (name, mutate) in cases {
+        let (_fixture, main) = repository();
+        let path = add_worktree(&main, "probe");
+        mutate(&path);
+
+        let staged = working_tree(&path).expect("status runs");
+        let full = full_status_verdict(&path);
+
+        assert_eq!(staged.1 > 0, full.1 > 0, "{name}: staged {staged:?}, full {full:?}");
+        if full.1 == 0 {
+            assert_eq!(staged, full, "{name}: a clean checkout counts the same discards");
+        }
+    }
+}
+
+#[test]
+fn should_end_at_the_tracked_stage_when_a_tracked_file_changed() {
+    let (_fixture, main) = repository();
+    let path = add_worktree(&main, "edited");
+    std::fs::write(path.join("src.txt"), "edited").unwrap();
+    // A named, ignored, untracked file would also count; the first stage must not need it.
+    std::fs::write(path.join("also.txt"), "untracked").unwrap();
+
+    assert_eq!(working_tree(&path), Some((0, 1)), "the untracked file is never read");
+}
+
+#[test]
+fn should_keep_a_merged_worktree_when_the_pull_request_head_differs_from_its_head() {
+    let (_fixture, main) = repository();
+    let path = detached_ahead(&main, "amended");
+
+    let worktree = judge_with(&main, &path, false, &Ok(github::Hosted::HeadDiffers { pull: 42 }));
+
+    assert_eq!(worktree.state, State::HeadDiffers { pull: 42 });
+    assert_eq!(worktree.outcome, None);
+    assert!(path.exists());
+}
+
+/// Strips the minimal ANSI the report adds, so assertions read as the user does.
+fn plain(bytes: Vec<u8>) -> String {
+    anstream::adapter::strip_str(&String::from_utf8(bytes).unwrap()).to_string()
+}
+
+fn rendered(result: &WorktreePruneResult, verbose: bool) -> String {
+    let mut out = Vec::new();
+    render_human(result, verbose, &mut out).unwrap();
+    plain(out)
+}
+
+#[test]
+fn should_name_every_kept_worktree_with_its_reason_under_verbose_only() {
+    let (_fixture, main) = repository();
+    let merged_dirty = add_worktree(&main, "dirty");
+    std::fs::write(merged_dirty.join("notes.txt"), "n").unwrap();
+    let locked = add_worktree(&main, "locked");
+    run(&main, &["worktree", "lock", locked.to_str().unwrap()]);
+    let unmerged = detached_ahead(&main, "ahead");
+    let result = prune_real(&main, true);
+
+    let quiet = rendered(&result, false);
+    let verbose = rendered(&result, true);
+
+    assert!(!quiet.contains("locked"), "{quiet}");
+    assert!(!quiet.contains(&unmerged.display().to_string()), "{quiet}");
+    assert!(quiet.contains("changed path(s)"), "{quiet}");
+    let line = |name: &str| {
+        verbose
+            .lines()
+            .find(|line| line.contains(name))
+            .unwrap_or_else(|| panic!("{name} is listed: {verbose}"))
+            .to_owned()
+    };
+    assert!(line("/locked").contains("locked"), "{verbose}");
+    assert!(line("/ahead").contains("HEAD is not in main"), "{verbose}");
+    assert!(line("/dirty").contains("changed path(s)"), "{verbose}");
+}
+
+#[test]
+fn should_carry_each_worktrees_state_and_reason_in_the_json_document() {
+    let (_fixture, main) = repository();
+    let locked = add_worktree(&main, "locked");
+    run(&main, &["worktree", "lock", locked.to_str().unwrap()]);
+    let unmerged = detached_ahead(&main, "ahead");
+    let clean = add_worktree(&main, "clean");
+
+    let document = document(&prune_real(&main, true));
+
+    let worktrees = document["repositories"][0]["worktrees"].as_array().unwrap();
+    let find = |path: &Path| {
+        worktrees
+            .iter()
+            .find(|worktree| worktree["path"] == path.display().to_string())
+            .expect("listed")
+    };
+    assert_eq!(find(&locked)["state"], "locked");
+    assert!(find(&locked)["reason"].as_str().unwrap().contains("locked"));
+    assert_eq!(find(&unmerged)["state"], "not_merged");
+    assert_eq!(find(&unmerged)["reason"], "HEAD is not in main");
+    assert_eq!(find(&clean)["state"], "merged");
+    assert!(find(&clean)["reason"].is_null());
+}
+
+/// A checkout whose `<main>/.git/worktrees/<name>` was deleted.
+fn orphaned_checkout(main: &Path, name: &str) -> PathBuf {
+    let path = add_worktree(main, name);
+    std::fs::write(path.join("unsaved.txt"), "only copy").unwrap();
+    std::fs::remove_dir_all(main.join(".git/worktrees").join(name)).unwrap();
+    path
+}
+
+fn prune_discovered(main: &Path, discovered: &[PathBuf], dry_run: bool) -> WorktreePruneResult {
+    prune(
+        discovered,
+        &[main.parent().unwrap().to_path_buf()],
+        WorktreeOptions {
+            dry_run,
+            ..WorktreeOptions::default()
+        },
+    )
+}
+
+#[test]
+fn should_report_a_checkout_whose_git_administration_is_gone_and_never_remove_it() {
+    let (_fixture, main) = repository();
+    let path = orphaned_checkout(&main, "stray");
+
+    for dry_run in [true, false] {
+        let result = prune_discovered(&main, &[main.clone(), path.clone()], dry_run);
+
+        let worktree = state_of(&result, &path);
+        assert!(
+            matches!(&worktree.state, State::Dangling { bytes, .. } if *bytes > 0),
+            "{worktree:?}"
+        );
+        assert_eq!(worktree.outcome, None);
+        assert!(
+            path.join("unsaved.txt").exists(),
+            "the only copy of the work is untouched"
+        );
+        assert_eq!(result.totals().dangling, 1);
+        assert_eq!(result.totals().removed, 0);
+    }
+}
+
+#[test]
+fn should_explain_a_dangling_checkout_even_without_verbose() {
+    let (_fixture, main) = repository();
+    let path = orphaned_checkout(&main, "stray");
+
+    let text = rendered(&prune_discovered(&main, &[main.clone(), path], true), false);
+
+    assert!(text.contains("dangling"), "{text}");
+    assert!(text.contains("not removed"), "{text}");
+    assert!(text.contains("delete it by hand"), "{text}");
+}
+
+#[test]
+fn should_keep_a_dangling_checkout_outside_every_root_as_outside_the_root() {
+    let (_fixture, main) = repository();
+    let path = orphaned_checkout(&main, "stray");
+    let elsewhere = tempfile::tempdir().unwrap();
+
+    let result = prune(
+        &[main.clone(), path.clone()],
+        &[elsewhere.path().canonicalize().unwrap()],
+        WorktreeOptions::default(),
+    );
+
+    assert_eq!(state_of(&result, &path).state, State::OutsideRoot);
+}
+
+#[test]
+fn should_ignore_a_directory_git_cannot_open_that_is_not_an_orphaned_checkout() {
+    let (_fixture, main) = repository();
+    let plain_directory = main.parent().unwrap().join("not-a-repo");
+    std::fs::create_dir_all(&plain_directory).unwrap();
+
+    let result = prune_discovered(&main, &[main.clone(), plain_directory], true);
+
+    assert!(
+        result
+            .repositories
+            .iter()
+            .all(|repository| repository.worktrees.is_empty())
+    );
 }

@@ -20,6 +20,35 @@ All notable changes to this project are documented here. The format follows
   daemon is a one-line skip, never a failure. `[docker] enabled` / `max_age` set it from the user
   config. See ADR 0017.
 
+### Changed
+
+- **Worktree cleanup says why it kept each worktree.** With `-v`, every kept worktree is listed
+  with its reason (not merged into the default branch, locked, missing, outside the swept paths,
+  current). A merged pull request whose head is not the checkout's `HEAD` (squash-merged, then
+  amended locally) is named with its number, and the JSON document carries a `reason` for every
+  worktree. `voom::worktrees::document` is public so a sweep can embed the result.
+- **`git-prune` dry runs say `would prune` only where git has something to remove**; a repository
+  that needs nothing reads `nothing to prune`, and the footer counts only the former.
+- **Worktree status check is staged.** A cheap tracked-files status settles any checkout with real
+  tracked changes before the enumeration of untracked and ignored files, which on a monorepo took
+  tens of seconds per worktree; the verdict is unchanged. Status no longer takes git's optional
+  index lock in a checkout another session may be using.
+- **`git-prune` discovery is much faster** (65 s to about 2 s over a directory of twelve
+  repositories including a monorepo and 40 of its worktrees): the walk prunes the same build
+  output a sweep does and no longer enters linked-worktree checkouts. A repository nested inside a
+  linked worktree is no longer discovered by `git-prune`; one nested inside a main checkout still is.
+
+### Added
+
+- `voom git-prune --stale-worktrees <DURATION>`, as on a sweep.
+- A checkout whose `.git` file points at a git administration directory that no longer exists is
+  reported as `dangling` with its size, and never removed: nothing can prove it safe. See ADR 0016.
+
+### Fixed
+
+- `--github-merged-worktrees` no longer reports a GitHub failure for a `HEAD` that exists only
+  locally (HTTP 422 `No commit found for SHA`); it is simply not merged.
+
 ## [0.10.0] - 2026-10-14
 
 ### Added

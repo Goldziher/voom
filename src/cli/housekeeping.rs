@@ -65,6 +65,15 @@ pub struct GitPruneArgs {
     #[arg(long, requires = "remove_merged_worktrees")]
     pub github_merged_worktrees: bool,
 
+    /// With `--remove-merged-worktrees`, also remove worktrees that are not merged but have been
+    /// idle at least this long, e.g. `30d`.
+    ///
+    /// The same rule as the top-level `--stale-worktrees`: the later of the `HEAD` commit's date
+    /// and the worktree's reflog, with the commits reachable from another ref, and a working tree
+    /// clean apart from build output.
+    #[arg(long, value_name = "DURATION", requires = "remove_merged_worktrees")]
+    pub stale_worktrees: Option<String>,
+
     /// How old a worktree's administration must be before git may prune it.
     ///
     /// Defaults to git's own `gc.worktreePruneExpire` policy, three months, rather than
