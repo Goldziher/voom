@@ -18,10 +18,14 @@
 //!   stored strictly below a path voom was told to sweep — a worktree elsewhere on disk is
 //!   reported and kept, so nothing outside the scanned tree is ever its target;
 //!
+//! A checkout whose git administration directory is gone is reported as dangling and never removed
+//! (see [`dangling`]); every kept worktree carries a reason in the report.
+//!
 //! The default branch is read from the local remote-tracking ref and voom never fetches, so a
 //! stale ref errs toward keeping. `git worktree remove` does the removal and the branch is left
 //! alone: deleting a branch is a separate decision this module never makes.
 
+mod dangling;
 mod github;
 mod report;
 #[cfg(test)]
@@ -99,6 +103,20 @@ pub enum State {
     },
     /// Git could not answer (status failed, ancestry check errored).
     Unchecked(String),
+    /// A merged pull request exists, but its head is not this checkout's `HEAD`: the branch was
+    /// amended or extended after the merge, so the exact-head proof does not hold. Kept.
+    HeadDiffers {
+        /// The merged pull request's number.
+        pull: u64,
+    },
+    /// The checkout's `.git` file names a git administration directory that no longer exists, so
+    /// git cannot say what it held and nothing can prove it safe to remove. Never removed.
+    Dangling {
+        /// The administration directory that is gone.
+        gitdir: PathBuf,
+        /// Bytes on disk, so the report can say what is being left behind.
+        bytes: u64,
+    },
 }
 
 /// What happened to a [`State::Merged`] or [`State::Stale`] worktree.
@@ -160,6 +178,8 @@ pub struct Totals {
     pub kept: usize,
     /// Removals that failed.
     pub failed: usize,
+    /// Checkouts whose git administration is gone, reported and never removed.
+    pub dangling: usize,
 }
 
 impl WorktreePruneResult {
@@ -174,6 +194,7 @@ impl WorktreePruneResult {
                 }
                 (State::Merged { .. } | State::Stale { .. }, Some(Outcome::Failed(_))) => totals.failed += 1,
                 (State::LocalChanges { .. }, _) => totals.local_changes += 1,
+                (State::Dangling { .. }, _) => totals.dangling += 1,
                 _ => totals.kept += 1,
             }
         }
@@ -207,10 +228,16 @@ pub fn prune(work_trees: &[PathBuf], roots: &[PathBuf], options: WorktreeOptions
     let roots: Vec<PathBuf> = roots.iter().filter_map(|root| root.canonicalize().ok()).collect();
 
     let mut seen = std::collections::BTreeSet::new();
+    let mut orphans = Vec::new();
     let repositories: Vec<PathBuf> = work_trees
         .iter()
         .filter_map(|work_tree| {
-            let common = git(work_tree, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+            let Some(common) = git(work_tree, &["rev-parse", "--path-format=absolute", "--git-common-dir"]) else {
+                // Git cannot open it. Usually that is not a repository at all; a checkout whose
+                // administration was deleted is the case worth naming.
+                orphans.extend(dangling::orphan(work_tree).map(|orphan| (work_tree.clone(), orphan)));
+                return None;
+            };
             seen.insert(PathBuf::from(common.trim())).then(|| work_tree.clone())
         })
         .collect();
@@ -219,6 +246,9 @@ pub fn prune(work_trees: &[PathBuf], roots: &[PathBuf], options: WorktreeOptions
         .par_iter()
         .map(|work_tree| examine(work_tree, &roots, current.as_deref(), options))
         .collect();
+    for (work_tree, orphan) in orphans {
+        dangling::attach(&mut found, &work_tree, &orphan, &roots, current.as_deref());
+    }
     found.retain(|repository| !repository.worktrees.is_empty() || repository.error.is_some());
     found.sort_by(|left, right| left.repository.cmp(&right.repository));
 
@@ -259,10 +289,10 @@ fn examine(
     let github_repository = options
         .github_merged
         .then(|| github::repository(&repository.repository));
-    let hosted_merge = |head: &str| match &github_repository {
-        Some(Ok(name)) => github::merged(&repository.repository, name, head),
+    let hosted_merge = |head: &str, branch: Option<&str>| match &github_repository {
+        Some(Ok(name)) => github::merged(&repository.repository, name, head, branch),
         Some(Err(error)) => Err(error.clone()),
-        None => Ok(false),
+        None => Ok(github::Hosted::NotMerged),
     };
 
     // Fanned out per worktree: ancestry is cheap and settles most of them, but a status over a
@@ -293,10 +323,13 @@ fn examine(
     repository
 }
 
+/// Asks GitHub about an exact `HEAD`, and the branch it is on.
+type HostedLookup<'a> = dyn Fn(&str, Option<&str>) -> Result<github::Hosted, String> + Sync + 'a;
+
 #[derive(Clone, Copy)]
 struct MergeProof<'a> {
     default_sha: Option<&'a str>,
-    hosted_merge: &'a (dyn Fn(&str) -> Result<bool, String> + Sync),
+    hosted_merge: &'a HostedLookup<'a>,
 }
 
 fn judge(
@@ -341,41 +374,31 @@ fn judge(
         .default_sha
         .map_or(Ok(false), |sha| is_ancestor(main, &entry.head, sha));
     let locally_merged = ancestor.as_ref().is_ok_and(|merged| *merged);
-    let merged = match ancestor.and_then(|merged| {
-        if merged {
-            Ok(true)
-        } else {
-            (merge_proof.hosted_merge)(&entry.head)
-        }
-    }) {
-        Ok(merged) => merged,
+    let proof = match ancestor {
+        Ok(true) => Ok(github::Hosted::Merged),
+        Ok(false) => (merge_proof.hosted_merge)(&entry.head, entry.branch.as_deref()),
+        Err(message) => Err(message),
+    };
+    let hosted = match proof {
+        Ok(hosted) => hosted,
         Err(message) => {
             worktree.state = State::Unchecked(message);
             return worktree;
         }
     };
+    let merged = hosted == github::Hosted::Merged;
     // Not merged is kept unless the caller named a stale age and the worktree is provably idle
     // past it with its commits safe on another ref.
     if !merged && !options.stale_after.is_some_and(|age| is_stale(entry, main, age)) {
+        if let github::Hosted::HeadDiffers { pull } = hosted {
+            worktree.state = State::HeadDiffers { pull };
+        }
         return worktree;
     }
-    let Some(status) = git_bytes(
-        &entry.path,
-        &[
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=normal",
-            // Ignored files are invisible without this, and `git worktree remove` deletes them:
-            // a worktree whose only content is a gitignored `.env` otherwise looks clean and is
-            // removed. They are reported so a non-build-output one can keep the worktree.
-            "--ignored=matching",
-        ],
-    ) else {
+    let Some((discarded, changed)) = working_tree(&entry.path) else {
         worktree.state = State::Unchecked("`git status` failed".to_owned());
         return worktree;
     };
-    let (discarded, changed) = classify_status_in(&status, Some(&entry.path));
     if changed > 0 {
         worktree.state = State::LocalChanges { changed };
         return worktree;
@@ -416,17 +439,7 @@ fn remove_checked(
     let _serialised = removal_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     // A hosted query may have taken seconds. Revalidate the exact checkout and local work
     // before removal, including when --force is needed for regenerable output.
-    let clean_now = git_bytes(
-        &entry.path,
-        &[
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=normal",
-            "--ignored=matching",
-        ],
-    )
-    .is_some_and(|status| classify_status_in(&status, Some(&entry.path)).1 == 0);
+    let clean_now = working_tree(&entry.path).is_some_and(|(_, changed)| changed == 0);
     if !clean_now || !checkout_unchanged(entry, canonical) {
         return Outcome::Failed("worktree HEAD or local changes changed before removal".to_owned());
     }
@@ -446,6 +459,38 @@ fn checkout_unchanged(entry: &Entry, canonical: &Path) -> bool {
     std::fs::symlink_metadata(&entry.path).is_ok_and(|metadata| metadata.file_type().is_dir())
         && entry.path.canonicalize().is_ok_and(|path| path == canonical)
         && git(&entry.path, &["rev-parse", "HEAD"]).is_some_and(|head| head.trim() == entry.head)
+}
+
+/// Reads a checkout's working tree as (deleted build output, everything else), in two stages.
+///
+/// The first asks only about tracked files, which git answers from the index in a second. Any
+/// tracked change that is not a deleted build-output file settles the verdict there, and most
+/// merged worktrees that hold real work do. Only a checkout that passes goes on to the second
+/// stage, the full status with untracked and ignored files: it enumerates every directory of the
+/// checkout, which on a monorepo is the 10-60 seconds this exists to avoid. Both stages are
+/// classified by [`classify_status_in`], and the first stage's findings are a subset of the
+/// second's, so the verdict is the one a single full status would give; only the count of changed
+/// paths is a lower bound when the first stage ends it.
+fn working_tree(path: &Path) -> Option<(usize, usize)> {
+    let tracked = git_bytes(path, &["status", "--porcelain=v1", "-z", "--untracked-files=no"])?;
+    let (discarded, changed) = classify_status_in(&tracked, Some(path));
+    if changed > 0 {
+        return Some((discarded, changed));
+    }
+    let full = git_bytes(
+        path,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=normal",
+            // Ignored files are invisible without this, and `git worktree remove` deletes them:
+            // a worktree whose only content is a gitignored `.env` otherwise looks clean and is
+            // removed. They are reported so a non-build-output one can keep the worktree.
+            "--ignored=matching",
+        ],
+    )?;
+    Some(classify_status_in(&full, Some(path)))
 }
 
 /// Splits `git status --porcelain=v1 -z` into (deleted build output, everything else).
@@ -658,6 +703,9 @@ fn base_command(dir: &Path) -> Command {
         .current_dir(dir)
         .args(["-c", "core.hooksPath=", "-c", "core.fsmonitor=false"])
         .env("GIT_TERMINAL_PROMPT", "0")
+        // `status` otherwise rewrites the index it refreshes, in a checkout another session may
+        // be committing in; a read-only look must not take its lock.
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .stdin(Stdio::null());
     command
 }

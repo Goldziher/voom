@@ -80,9 +80,10 @@ fn walk(root: &Path, options: &GitPruneOptions, into: &mut Vec<PathBuf>) {
     // what lets the per-thread visitor be a `move` closure without cloning the set per thread.
     let caches = &caches;
     // The sweep's own classifier, so the walk prunes build output exactly where a sweep would
-    // remove it: a `target/` is skipped only beside the marker that proves it.
-    let classifier = Classifier::new(Selection::all()).expect("the catalog compiles");
-    let classifier = &classifier;
+    // remove it: a `target/` is skipped only beside the marker that proves it. Without one
+    // (it only fails if the catalog does not compile) the walk simply prunes less.
+    let classifier = Classifier::new(Selection::all()).ok();
+    let classifier = classifier.as_ref();
     let (sender, receiver) = std::sync::mpsc::channel();
 
     let mut builder = WalkBuilder::new(root);
@@ -115,7 +116,10 @@ fn walk(root: &Path, options: &GitPruneOptions, into: &mut Vec<PathBuf>) {
             if options.exclude.matched(path).is_some() || caches.contains(path) || is_pruned(entry.file_name()) {
                 return WalkState::Skip;
             }
-            if entry.depth() > 0 && matches!(classifier.classify(root, path, true), Verdict::Artifact(_)) {
+            if entry.depth() > 0
+                && classifier
+                    .is_some_and(|classifier| matches!(classifier.classify(root, path, true), Verdict::Artifact(_)))
+            {
                 return WalkState::Skip;
             }
             match probe(path) {
