@@ -24,6 +24,7 @@ pub mod names;
 pub mod scan;
 
 mod io;
+mod limits;
 
 pub mod bazel;
 pub mod claude;

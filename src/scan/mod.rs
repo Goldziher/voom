@@ -272,13 +272,7 @@ fn configure<'b>(builder: &'b mut WalkBuilder, options: &ScanOptions) -> &'b mut
 /// crate's own default stops at 12 whatever the machine has. Measured on one 18-core machine under
 /// load, a lone thread took 8.5 minutes over a tree that the default took 35 seconds on.
 fn walker_threads(jobs: Option<usize>) -> usize {
-    jobs.map_or_else(
-        || {
-            let cores = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
-            (cores * 8).clamp(8, 128)
-        },
-        |jobs| jobs.max(1),
-    )
+    jobs.map_or_else(crate::limits::default_width, |jobs| jobs.max(1))
 }
 
 #[cfg(test)]

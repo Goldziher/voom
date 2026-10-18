@@ -52,7 +52,7 @@ pub fn limit_removal_workers(jobs: Option<usize>) {
 fn removal_pool() -> Option<std::sync::Arc<rayon::ThreadPool>> {
     static POOL: std::sync::Mutex<Option<(usize, std::sync::Arc<rayon::ThreadPool>)>> = std::sync::Mutex::new(None);
     let jobs = match REMOVAL_JOBS.load(std::sync::atomic::Ordering::Relaxed) {
-        0 => REMOVAL_WORKERS,
+        0 => REMOVAL_WORKERS.min(crate::limits::descriptor_cap()),
         jobs => jobs,
     };
     let mut slot = POOL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
