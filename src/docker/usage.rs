@@ -145,7 +145,7 @@ pub fn parse_timestamp(text: &str) -> Option<i64> {
     let year: i64 = date.next()?.parse().ok()?;
     let month: i64 = date.next()?.parse().ok()?;
     let day: i64 = date.next()?.parse().ok()?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || !(1..=9999).contains(&year) {
         return None;
     }
 
@@ -163,7 +163,14 @@ pub fn parse_timestamp(text: &str) -> Option<i64> {
     let offset_seconds =
         sign * (digits.get(..2)?.parse::<i64>().ok()? * 3600 + digits.get(2..)?.parse::<i64>().ok()? * 60);
 
-    Some(days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second - offset_seconds)
+    // Every field comes off the wire, so the arithmetic is checked rather than trusted: a crafted
+    // timestamp must yield `None`, not a panic in debug or a wrap in release.
+    days_from_civil(year, month, day)
+        .checked_mul(86_400)?
+        .checked_add(hour.checked_mul(3600)?)?
+        .checked_add(minute.checked_mul(60)?)?
+        .checked_add(second)?
+        .checked_sub(offset_seconds)
 }
 
 /// Days from 1970-01-01 to a proleptic Gregorian date (Howard Hinnant's `days_from_civil`).
@@ -227,6 +234,9 @@ mod tests {
         assert_eq!(parse_timestamp("2 days ago"), None);
         assert_eq!(parse_timestamp(""), None);
         assert_eq!(parse_timestamp("2026-13-01 00:00:00 +0000 UTC"), None);
+        // A year outside the calendar must be refused, not overflow the day arithmetic.
+        assert_eq!(parse_timestamp("262143-01-01 00:00:00 +0000 UTC"), None);
+        assert_eq!(parse_timestamp("9223372036854775807-01-01 00:00:00 +0000 UTC"), None);
     }
 
     #[test]
