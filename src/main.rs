@@ -186,8 +186,21 @@ fn prune(cli: &Cli) -> anyhow::Result<i32> {
         Some(joined) => Some(joined.map_err(|_| anyhow::anyhow!("the bazel housekeeping panicked"))??),
         None => None,
     };
-    // A docker problem is a note and nothing more; it must not fail the sweep.
-    let docker = docker.ok().and_then(Result::ok).flatten();
+    // A docker problem is a note and nothing more; it must not fail the sweep. A daemon that is
+    // simply down is a `Skip` inside the result and is rendered with the docker block; a genuine
+    // error or a panic — for instance resolving the user config — is said aloud rather than
+    // dropped, so a stage that never ran is never silent.
+    let docker = match docker {
+        Ok(Ok(found)) => found,
+        Ok(Err(error)) => {
+            eprintln!("voom: docker: {error}");
+            None
+        }
+        Err(_) => {
+            eprintln!("voom: docker: the docker stage panicked");
+            None
+        }
+    };
     let json = matches!(cli.prune.format, voom::cli::Format::Json);
 
     // Human output streams each stage as it finishes; JSON waits for every stage so that stdout

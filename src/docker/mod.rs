@@ -318,13 +318,30 @@ fn run_lanes(plans: Vec<LanePlan>, timeout: Duration) -> Vec<Lane> {
         let handles: Vec<_> = plans
             .into_iter()
             .map(|plan| {
-                scope.spawn(move || {
+                // Keep a copy to name the lane if its thread panics, since a panicking thread
+                // cannot hand its own plan back.
+                let named = plan.clone();
+                let handle = scope.spawn(move || {
                     let outcome = execute(&plan, timeout);
                     Lane { plan, outcome }
-                })
+                });
+                (handle, named)
             })
             .collect();
-        handles.into_iter().filter_map(|handle| handle.join().ok()).collect()
+        handles
+            .into_iter()
+            .map(|(handle, plan)| match handle.join() {
+                Ok(lane) => lane,
+                // A lane that panicked is a failure, not a lane that never existed: dropping it
+                // would under-count the footer and could hide the whole stage.
+                Err(_) => Lane {
+                    plan,
+                    outcome: LaneOutcome::Failed {
+                        message: "the lane panicked".to_owned(),
+                    },
+                },
+            })
+            .collect()
     })
 }
 
