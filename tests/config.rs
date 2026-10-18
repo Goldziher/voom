@@ -620,6 +620,24 @@ fn should_expand_all_caches_in_user_configuration_and_include_tagged_builds() {
 }
 
 #[test]
+fn should_refuse_a_cache_flag_that_is_only_an_exclusion() {
+    let fixture = tree(&["machine.toml"]);
+    let run_options = RunOptions {
+        flags: Flags {
+            clean_caches: vec!["-uv".to_owned()],
+            ..Flags::default()
+        },
+        ..options(fixture.path())
+    };
+
+    let error = voom::run::resolver_for(fixture.path(), &run_options)
+        .and_then(|resolver| resolver.root_config())
+        .expect_err("an exclusion with nothing to take it out of is refused");
+
+    assert!(error.to_string().contains("exclusion"), "{error}");
+}
+
+#[test]
 fn should_allow_configured_full_cache_cleanup_to_keep_tagged_directories() {
     let fixture = tree(&["machine.toml", "relocated/debug/app", "relocated/CACHEDIR.TAG"]);
     write(

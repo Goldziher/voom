@@ -65,6 +65,17 @@ pub enum Error {
         id: String,
     },
 
+    /// A `--clean-caches` / `--clear-caches` list that names only exclusions.
+    ///
+    /// A `-id` takes an id back out of a set, so it needs a set to take it out of. A lone
+    /// `--clean-caches=-uv` would subtract from nothing and remove no cache while reporting
+    /// success, which is indistinguishable from a machine that has none.
+    #[error("`-{id}` is an exclusion with nothing to take it out of — write `all,-{id}` to clear every other cache")]
+    LoneCacheExclusion {
+        /// The cache id as written, without the leading `-`.
+        id: String,
+    },
+
     /// A duration string in configuration or on the command line would not parse.
     ///
     /// Never silently defaulted: a keep policy is a safety guard, and one the user thought they

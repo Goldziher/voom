@@ -346,6 +346,15 @@ impl Resolver {
             .iter()
             .filter_map(|id| id.strip_prefix('-').map(str::to_owned))
             .collect();
+        // An exclusion subtracts from a set; with no positive id anywhere (neither a config
+        // `enable` nor `all`), it subtracts from nothing, and the run would clear no cache while
+        // reporting success. Rejected rather than treated as `all,-id`: a flag that names a cache
+        // to take back out is not a request to clear the whole table.
+        if !excluded.is_empty() && !clean_caches.iter().any(|id| !id.starts_with('-')) {
+            return Err(Error::LoneCacheExclusion {
+                id: excluded.first().cloned().unwrap_or_default(),
+            });
+        }
         clean_caches.retain(|id| !id.starts_with('-') && !excluded.contains(id));
         clean_caches.sort_unstable();
         clean_caches.dedup();
