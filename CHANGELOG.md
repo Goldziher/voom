@@ -9,6 +9,37 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-10-18
+
+### Changed
+
+- **Removal runs inside its own pool end to end.** The fan-out over artifacts is installed on the
+  removal pool once instead of one install per artifact, so no sizing worker is parked feeding a
+  pool of another width, and freed bytes are counted once per directory rather than once per
+  unlinking entry.
+- `voom docker-prune` takes its settings from flags only and does not read `[docker]`; the
+  reference now says so.
+
+### Fixed
+
+- **`-j` is honoured by every run in the process, not only the first.** The removal pool was built
+  once from the first width it saw; it is now rebuilt when the width changes.
+- **A finding an interrupted (`EINTR`) directory read re-emits is de-duplicated.** Re-walking the
+  directory could report an artifact twice, and the second removal was refused as vanished and
+  counted as a safety refusal it never was.
+- **A `--clean-caches` list that is only an exclusion is refused.** A lone `--clean-caches=-uv`
+  subtracted from nothing and cleared no cache while reporting success.
+- **Docker no longer swallows a problem.** A panicking lane and a stage error are both reported; a
+  daemon's error text is stripped of terminal escapes before it reaches the terminal; an
+  out-of-range daemon timestamp is refused rather than overflowing; and a Colima socket is placed
+  only from a Colima config home, not any directory named `colima`.
+- **A `--force` permission repair prefers a race-free `fchmodat`.** `AT_SYMLINK_NOFOLLOW` is tried
+  first, with the plain form only where the kernel does not support it.
+- **`git-prune` says so when the discovery classifier cannot be built**, rather than silently
+  pruning less.
+- A directory a mount point keeps non-empty is no longer re-swept three times before the same
+  failure is reported.
+
 ## [0.11.0] - 2026-10-17
 
 ### Added
@@ -772,7 +803,8 @@ nothing; this is the tool.
 - Size accounting sums allocated blocks, so on a copy-on-write filesystem such as APFS the bytes
   reported can exceed the space actually freed where files are shared between clones.
 
-[Unreleased]: https://github.com/Goldziher/voom/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/Goldziher/voom/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/Goldziher/voom/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/Goldziher/voom/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Goldziher/voom/compare/v0.9.1...v0.10.0
 [0.2.0]: https://github.com/Goldziher/voom/compare/v0.1.0...v0.2.0
