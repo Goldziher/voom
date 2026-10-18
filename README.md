@@ -184,14 +184,14 @@ The ecosystem catalog covers build output; it has nothing to say about `~/.cargo
 | `go-mod` | Go module cache | `~/go/pkg/mod` |
 | `npm` | npm cache | `~/.npm/_cacache` |
 | `pnpm` | pnpm metadata cache | `~/Library/Caches/pnpm`, `~/.cache/pnpm` |
-| `pnpm-store` | pnpm content-addressable store | `~/Library/pnpm/store`, `~/.local/share/pnpm/store`, `~/.pnpm-store` |
-| `pip` | pip cache | `~/Library/Caches/pip`, `~/.cache/pip` |
+| `pnpm-store` | pnpm content-addressable store | `~/Library/pnpm/store`, `~/.local/share/pnpm/store`, `~/.pnpm-store`, `~/AppData/Local/pnpm/store` |
+| `pip` | pip cache | `~/Library/Caches/pip`, `~/.cache/pip`, `~/AppData/Local/pip/Cache` |
 | `homebrew` | Homebrew downloads | `~/Library/Caches/Homebrew`, `~/.cache/Homebrew` |
 | `prek` | prek cache | `~/.cache/prek` |
 | `pre-commit` | pre-commit cache | `~/.cache/pre-commit` |
-| `ms-playwright` | Playwright browsers | `~/Library/Caches/ms-playwright`, `~/.cache/ms-playwright` |
-| `node-gyp` | node-gyp headers | `~/Library/Caches/node-gyp`, `~/.cache/node-gyp` |
-| `golangci-lint` | golangci-lint cache | `~/Library/Caches/golangci-lint`, `~/.cache/golangci-lint` |
+| `ms-playwright` | Playwright browsers | `~/Library/Caches/ms-playwright`, `~/.cache/ms-playwright`, `~/AppData/Local/ms-playwright` |
+| `node-gyp` | node-gyp headers | `~/Library/Caches/node-gyp`, `~/.cache/node-gyp`, `~/AppData/Local/node-gyp/Cache` |
+| `golangci-lint` | golangci-lint cache | `~/Library/Caches/golangci-lint`, `~/.cache/golangci-lint`, `~/AppData/Local/golangci-lint` |
 | `tree-sitter-language-pack` | tree-sitter language pack | `~/Library/Caches/tree-sitter-language-pack`, `~/.cache/tree-sitter-language-pack` |
 | `huggingface` | Hugging Face hub | `~/.cache/huggingface/hub` |
 | `pub` | Dart pub cache | `~/.pub-cache` |
