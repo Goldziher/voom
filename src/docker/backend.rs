@@ -92,8 +92,16 @@ pub fn detect(endpoint: &str) -> Backend {
     };
 
     // Colima keeps `<home>/<profile>/docker.sock`, and the default profile's is also linked at
-    // `<home>/docker.sock`. Its home is `~/.colima`, or `colima` under the XDG config directory.
-    if let Some(index) = parts.iter().position(|part| part == ".colima" || part == "colima") {
+    // `<home>/docker.sock`. Its home is `.colima` under the user's home, or `colima` directly
+    // under the XDG config directory. A bare `colima` component anywhere else is not a placement:
+    // matching one would read `~/projects/colima/run/docker.sock` as a Colima socket and run a VM
+    // trim against a machine that has nothing to do with it.
+    let colima = parts.iter().enumerate().find(|(index, part)| match part.as_str() {
+        ".colima" => true,
+        "colima" => *index > 0 && parts[*index - 1] == ".config",
+        _ => false,
+    });
+    if let Some((index, _)) = colima {
         match &parts[index + 1..] {
             [socket_name] if socket_name == "docker.sock" => {
                 return Backend::Colima {
@@ -366,6 +374,20 @@ mod tests {
                 home: PathBuf::from("/home/dev/.config/colima"),
                 profile: "work".to_owned()
             }
+        );
+    }
+
+    #[test]
+    fn should_not_place_a_colima_named_directory_that_is_not_a_config_home() {
+        // A bare `colima` component anywhere would read a project directory as a socket and trim
+        // the wrong VM; only `.colima` or `.config/colima` is a placement.
+        assert_eq!(
+            detect("unix:///Users/dev/projects/colima/run/docker.sock"),
+            Backend::Unknown
+        );
+        assert_eq!(
+            detect("unix:///Users/dev/src/colima/work/docker.sock"),
+            Backend::Unknown
         );
     }
 
