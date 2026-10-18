@@ -144,6 +144,10 @@ pub(crate) fn build_pool(jobs: Option<usize>) -> Result<rayon::ThreadPool> {
 /// argument the walk makes for oversubscribing (`scan::walker_threads`). Measured over twenty
 /// Bazel output bases under two endpoint-security agents: 334 s on eighteen workers, 162 s on
 /// sixty-four, 143 s on a hundred and twenty-eight.
+///
+/// That measurement is a Bazel stage on a filesystem that answers in parallel. On a spinning disk
+/// or a network filesystem oversubscription is the wrong default, which is exactly what `-j`
+/// exists to set; this is the width only when the flag is absent.
 fn io_threads() -> usize {
     let cores = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
     (cores * 8).clamp(8, 128)
