@@ -12,7 +12,36 @@ use clap::Parser;
 use voom::cli::{Cli, Command, ConfigAction};
 use voom::report::exit;
 
+/// Raises the process's soft descriptor limit to its hard limit, best effort.
+///
+/// voom holds a descriptor for each level of a tree it walks and spawns a process per repository.
+/// The soft limit is routinely far below the hard one — macOS gives a process launched from the
+/// GUI a soft limit of 256 against an effectively unlimited hard one — and a sweep of a deep or
+/// repository-dense tree otherwise fails with `EMFILE`. Failing to raise it is not fatal: the
+/// descriptor-aware default pool in the library keeps voom inside whatever limit it is given.
+fn raise_descriptor_limit() {
+    #[cfg(unix)]
+    {
+        // SAFETY: `limit` is a plain out-parameter; both calls only read or write it.
+        let mut limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) } != 0 {
+            return;
+        }
+        if limit.rlim_cur < limit.rlim_max {
+            limit.rlim_cur = limit.rlim_max;
+            // SAFETY: `limit` is this process's own limit, read back just above.
+            unsafe {
+                libc::setrlimit(libc::RLIMIT_NOFILE, &raw const limit);
+            }
+        }
+    }
+}
+
 fn main() -> ExitCode {
+    raise_descriptor_limit();
     let cli = Cli::parse();
     anstream::ColorChoice::write_global(cli.prune.color.into());
 
