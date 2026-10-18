@@ -19,6 +19,7 @@ use crate::policy::parse_duration;
     reason = "these mirror command-line flags, which are bools by nature"
 )]
 #[derive(Debug, Args)]
+#[command(group(clap::ArgGroup::new("worktree_removal").args(["remove_merged_worktrees", "aggressive"]).multiple(true)))]
 pub struct GitPruneArgs {
     /// Trees to search for repositories.
     #[arg(value_name = "PATH", default_value = ".")]
@@ -27,6 +28,13 @@ pub struct GitPruneArgs {
     /// Report what git would prune, without letting it repack.
     #[arg(short = 'n', long)]
     pub dry_run: bool,
+
+    /// Remove worktrees regardless of age or local changes, and dangling checkouts.
+    ///
+    /// Discards uncommitted, untracked and ignored files permanently, without recovery archives.
+    /// Detached commits are retained in Git. Main, locked, current and out-of-root worktrees remain protected.
+    #[arg(long)]
+    pub aggressive: bool,
 
     /// Output format.
     ///
@@ -62,7 +70,7 @@ pub struct GitPruneArgs {
     /// in the origin repository counts; lookup failures keep the checkout. Working-tree and
     /// containment checks still apply. Commits proved only by GitHub are retained under
     /// `refs/voom/merged-worktrees/` before removal.
-    #[arg(long, requires = "remove_merged_worktrees")]
+    #[arg(long, requires = "worktree_removal")]
     pub github_merged_worktrees: bool,
 
     /// With `--remove-merged-worktrees`, also remove worktrees that are not merged but have been
@@ -71,7 +79,7 @@ pub struct GitPruneArgs {
     /// The same rule as the top-level `--stale-worktrees`: the later of the `HEAD` commit's date
     /// and the worktree's reflog, with the commits reachable from another ref, and a working tree
     /// clean apart from build output.
-    #[arg(long, value_name = "DURATION", requires = "remove_merged_worktrees")]
+    #[arg(long, value_name = "DURATION", requires = "worktree_removal")]
     pub stale_worktrees: Option<String>,
 
     /// How old a worktree's administration must be before git may prune it.

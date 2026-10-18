@@ -108,11 +108,12 @@ fn docker_prune_command(args: &voom::cli::DockerPruneArgs) -> anyhow::Result<i32
     Ok(exit::SUCCESS)
 }
 
-fn stale_after(value: Option<&str>) -> anyhow::Result<Option<std::time::Duration>> {
+fn stale_after(value: Option<&str>, aggressive: bool) -> anyhow::Result<Option<std::time::Duration>> {
     value
         .map(voom::policy::parse_duration)
         .transpose()
         .context("reading --stale-worktrees")
+        .map(|age| age.or(aggressive.then_some(std::time::Duration::ZERO)))
 }
 
 /// `voom git-prune`: git's own housekeeping, run on its own.
@@ -120,35 +121,48 @@ fn git_prune(cli: &Cli, args: &voom::cli::GitPruneArgs) -> anyhow::Result<i32> {
     let options = args.to_git_options(&cli.prune)?;
     let result = voom::git::prune(&options).context("pruning repositories")?;
 
-    let mut out = anstream::stdout().lock();
-    voom::cli::render_git(&result, args, &mut out).context("writing the report")?;
-    out.flush().context("flushing the report")?;
-    drop(out);
-
-    if args.remove_merged_worktrees {
+    let worktrees = if args.remove_merged_worktrees || args.aggressive {
         let repositories = voom::git::discover_repositories(&options);
-        let worktrees = voom::worktrees::prune(
+        Some(voom::worktrees::prune(
             &repositories,
             &options.roots,
             voom::worktrees::WorktreeOptions {
                 dry_run: args.dry_run,
-                stale_after: stale_after(args.stale_worktrees.as_deref())?,
+                stale_after: stale_after(args.stale_worktrees.as_deref(), args.aggressive)?,
                 github_merged: args.github_merged_worktrees,
+                aggressive: args.aggressive,
             },
-        );
-        let mut out = anstream::stdout().lock();
-        match args.format {
-            voom::cli::Format::Human => voom::worktrees::render_human(&worktrees, cli.prune.verbose, &mut out),
-            voom::cli::Format::Json => voom::worktrees::render_json(&worktrees, &mut out),
+        ))
+    } else {
+        None
+    };
+    let mut out = anstream::stdout().lock();
+    match args.format {
+        voom::cli::Format::Human => {
+            voom::cli::render_git(&result, args, &mut out).context("writing the report")?;
+            if let Some(worktrees) = &worktrees {
+                voom::worktrees::render_human(worktrees, cli.prune.verbose, &mut out)
+                    .context("writing the worktree report")?;
+            }
         }
-        .context("writing the worktree report")?;
-        out.flush().context("flushing the worktree report")?;
-        if result.exit_code() == exit::SUCCESS {
-            return Ok(worktrees.exit_code());
+        voom::cli::Format::Json => {
+            let mut document = voom::git::document(&result);
+            if let Some(worktrees) = &worktrees {
+                document["worktrees"] = voom::worktrees::document(worktrees);
+            }
+            serde_json::to_writer_pretty(&mut out, &document).context("writing the report")?;
+            writeln!(out)?;
         }
     }
+    out.flush().context("flushing the report")?;
 
-    Ok(result.exit_code())
+    Ok(if result.exit_code() == exit::SUCCESS {
+        worktrees
+            .as_ref()
+            .map_or(exit::SUCCESS, voom::worktrees::WorktreePruneResult::exit_code)
+    } else {
+        result.exit_code()
+    })
 }
 
 fn watch(cli: &Cli, args: &voom::cli::WatchArgs) -> anyhow::Result<i32> {
@@ -241,7 +255,7 @@ fn prune(cli: &Cli) -> anyhow::Result<i32> {
         out.flush().context("flushing the report")?;
     }
 
-    let worktrees = if cli.prune.remove_merged_worktrees {
+    let worktrees = if cli.prune.remove_merged_worktrees || cli.prune.aggressive {
         merged_worktrees(cli, &result.repositories, &options.roots)?
     } else {
         None
@@ -409,7 +423,8 @@ fn merged_worktrees(
         voom::worktrees::WorktreeOptions {
             dry_run: cli.prune.dry_run,
             github_merged: cli.prune.github_merged_worktrees,
-            stale_after: stale_after(cli.prune.stale_worktrees.as_deref())?,
+            stale_after: stale_after(cli.prune.stale_worktrees.as_deref(), cli.prune.aggressive)?,
+            aggressive: cli.prune.aggressive,
         },
     );
     Ok(Some(result))

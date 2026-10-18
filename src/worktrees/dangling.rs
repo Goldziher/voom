@@ -6,15 +6,16 @@
 //! fails in it, so nothing voom checks for ordinary worktrees can be checked. It still owns disk
 //! and may hold the only copy of uncommitted work.
 //!
-//! voom therefore **reports such a checkout and never removes it**. Every proof the removal rules
+//! voom therefore **reports such a checkout and keeps it by default**. Every proof the removal rules
 //! rely on is gone with the administration: there is no `HEAD` to test for ancestry, no index to
 //! compare, and no way to date the loss, so "nothing here is newer than the deletion" cannot be
-//! established either. See the amendment to `adrs/0016-merged-worktree-removal.md`.
+//! established either. Explicit aggressive cleanup accepts that loss, rechecks the missing
+//! administration and applies the ordinary deletion guard. See ADR 0016 and its successor.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use super::{RepositoryWorktrees, State, Worktree};
+use super::{Outcome, RepositoryWorktrees, State, Worktree, WorktreeOptions};
 
 /// A checkout and the repository its `.git` file says it belonged to.
 pub(super) struct Orphan {
@@ -66,9 +67,10 @@ pub(super) fn attach(
     orphan: &Orphan,
     roots: &[PathBuf],
     current: Option<&Path>,
+    options: WorktreeOptions,
 ) {
     let canonical = checkout.canonicalize().unwrap_or_else(|_| checkout.to_path_buf());
-    let state = if !roots
+    let mut state = if !roots
         .iter()
         .any(|root| canonical != *root && canonical.starts_with(root))
     {
@@ -78,14 +80,26 @@ pub(super) fn attach(
     } else {
         State::Dangling {
             gitdir: orphan.gitdir.clone(),
-            bytes: crate::size::measure(&canonical),
+            bytes: 0,
         }
+    };
+    let outcome = if let State::Dangling { bytes, .. } = &mut state {
+        if options.aggressive {
+            let (outcome, measured) = remove(checkout, orphan, roots, options.dry_run);
+            *bytes = measured;
+            Some(outcome)
+        } else {
+            *bytes = crate::size::measure(&canonical);
+            None
+        }
+    } else {
+        None
     };
     let entry = Worktree {
         path: canonical,
         branch: None,
         state,
-        outcome: None,
+        outcome,
     };
     let main = orphan.main.canonicalize().unwrap_or_else(|_| orphan.main.clone());
     match found.iter_mut().find(|repository| repository.repository == main) {
@@ -100,4 +114,34 @@ pub(super) fn attach(
             error: None,
         }),
     }
+}
+
+fn remove(checkout: &Path, expected: &Orphan, roots: &[PathBuf], dry_run: bool) -> (Outcome, u64) {
+    let guard = match crate::delete::Guard::new(roots, true) {
+        Ok(guard) => guard,
+        Err(error) => return (Outcome::Failed(format!("checking dangling checkout: {error}")), 0),
+    };
+    // The checkout may have been repaired while scanning. Never delete one whose administration
+    // has appeared or whose gitdir changed since it was identified as dangling.
+    if orphan(checkout).is_none_or(|now| now.gitdir != expected.gitdir) {
+        return (
+            Outcome::Failed("dangling checkout administration changed before removal".to_owned()),
+            0,
+        );
+    }
+    let removal = if dry_run {
+        crate::delete::Removal::dry()
+    } else {
+        crate::delete::Removal::new()
+    };
+    let (outcome, bytes) = guard.reclaim(checkout, removal);
+    let outcome = match outcome {
+        crate::delete::Outcome::Removed => Outcome::Removed,
+        crate::delete::Outcome::WouldRemove => Outcome::WouldRemove,
+        outcome => Outcome::Failed(format!(
+            "removing dangling checkout {}: {outcome:?}",
+            checkout.display()
+        )),
+    };
+    (outcome, bytes)
 }

@@ -36,7 +36,7 @@ pub fn render_human(result: &WorktreePruneResult, verbose: bool, out: &mut impl 
     let verb = if result.dry_run { "would be removed" } else { "removed" };
     writeln!(
         out,
-        "{} merged or stale worktrees {verb}, {} with local changes, {} others kept in {:.2?}",
+        "{} worktrees {verb}, {} with local changes, {} others kept in {:.2?}",
         totals.removed.bold(),
         totals.local_changes,
         totals.kept,
@@ -57,6 +57,23 @@ pub fn render_human(result: &WorktreePruneResult, verbose: bool, out: &mut impl 
 
 fn row(worktree: &Worktree, dry_run: bool, verbose: bool, default_branch: Option<&str>) -> Option<(String, String)> {
     match (&worktree.state, &worktree.outcome) {
+        (State::Discarded, Some(Outcome::Removed | Outcome::WouldRemove)) => Some((
+            if dry_run {
+                "would remove".yellow().to_string()
+            } else {
+                "removed".green().to_string()
+            },
+            "--aggressive: merged or stale; local content discarded without status enumeration".to_owned(),
+        )),
+        (State::Dangling { .. }, Some(Outcome::Removed | Outcome::WouldRemove)) => Some((
+            if dry_run {
+                "would remove".yellow().to_string()
+            } else {
+                "removed".green().to_string()
+            },
+            "--aggressive: dangling checkout; uncommitted files and unknown commits discarded".to_owned(),
+        )),
+        (_, Some(Outcome::Failed(message))) => Some(("failed".red().to_string(), message.clone())),
         (State::Merged { discarded } | State::Stale { discarded }, Some(Outcome::Removed | Outcome::WouldRemove)) => {
             Some((
                 if dry_run {
@@ -66,9 +83,6 @@ fn row(worktree: &Worktree, dry_run: bool, verbose: bool, default_branch: Option
                 },
                 merged_detail(worktree, *discarded, matches!(worktree.state, State::Stale { .. })),
             ))
-        }
-        (State::Merged { .. } | State::Stale { .. }, Some(Outcome::Failed(message))) => {
-            Some(("failed".red().to_string(), message.clone()))
         }
         (State::Dangling { .. }, _) => Some(("dangling".yellow().to_string(), reason(&worktree.state, default_branch))),
         // A kept worktree is named when the reader can act on it, or asked to see everything.
@@ -95,6 +109,7 @@ fn reason(state: &State, default_branch: Option<&str>) -> String {
         State::LocalChanges { changed } => {
             format!("merged or stale, but {changed} changed path(s) are not build output")
         }
+        State::Discarded => "--aggressive: local content discarded without status enumeration".to_owned(),
         State::Unchecked(message) => message.clone(),
         State::HeadDiffers { pull } => format!(
             "pull request #{pull} merged, but this HEAD is not its head (amended or extended afterwards), \
@@ -132,6 +147,7 @@ fn state_code(state: &State) -> &'static str {
         State::NotMerged => "not_merged",
         State::OutsideRoot => "outside_root",
         State::LocalChanges { .. } => "local_changes",
+        State::Discarded => "discarded_local_changes",
         State::Merged { .. } => "merged",
         State::Stale { .. } => "stale",
         State::Unchecked(_) => "unchecked",
@@ -143,8 +159,8 @@ fn state_code(state: &State) -> &'static str {
 /// The reason a worktree was not removed, or `None` when it was (or would be).
 fn kept_reason(worktree: &Worktree, default_branch: Option<&str>) -> Option<String> {
     match (&worktree.state, &worktree.outcome) {
-        (State::Merged { .. } | State::Stale { .. }, Some(Outcome::Failed(message))) => Some(message.clone()),
-        (State::Merged { .. } | State::Stale { .. }, _) => None,
+        (_, Some(Outcome::Failed(message))) => Some(message.clone()),
+        (_, Some(Outcome::Removed | Outcome::WouldRemove)) | (State::Merged { .. } | State::Stale { .. }, _) => None,
         (state, _) => Some(reason(state, default_branch)),
     }
 }

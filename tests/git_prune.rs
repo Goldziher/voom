@@ -90,6 +90,77 @@ fn canonical(path: &Path) -> PathBuf {
     path.canonicalize().expect("the path exists")
 }
 
+#[test]
+fn should_remove_a_dirty_unmerged_worktree_with_only_the_aggressive_flag() {
+    if !git_available() {
+        return;
+    }
+    let root = TempDir::new().unwrap();
+    let main = repository(root.path(), "project");
+    git(&main, &["worktree", "add", "--quiet", "../finished", "-b", "finished"]);
+    let checkout = root.path().join("finished");
+    std::fs::write(checkout.join("README.md"), "completed commit").unwrap();
+    git(&checkout, &["commit", "--quiet", "-am", "completed"]);
+    let head = git(&checkout, &["rev-parse", "HEAD"]);
+    std::fs::write(checkout.join("README.md"), "completed local changes").unwrap();
+    let output = voom()
+        .args(["git-prune", "--aggressive", "--format", "json"])
+        .arg(root.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let document: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(document["worktrees"]["totals"]["removed"], 1);
+    assert!(
+        !checkout.exists(),
+        "--aggressive implies worktree removal and zero stale age"
+    );
+    assert_eq!(git(&main, &["rev-parse", "refs/heads/finished"]), head);
+}
+
+#[test]
+fn should_emit_one_json_document_with_git_and_worktree_results() {
+    if !git_available() {
+        return;
+    }
+    let root = TempDir::new().expect("a temporary directory");
+    let repository = repository(root.path(), "project");
+    git(
+        &repository,
+        &["worktree", "add", "--quiet", "../merged", "-b", "merged"],
+    );
+
+    let output = voom()
+        .args([
+            "git-prune",
+            "--dry-run",
+            "--format",
+            "json",
+            "--remove-merged-worktrees",
+        ])
+        .arg(root.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let document: serde_json::Value = serde_json::from_slice(&output).expect("one complete JSON document");
+    assert_eq!(document["dry_run"], true);
+    assert_eq!(document["repositories"].as_array().unwrap().len(), 1);
+    assert_eq!(document["worktrees"]["totals"]["removed"], 1);
+    assert_eq!(
+        document["worktrees"]["repositories"][0]["worktrees"][0]["outcome"],
+        "would_remove"
+    );
+    assert!(
+        root.path().join("merged/README.md").exists(),
+        "dry-run keeps the checkout"
+    );
+}
+
 /// A stale worktree is one whose checkout is gone; git keeps administrative files for it under
 /// `.git/worktrees/<name>` until something prunes them. A *live* one must survive, because
 /// removing its administrative files would detach a checkout the user is working in.

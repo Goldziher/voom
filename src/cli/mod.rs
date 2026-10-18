@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 
+mod aggressive;
 mod housekeeping;
 
 pub use housekeeping::{ClaudePruneArgs, DockerPruneArgs, GitPruneArgs, render_claude, render_docker, render_git};
@@ -140,6 +141,7 @@ impl From<Color> for anstream::ColorChoice {
     reason = "these are command-line flags, which are bools by nature"
 )]
 #[derive(Debug, Args)]
+#[command(group(clap::ArgGroup::new("worktree_removal").args(["remove_merged_worktrees", "aggressive"]).multiple(true)))]
 pub struct PruneArgs {
     /// Trees to sweep.
     #[arg(value_name = "PATH", default_value = ".")]
@@ -148,6 +150,15 @@ pub struct PruneArgs {
     /// Report what would be removed, without touching anything.
     #[arg(short = 'n', long, help_heading = "Behaviour")]
     pub dry_run: bool,
+
+    /// Enable all catalog artifacts, dependencies, caches, permission repair and unused Docker cleanup.
+    ///
+    /// Also removes worktrees without an age limit, discarding uncommitted and ignored files,
+    /// and dangling checkouts whose Git metadata is gone. Detached commits are retained in Git;
+    /// no recovery archive is made. Artifact proofs, exclusions and keep policies still apply,
+    /// along with filesystem safety rails.
+    #[arg(long, help_heading = "Behaviour")]
+    pub aggressive: bool,
 
     /// Print the per-artifact report. This is the default; the flag is accepted so the
     /// published git hooks can name it explicitly.
@@ -185,7 +196,7 @@ pub struct PruneArgs {
     /// Contacts github.com through `gh`; lookup failure keeps the checkout. The same clean
     /// working-tree and containment checks apply. HEADs proved only by GitHub are retained under
     /// `refs/voom/merged-worktrees/` before removal.
-    #[arg(long, requires = "remove_merged_worktrees", help_heading = "Behaviour")]
+    #[arg(long, requires = "worktree_removal", help_heading = "Behaviour")]
     pub github_merged_worktrees: bool,
 
     /// With `--remove-merged-worktrees`, also remove worktrees that are not merged but have been
@@ -199,7 +210,7 @@ pub struct PruneArgs {
     #[arg(
         long,
         value_name = "DURATION",
-        requires = "remove_merged_worktrees",
+        requires = "worktree_removal",
         help_heading = "Behaviour"
     )]
     pub stale_worktrees: Option<String>,
@@ -473,7 +484,7 @@ impl PruneArgs {
             return None;
         }
         let mut options = crate::bazel::BazelPruneOptions::conventional(self.dry_run, self.one_file_system);
-        options.force = self.force;
+        options.force = self.force || self.aggressive;
         if let Some(age) = resolved.bazel_max_age {
             options.max_age = age;
         }
@@ -507,8 +518,8 @@ impl PruneArgs {
             keep: self.keep()?,
             exclude: self.exclude.clone(),
             include: self.include.clone(),
-            clean_caches: self.clean_caches.clone(),
-            clean_tagged: self.clean_tagged.then_some(true),
+            clean_caches: self.cache_specs(),
+            clean_tagged: (self.clean_tagged || self.aggressive).then_some(true),
             // Only ever `Some(false)`: the flag can turn housekeeping off, and nothing turns it
             // on, because it is already on.
             git: self.no_git.then_some(false),
@@ -516,27 +527,14 @@ impl PruneArgs {
             bazel_max_age: self.bazel_max_age.as_deref().map(parse_duration).transpose()?,
             // Only ever `Some(true)`: the flag can turn Docker on, and nothing turns it off,
             // because it is already off.
-            docker: self.docker.then_some(true),
-            docker_max_age: self.docker_max_age.as_deref().map(parse_duration).transpose()?,
+            docker: (self.docker || self.aggressive).then_some(true),
+            docker_max_age: self
+                .docker_max_age
+                .as_deref()
+                .map(parse_duration)
+                .transpose()?
+                .or(self.aggressive.then_some(std::time::Duration::ZERO)),
         })
-    }
-
-    /// The `--enable` specs, with `--clean-dependencies` expanded into the group it stands for.
-    ///
-    /// Sugar rather than a mechanism: expanding here means the dependency opt-in travels the
-    /// same path as any other one — applied above every configuration layer, resolved against
-    /// each artifact's own directory, and listed by `voom config show` as a departure from the
-    /// catalog default.
-    fn enable_specs(&self) -> Vec<String> {
-        let mut enable = self.enable.clone();
-        if self.clean_dependencies {
-            enable.extend(
-                crate::catalog::DEPENDENCY_ARTIFACTS
-                    .iter()
-                    .map(|spec| (*spec).to_owned()),
-            );
-        }
-        enable
     }
 
     /// Turns flags into keep policies.
@@ -563,7 +561,7 @@ impl PruneArgs {
             dry_run: self.dry_run,
             jobs: self.jobs,
             one_file_system: self.one_file_system,
-            force: self.force,
+            force: self.force || self.aggressive,
             // JSON always carries skip detail — a machine consumer has no `--verbose` to reach
             // for and paying for the detail is cheaper than a second run.
             verbose: self.verbose || self.format == Format::Json,

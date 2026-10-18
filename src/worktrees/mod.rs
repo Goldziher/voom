@@ -18,8 +18,9 @@
 //!   stored strictly below a path voom was told to sweep — a worktree elsewhere on disk is
 //!   reported and kept, so nothing outside the scanned tree is ever its target;
 //!
-//! A checkout whose git administration directory is gone is reported as dangling and never removed
-//! (see [`dangling`]); every kept worktree carries a reason in the report.
+//! Explicit aggressive cleanup may discard local changes after commit proof, and may remove
+//! dangling checkouts without commit proof. The path, main-checkout, lock and current-directory
+//! rails still apply. Without that opt-in, dangling checkouts are reported and kept.
 //!
 //! The default branch is read from the local remote-tracking ref and voom never fetches, so a
 //! stale ref errs toward keeping. `git worktree remove` does the removal and the branch is left
@@ -67,6 +68,10 @@ pub struct WorktreeOptions {
     pub stale_after: Option<Duration>,
     /// Also accept an exact HEAD match on a merged GitHub pull request via `gh`.
     pub github_merged: bool,
+    /// Explicitly discard local changes and dangling checkouts. Path and checkout safety rails
+    /// still apply. Registered worktrees require merged or stale commits; detached unmerged
+    /// commits are retained on a ref before removal.
+    pub aggressive: bool,
 }
 
 /// Why a worktree was removed or kept.
@@ -90,6 +95,8 @@ pub enum State {
         /// How many paths are changed, staged or untracked.
         changed: usize,
     },
+    /// Merged or stale, with local changes explicitly discarded by the caller.
+    Discarded,
     /// Merged and clean apart from deleted build output.
     Merged {
         /// How many deleted tracked build-output paths removal discards.
@@ -110,7 +117,7 @@ pub enum State {
         pull: u64,
     },
     /// The checkout's `.git` file names a git administration directory that no longer exists, so
-    /// git cannot say what it held and nothing can prove it safe to remove. Never removed.
+    /// git cannot say what it held. Kept unless the caller explicitly requests aggressive removal.
     Dangling {
         /// The administration directory that is gone.
         gitdir: PathBuf,
@@ -189,10 +196,10 @@ impl WorktreePruneResult {
         let mut totals = Totals::default();
         for worktree in self.repositories.iter().flat_map(|repository| &repository.worktrees) {
             match (&worktree.state, &worktree.outcome) {
-                (State::Merged { .. } | State::Stale { .. }, Some(Outcome::Removed | Outcome::WouldRemove)) => {
+                (_, Some(Outcome::Removed | Outcome::WouldRemove)) => {
                     totals.removed += 1;
                 }
-                (State::Merged { .. } | State::Stale { .. }, Some(Outcome::Failed(_))) => totals.failed += 1,
+                (_, Some(Outcome::Failed(_))) => totals.failed += 1,
                 (State::LocalChanges { .. }, _) => totals.local_changes += 1,
                 (State::Dangling { .. }, _) => totals.dangling += 1,
                 _ => totals.kept += 1,
@@ -247,7 +254,7 @@ pub fn prune(work_trees: &[PathBuf], roots: &[PathBuf], options: WorktreeOptions
         .map(|work_tree| examine(work_tree, &roots, current.as_deref(), options))
         .collect();
     for (work_tree, orphan) in orphans {
-        dangling::attach(&mut found, &work_tree, &orphan, &roots, current.as_deref());
+        dangling::attach(&mut found, &work_tree, &orphan, &roots, current.as_deref(), options);
     }
     found.retain(|repository| !repository.worktrees.is_empty() || repository.error.is_some());
     found.sort_by(|left, right| left.repository.cmp(&right.repository));
@@ -280,8 +287,13 @@ fn examine(
     if let Some(main) = entries.first() {
         repository.repository.clone_from(&main.path);
     }
+    // Disposable clones and unborn repositories have no linked checkout to judge. Resolving a
+    // default branch for them produces misleading errors and runs several unnecessary commands.
+    if !entries.iter().skip(1).any(|entry| !entry.bare) {
+        return repository;
+    }
     let default = default_branch(&repository.repository);
-    if default.is_none() && !options.github_merged {
+    if default.is_none() && !options.github_merged && options.stale_after.is_none() {
         repository.error = Some("no default branch found (origin/HEAD, main, master)".to_owned());
         return repository;
     }
@@ -370,6 +382,13 @@ fn judge(
         worktree.state = State::Current;
         return worktree;
     }
+    let guard = match removal_guard(roots, &entry.path) {
+        Ok(guard) => guard,
+        Err(message) => {
+            worktree.state = State::Unchecked(message);
+            return worktree;
+        }
+    };
     let ancestor = merge_proof
         .default_sha
         .map_or(Ok(false), |sha| is_ancestor(main, &entry.head, sha));
@@ -388,18 +407,22 @@ fn judge(
     };
     let merged = hosted == github::Hosted::Merged;
     // Not merged is kept unless the caller named a stale age and the worktree is provably idle
-    // past it with its commits safe on another ref.
-    if !merged && !options.stale_after.is_some_and(|age| is_stale(entry, main, age)) {
+    // past it with its commits safe on another ref, or retained before aggressive removal.
+    if !merged
+        && !options
+            .stale_after
+            .is_some_and(|age| is_stale(entry, main, age, options.aggressive))
+    {
         if let github::Hosted::HeadDiffers { pull } = hosted {
             worktree.state = State::HeadDiffers { pull };
         }
         return worktree;
     }
-    let Some((discarded, changed)) = working_tree(&entry.path) else {
+    let Some((discarded, changed)) = local_status(&entry.path, options.aggressive) else {
         worktree.state = State::Unchecked("`git status` failed".to_owned());
         return worktree;
     };
-    if changed > 0 {
+    if changed > 0 && !options.aggressive {
         worktree.state = State::LocalChanges { changed };
         return worktree;
     }
@@ -407,7 +430,9 @@ fn judge(
         worktree.state = State::Unchecked("worktree HEAD or path changed while checking it".to_owned());
         return worktree;
     }
-    worktree.state = if merged {
+    worktree.state = if options.aggressive {
+        State::Discarded
+    } else if merged {
         State::Merged { discarded }
     } else {
         State::Stale { discarded }
@@ -419,32 +444,65 @@ fn judge(
             entry,
             main,
             &canonical,
-            discarded > 0,
-            merged && !locally_merged,
+            RemovalPolicy {
+                force: options.aggressive || discarded > 0,
+                aggressive: options.aggressive,
+                guard: &guard,
+            },
+            (merged && !locally_merged) || (options.aggressive && !merged && entry.branch.is_none()),
             removal_lock,
         )
     });
     worktree
 }
 
-/// Rechecks a checkout under the repository lock and retains hosted-only commits before removal.
+fn local_status(path: &Path, aggressive: bool) -> Option<(usize, usize)> {
+    // The aggressive caller discards every kind of local content. Enumerating it adds no proof
+    // and can cost minutes; commit, path and lock checks remain independent.
+    if aggressive { Some((0, 0)) } else { working_tree(path) }
+}
+
+fn removal_guard(roots: &[PathBuf], path: &Path) -> Result<crate::delete::Guard, String> {
+    let guard = crate::delete::Guard::new(roots, true).map_err(|error| format!("checking worktree path: {error}"))?;
+    guard
+        .check(path)
+        .map_err(|refusal| format!("worktree path refused: {refusal}"))?;
+    Ok(guard)
+}
+
+#[derive(Clone, Copy)]
+struct RemovalPolicy<'a> {
+    force: bool,
+    aggressive: bool,
+    guard: &'a crate::delete::Guard,
+}
+
+/// Rechecks a checkout under the repository lock and retains commits before removing their checkout.
 fn remove_checked(
     entry: &Entry,
     main: &Path,
     canonical: &Path,
-    force: bool,
+    policy: RemovalPolicy<'_>,
     retain_head: bool,
     removal_lock: &std::sync::Mutex<()>,
 ) -> Outcome {
     let _serialised = removal_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     // A hosted query may have taken seconds. Revalidate the exact checkout and local work
     // before removal, including when --force is needed for regenerable output.
-    let clean_now = working_tree(&entry.path).is_some_and(|(_, changed)| changed == 0);
+    let clean_now = policy.aggressive || working_tree(&entry.path).is_some_and(|(_, changed)| changed == 0);
     if !clean_now || !checkout_unchanged(entry, canonical) {
         return Outcome::Failed("worktree HEAD or local changes changed before removal".to_owned());
     }
+    if let Err(refusal) = policy.guard.check(&entry.path) {
+        return Outcome::Failed(format!("worktree path refused before removal: {refusal}"));
+    }
     if retain_head {
-        let reference = format!("refs/voom/merged-worktrees/{}", entry.head);
+        let namespace = if policy.aggressive {
+            "aggressive-worktrees"
+        } else {
+            "merged-worktrees"
+        };
+        let reference = format!("refs/voom/{namespace}/{}", entry.head);
         if git(main, &["update-ref", &reference, &entry.head]).is_none() {
             return Outcome::Failed("could not retain worktree HEAD".to_owned());
         }
@@ -452,7 +510,7 @@ fn remove_checked(
     if !checkout_unchanged(entry, canonical) {
         return Outcome::Failed("worktree HEAD or path changed before removal".to_owned());
     }
-    remove(main, &entry.path, force)
+    remove(main, &entry.path, policy.force)
 }
 
 fn checkout_unchanged(entry: &Entry, canonical: &Path) -> bool {
@@ -619,11 +677,13 @@ fn is_ancestor(main: &Path, head: &str, default_sha: &str) -> Result<bool, Strin
 /// worktree's `HEAD` reflog, which git rewrites on commit, checkout, rebase and reset but not on
 /// `git status` (the index is rewritten by every status, so an IDE's background refresh would
 /// make nothing ever stale). Removal keeps the branch, so the commits are safe when some ref
-/// contains `HEAD` — a detached `HEAD` that no ref reaches would be lost, and is never stale.
-fn is_stale(entry: &Entry, main: &Path, age: Duration) -> bool {
-    let reachable = git(main, &["for-each-ref", "--count=1", "--contains", &entry.head, "refs/"])
-        .is_some_and(|refs| !refs.trim().is_empty());
-    if !reachable {
+/// contains `HEAD`. Aggressive cleanup may instead retain a detached `HEAD` on a new ref before
+/// removal; without that explicit opt-in, a detached commit no ref reaches remains protected.
+fn is_stale(entry: &Entry, main: &Path, age: Duration, aggressive: bool) -> bool {
+    if !aggressive
+        && git(main, &["for-each-ref", "--count=1", "--contains", &entry.head, "refs/"])
+            .is_none_or(|refs| refs.trim().is_empty())
+    {
         return false;
     }
     let committed = git(&entry.path, &["log", "-1", "--format=%ct", "HEAD"])

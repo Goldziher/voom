@@ -1,3 +1,5 @@
+mod aggressive;
+
 use std::process::Command;
 
 use super::*;
@@ -52,6 +54,7 @@ fn prune_real(main: &Path, dry_run: bool) -> WorktreePruneResult {
             dry_run,
             stale_after: None,
             github_merged: false,
+            aggressive: false,
         },
     )
 }
@@ -85,6 +88,80 @@ fn should_only_report_under_a_dry_run() {
 
     assert_eq!(state_of(&result, &path).outcome, Some(Outcome::WouldRemove));
     assert!(path.exists());
+}
+
+#[test]
+fn should_ignore_standalone_repositories_without_a_default_branch() {
+    let (_fixture, main) = repository();
+    run(&main, &["branch", "-m", "review-snapshot"]);
+
+    let result = prune_real(&main, true);
+
+    assert_eq!(
+        result.repositories.len(),
+        0,
+        "a standalone clone has no linked worktrees"
+    );
+    assert!(main.join("src.txt").exists());
+}
+
+#[test]
+fn should_ignore_an_unborn_repository_without_linked_worktrees() {
+    let fixture = tempfile::tempdir().unwrap();
+    let main = fixture.path().canonicalize().unwrap();
+    run(&main, &["init", "-q", "-b", "main"]);
+    std::fs::write(main.join("notes.txt"), "unsaved work").unwrap();
+
+    let result = prune_real(&main, false);
+
+    assert_eq!(
+        result.repositories.len(),
+        0,
+        "an unborn repository has no linked worktrees"
+    );
+    assert_eq!(std::fs::read_to_string(main.join("notes.txt")).unwrap(), "unsaved work");
+}
+
+#[test]
+fn should_report_a_missing_default_branch_when_linked_worktrees_need_it() {
+    let (_fixture, main) = repository();
+    run(&main, &["branch", "-m", "review-snapshot"]);
+    let path = add_worktree(&main, "linked");
+
+    let result = prune_real(&main, false);
+
+    assert_eq!(
+        result.repositories[0].error.as_deref(),
+        Some("no default branch found (origin/HEAD, main, master)")
+    );
+    assert!(path.join("src.txt").exists());
+}
+
+#[test]
+fn should_remove_a_reachable_stale_worktree_without_a_default_branch() {
+    let (_fixture, main) = repository();
+    run(&main, &["branch", "-m", "review-snapshot"]);
+    let path = unmerged_worktree(&main, "old-work", 90);
+
+    let result = prune_stale(&main, 30);
+
+    assert_eq!(state_of(&result, &path).state, State::Stale { discarded: 0 });
+    assert_eq!(state_of(&result, &path).outcome, Some(Outcome::Removed));
+    assert!(!path.exists());
+    assert!(git(&main, &["rev-parse", "--verify", "refs/heads/old-work"]).is_some());
+}
+
+#[test]
+fn should_keep_local_changes_without_a_default_branch_when_stale_cleanup_is_requested() {
+    let (_fixture, main) = repository();
+    run(&main, &["branch", "-m", "review-snapshot"]);
+    let path = unmerged_worktree(&main, "old-work", 90);
+    std::fs::write(path.join("work.txt"), "unsaved work").unwrap();
+
+    let result = prune_stale(&main, 30);
+
+    assert_eq!(state_of(&result, &path).state, State::LocalChanges { changed: 1 });
+    assert_eq!(std::fs::read_to_string(path.join("work.txt")).unwrap(), "unsaved work");
 }
 
 #[test]
@@ -186,6 +263,7 @@ fn should_keep_a_worktree_outside_every_scan_root() {
             dry_run: false,
             stale_after: None,
             github_merged: false,
+            aggressive: false,
         },
     );
 
@@ -232,6 +310,7 @@ fn should_handle_a_repository_reached_through_several_of_its_worktrees_once() {
             dry_run: true,
             stale_after: None,
             github_merged: false,
+            aggressive: false,
         },
     );
 
@@ -289,6 +368,7 @@ fn prune_stale(main: &Path, days: u64) -> WorktreePruneResult {
             dry_run: false,
             stale_after: Some(Duration::from_secs(days * 86_400)),
             github_merged: false,
+            aggressive: false,
         },
     )
 }
@@ -415,6 +495,7 @@ fn judge_with(main: &Path, path: &Path, dry_run: bool, proof: &Result<github::Ho
             dry_run,
             stale_after: None,
             github_merged: true,
+            aggressive: false,
         },
         &std::sync::Mutex::new(()),
     )
@@ -523,6 +604,7 @@ fn should_refuse_a_head_changed_while_hosted_merge_proof_was_checked() {
         None,
         WorktreeOptions {
             github_merged: true,
+            aggressive: false,
             ..WorktreeOptions::default()
         },
         &std::sync::Mutex::new(()),
@@ -685,9 +767,15 @@ fn should_name_every_kept_worktree_with_its_reason_under_verbose_only() {
             .unwrap_or_else(|| panic!("{name} is listed: {verbose}"))
             .to_owned()
     };
-    assert!(line("/locked").contains("locked"), "{verbose}");
-    assert!(line("/ahead").contains("HEAD is not in main"), "{verbose}");
-    assert!(line("/dirty").contains("changed path(s)"), "{verbose}");
+    assert!(line(&locked.display().to_string()).contains("locked"), "{verbose}");
+    assert!(
+        line(&unmerged.display().to_string()).contains("HEAD is not in main"),
+        "{verbose}"
+    );
+    assert!(
+        line(&merged_dirty.display().to_string()).contains("changed path(s)"),
+        "{verbose}"
+    );
 }
 
 #[test]

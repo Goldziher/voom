@@ -116,6 +116,7 @@ voom --ecosystem rust --ecosystem node ~                     # only these ecosys
 voom --format json ~ | jq '.totals'                          # machine-readable
 voom --list-caches                                           # the tool caches this machine holds
 voom --dry-run --clear-caches ~ /tmp                         # preview tool caches and tagged build output
+voom --dry-run --aggressive ~ /tmp                          # all supported cleanup, including worktree edits
 voom --dry-run --clean-caches=cargo-registry,uv ~            # remove these named tool caches
 voom --dry-run --include .mytool-cache ~/projects            # sweep something the catalog misses
 voom --dry-run --clean-dependencies ~                        # also node_modules/, vendor/, deps/, .venv/
@@ -218,7 +219,7 @@ A bare `--clean-caches` (alias `--clear-caches`), or `--clean-caches=all`, also 
 `--clean-tagged` to reach relocated build caches. Named IDs such as `uv,go-build` remain scoped
 to those caches. `[caches] enable = ["all"]` supplies the same tagged default in user or explicit
 configuration, unless `[tagged] enabled = false` overrides it; the full CLI flag overrides that
-configuration. Cache clearing never implies worktree removal.
+configuration. Cache clearing alone does not imply worktree removal; `--aggressive` does.
 
 By default `--list-caches` prints only the cache locations that actually exist here, each with
 its path, without measuring anything; `--sizes` adds how much disk each holds (tens of gigabytes
@@ -440,7 +441,7 @@ and their sibling markers must be regular files, not symlinks; without that proo
 worktree as local changes. Any modified, staged or untracked path, or other ignored content
 such as a `.env` or local database, is reported as merged-with-local-changes and kept. Branches are never deleted. It is off by
 default and cannot be turned on from `voom.toml`, because unlike the rest of git housekeeping it
-can lose work. `--clear-caches` does not imply it.
+can lose work. `--clear-caches` alone does not imply it; `--aggressive` does.
 
 For squash or rebase merges, add `--github-merged-worktrees` with
 `--remove-merged-worktrees` on a sweep or `git-prune`. It opts into network access through
@@ -457,6 +458,46 @@ evidence nor force-removes submodule worktrees.
 committed, checked out or rebased for the given time, some ref still reaching their `HEAD` (the
 branch is kept; a detached `HEAD` nothing else reaches is never removed), and the same
 working-tree rule as above. See [ADR 0016](adrs/0016-merged-worktree-removal.md).
+
+## Aggressive cleanup
+
+`--aggressive` enables every catalog artifact, including `node_modules/`, `.venv/`, `vendor/`
+and other opt-in dependency directories; every supported cache, including Hugging Face models;
+tagged-directory cleanup; permission repair (`--force`); worktree removal; and unused Docker
+images and build cache. Docker has no minimum age in this mode unless `--docker-max-age` sets
+one. Volumes still require `--docker-volumes` or `--docker-volumes-all`; containers are never
+removed. Artifact disables, excludes and keep policies continue to govern artifacts and caches. Markers and deletion guards still have to prove each
+artifact and cache.
+
+It discards modified, staged, untracked and ignored files in eligible worktrees without creating
+a recovery archive. Merged and unmerged worktrees qualify, with no minimum idle age unless
+`--stale-worktrees` supplies one. Branches remain in the repository. A detached HEAD that no
+other ref reaches is retained at `refs/voom/aggressive-worktrees/<SHA>` before removal; failure
+to retain it keeps the checkout, and dry-run writes no ref. Local checkout contents are
+permanently lost. No GitHub
+lookup occurs unless `--github-merged-worktrees` is also given.
+
+```bash
+voom -n --aggressive ~ /tmp
+voom --aggressive ~ /tmp
+voom --aggressive --stale-worktrees 30d ~/code
+```
+
+Aggressive cleanup also removes dangling checkouts whose `.git` file points at missing worktree
+administration. Their lost HEAD and index make merge and local-change checks impossible;
+`--aggressive` explicitly accepts that loss of evidence. Without it they are reported and kept.
+Main checkouts, locked worktrees, the current working directory and paths outside the supplied
+roots remain protected. Git still refuses force-removal of worktrees containing submodules.
+The deletion safety rails still apply. See
+[ADR 0018](adrs/0018-aggressive-cleanup.md).
+
+An untagged custom Cargo target directory still needs an explicit `--include` after verifying
+that its whole contents are disposable. Cargo-shaped files alone do not prove that a directory
+contains only build output:
+
+```bash
+voom -n --aggressive --include .my-cargo-target ~/projects
+```
 
 ## Bazel output-base housekeeping
 
