@@ -546,7 +546,6 @@ fn subcommand(command: &[String]) -> &[String] {
     &command[start..]
 }
 
-#[cfg(unix)]
 fn voom() -> assert_cmd::Command {
     let mut command = assert_cmd::Command::cargo_bin("voom").expect("the binary builds");
     // The sweep runs Bazel housekeeping over the real machine's output roots unless told not to.
