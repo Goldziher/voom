@@ -9,6 +9,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-10-18
+
+### Fixed
+
+- **A sweep no longer exhausts the process's file descriptors.** Every default pool was eight
+  workers per core, capped at 128, whatever `RLIMIT_NOFILE` allowed. Each worker holds a
+  descriptor for every level of a tree it walks and one per subprocess it spawns, so on a machine
+  with a low soft limit a sweep failed repository after repository with `worktree prune: Too many
+  open files (os error 24)`. The default width now stays under a conservative fraction of the
+  descriptor limit — the removal pool with it — and the binary raises its soft limit to the hard
+  one at startup. A 300-level removal that previously stalled now finishes in fifty milliseconds,
+  and a 27-repository tree that produced 25 `EMFILE` failures under a limit of 128 now produces
+  none. An explicit `-j` is still honoured as written.
+
+### Changed
+
+- **ai-rulez is pinned at 5.5.0** across `.ai-rulez/`, `poly.toml`, `poly-hooks.lock` and
+  CONTRIBUTING, and the generated outputs and lock are refreshed. The module-size-cap rule now
+  records that a test enforces the cap, rather than saying nothing does.
+- The `git-prune` subcommand fans out on its own descriptor-aware pool rather than rayon's
+  core-wide global pool, so it is bounded the same way the sweep is.
+
 ## [0.11.1] - 2026-10-18
 
 ### Changed
@@ -803,7 +825,8 @@ nothing; this is the tool.
 - Size accounting sums allocated blocks, so on a copy-on-write filesystem such as APFS the bytes
   reported can exceed the space actually freed where files are shared between clones.
 
-[Unreleased]: https://github.com/Goldziher/voom/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/Goldziher/voom/compare/v0.11.2...HEAD
+[0.11.2]: https://github.com/Goldziher/voom/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/Goldziher/voom/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/Goldziher/voom/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Goldziher/voom/compare/v0.9.1...v0.10.0
