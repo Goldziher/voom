@@ -2,9 +2,15 @@
 # Refresh it with `ai-rulez lock`; `ai-rulez generate --locked` fails when it is stale.
 
 version = 1
-ai_rulez_version = '5.3.0'
+ai_rulez_version = '5.5.0'
 scope = 'all'
-tree = 'sha256:f67132e9e61d9b8700c49efb9cc09a0c1efe7a44247c05fe55e10a5e7bac692c'
+tree = 'sha256:afcc2d6fc5f7b518f549164e6e75c6bcc8aaf819b7c7f051c559a4dc9bf3f1f1'
+
+[[served]]
+name = 'adr-workflow'
+source = 'builtin://universal/documentation/skills/adr-workflow/SKILL.md'
+commit = ''
+digest = 'sha256:0dc3e4f50c78aaf602ce3c21cab5b10ebce560106449e7aa153c861880a4f2a1'
 
 [[served]]
 name = 'build'
@@ -16,7 +22,13 @@ digest = 'sha256:d80febd2781744bd2c62355a399f64ae963ccd4c79ca4048bea8c1fc8dd4397
 name = 'code-quality-standards'
 source = 'builtin://universal/code-quality/skills/code-quality-standards/SKILL.md'
 commit = ''
-digest = 'sha256:0126cc7c038b3e343ee56866949865dd799bde0de4884ba0bdfeb28655fa8134'
+digest = 'sha256:8e01021ac23e15b01cac75b4ee9c1971a4c57a7d949d390fb4e0b6943f91afe2'
+
+[[served]]
+name = 'config-placement'
+source = 'builtin://universal/ai-governance/skills/config-placement/SKILL.md'
+commit = ''
+digest = 'sha256:dd198e7e6c233cc4509b95b165f10054849cf77c394d54d1f59045857d88191a'
 
 [[served]]
 name = 'dependency-awareness'
@@ -101,6 +113,12 @@ name = 'rust-conventions'
 source = 'builtin://languages/rust/skills/rust-conventions/SKILL.md'
 commit = ''
 digest = 'sha256:0a7c23c09a7fc29a7237fc838ab1491504f51f8d90fc114b52c1d914bf52214d'
+
+[[served]]
+name = 'skill-authoring'
+source = 'builtin://universal/ai-governance/skills/skill-authoring/SKILL.md'
+commit = ''
+digest = 'sha256:7ab2b543dc6608f204c957fedfc55ae902d22fda9dc8a52252330ff9b1406ff1'
 
 [[served]]
 name = 'task-runner'
@@ -190,7 +208,7 @@ digest = 'sha256:534c9701453675760d6419f6f1aa7a8f2b64b0d1704184d2712a644911bb9b7
 kind = 'rule'
 id = 'module-size-cap'
 path = 'rules/module-size-cap.md'
-digest = 'sha256:47436cd7582eb302421611173fb9928da440a05a754015837238711fc3ea7a28'
+digest = 'sha256:1286759d7e34187d543f74cbd200a54a0d285fa03e1527957de192828c811164'
 
 [[item]]
 kind = 'rule'

@@ -12,17 +12,18 @@ x-ai-rulez:
 
 No file in `src/` exceeds **1000 lines**.
 
-**Nothing enforces this.** There is no `rust-max-lines` hook, no CI step, and no test that
-checks it — `poly.toml` runs `lint`, `fmt`, `commit`, `file_safety` and `cargo`, none of which
-counts lines. The cap holds because contributors keep it, so check it yourself before you
-commit:
+**One test enforces this.** `tests/docs.rs::no_source_file_exceeds_the_module_size_cap` walks `src/`
+and fails on any file over the cap, so the limit is checked by the ordinary test run rather than
+by a hook or CI step of its own. Check by hand as well — a file added since the last test run is
+one it has not seen yet:
 
 ```bash
 wc -l src/*.rs src/*/*.rs | sort -rn | head
 ```
 
-`classify.rs` (975) is the closest to the cap, then `run.rs` (942) and `delete.rs` (875). Any
-of the three will cross it before the rest of the tree gets near.
+`cli/mod.rs` and `scan/mod.rs` sit nearest the cap, then `delete/mod.rs` (a directory module since
+its removal pool moved to `delete/pool.rs`). One of them crosses it before the rest of the tree
+gets near; keep the `sort -rn` output in the pull request that gets close.
 
 ## Why it is critical here
 

@@ -3,5 +3,5 @@ version = 1
 [[sources]]
 id = "ai-rulez"
 source = "https://github.com/Goldziher/ai-rulez.git"
-revision = "5e0bb9e03377f781ecbeac4110ffeac731d0ceef"
-path = "cache://hook-sources/a028197e1e7ffd465c27caaca41da62d/5e0bb9e03377f781ecbeac4110ffeac731d0ceef"
+revision = "b10177f2f04debf7f3528a02a9524a224b853617"
+path = "cache://hook-sources/a028197e1e7ffd465c27caaca41da62d/b10177f2f04debf7f3528a02a9524a224b853617"

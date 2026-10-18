@@ -21,7 +21,7 @@ command = "poly"
 args = ["mcp"]
 
 [mcp]
-self_server_command = ["pnpm", "dlx", "ai-rulez@5.3.0", "mcp"]
+self_server_command = ["pnpm", "dlx", "ai-rulez@5.5.0", "mcp"]
 
 [lock]
 include_outputs = false
