@@ -236,6 +236,9 @@ struct Frame {
     fd: OwnedFd,
     sub: Sub,
     pending: Vec<Sub>,
+    /// Whether a child could not be removed at all — a mount point or a directory on another
+    /// filesystem. The directory can never be emptied, so the re-sweep cannot help it.
+    blocked: bool,
 }
 
 struct Remover {
@@ -310,7 +313,12 @@ impl Remover {
         let Some(frame) = self.open_and_empty(parent, sub) else {
             return;
         };
-        let Frame { fd, sub, pending } = frame;
+        let Frame {
+            fd,
+            sub,
+            pending,
+            blocked,
+        } = frame;
         if fanout == 0 {
             self.remove_serially(&fd, pending);
         } else {
@@ -319,7 +327,7 @@ impl Remover {
                 .for_each(|child| self.remove(fd.as_raw_fd(), child, true, fanout - 1));
         }
         drop(fd);
-        self.remove_empty(parent, &sub, parent_repairable);
+        self.remove_empty(parent, &sub, parent_repairable, blocked);
     }
 
     /// Post-order removal on one thread, holding one descriptor per level.
@@ -340,12 +348,15 @@ impl Remover {
                 }
                 continue;
             }
-            let Some(Frame { fd: done, sub, .. }) = stack.pop() else {
+            let Some(Frame {
+                fd: done, sub, blocked, ..
+            }) = stack.pop()
+            else {
                 return;
             };
             drop(done);
             let parent = stack.last().map_or(fd.as_raw_fd(), |frame| frame.fd.as_raw_fd());
-            self.remove_empty(parent, &sub, true);
+            self.remove_empty(parent, &sub, true, blocked);
         }
     }
 
@@ -393,6 +404,7 @@ impl Remover {
         let mut repaired = false;
         let mut pending = Vec::new();
         let mut freed = 0;
+        let mut blocked = false;
         for entry in listing.entries {
             if entry.kind == Kind::Dir {
                 if entry.mount_point || entry.dev != self.dev {
@@ -400,6 +412,7 @@ impl Remover {
                         "{} is a mount point; voom does not remove across filesystems",
                         entry.name.to_string_lossy()
                     )));
+                    blocked = true;
                     continue;
                 }
                 pending.push(Sub {
@@ -416,7 +429,12 @@ impl Remover {
             }
         }
         self.add_freed(freed);
-        Some(Frame { fd, sub, pending })
+        Some(Frame {
+            fd,
+            sub,
+            pending,
+            blocked,
+        })
     }
 
     /// Unlinks one non-directory, repairing its directory once if `--force` allows it.
@@ -448,10 +466,13 @@ impl Remover {
     /// again, a few times, before it is reported. A real sweep met this on `go-build`, `uv` and
     /// Homebrew caches that other work was using while they went; each left a residue that the
     /// next run had to take.
-    fn remove_empty(&self, parent: RawFd, sub: &Sub, parent_repairable: bool) {
+    fn remove_empty(&self, parent: RawFd, sub: &Sub, parent_repairable: bool, mut blocked: bool) {
         let mut result = self.unlink_empty(parent, sub, parent_repairable);
         for wait in RESWEEP_BACKOFF {
-            if !matches!(&result, Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty) {
+            // A child that cannot go at all — a mount point, a directory on another filesystem —
+            // means this directory can never be emptied, so re-emptying it only spends the
+            // backoff before reporting the same failure.
+            if blocked || !matches!(&result, Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty) {
                 break;
             }
             std::thread::sleep(wait);
@@ -460,7 +481,14 @@ impl Remover {
                 bytes: sub.bytes,
                 flags: sub.flags,
             };
-            if let Some(Frame { fd, pending, .. }) = self.open_and_empty(parent, again) {
+            if let Some(Frame {
+                fd,
+                pending,
+                blocked: still,
+                ..
+            }) = self.open_and_empty(parent, again)
+            {
+                blocked = still;
                 self.remove_serially(&fd, pending);
             }
             result = self.unlink_empty(parent, sub, parent_repairable);
