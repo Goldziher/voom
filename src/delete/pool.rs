@@ -21,14 +21,12 @@ pub fn freed_so_far() -> u64 {
     FREED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// How many workers unlink at once when `-j` is not given, across every removal in the process.
-///
-/// Removal does not scale the way reading does. Unlinking contends on the directory being
-/// emptied and on whatever endpoint-security agent vets each call, so past a point more workers
-/// only queue in the kernel. Measured on a 100,000-file tree under two such agents, against
-/// 58 s for `rm -rf`: 35 s on one worker, 26 s on four, 19 s on sixteen, 42 s on forty-eight and
-/// 101 s on the hundred and twenty-eight that sizing wants. So sizing and removal get separate
-/// widths, and this one is a constant rather than a multiple of the cores.
+/// A shared mutation width chosen from measurements on macOS cache trees.
+#[cfg(target_vendor = "apple")]
+const REMOVAL_WORKERS: usize = 8;
+
+/// Keep the existing default on platforms without these cache measurements.
+#[cfg(not(target_vendor = "apple"))]
 const REMOVAL_WORKERS: usize = 16;
 
 /// An explicit `-j`, recorded before the first removal; zero means none was given.
@@ -39,9 +37,7 @@ static REMOVAL_JOBS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicU
 /// The pool is rebuilt if the width changes, so a second run in the same process — a library
 /// caller or the test suite — is not stuck with the first run's `-j`.
 pub fn limit_removal_workers(jobs: Option<usize>) {
-    if let Some(jobs) = jobs {
-        REMOVAL_JOBS.store(jobs.max(1), std::sync::atomic::Ordering::Relaxed);
-    }
+    REMOVAL_JOBS.store(jobs.map_or(0, |jobs| jobs.max(1)), std::sync::atomic::Ordering::Relaxed);
 }
 
 /// The one pool every removal runs in, so that artifacts removed side by side share its width

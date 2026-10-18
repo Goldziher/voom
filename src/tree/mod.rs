@@ -34,16 +34,25 @@ use std::time::Duration;
 use rayon::prelude::*;
 
 use crate::size::{Links, Measured};
-use sys::{Kind, USER_IMMUTABLE};
+use sys::Kind;
+#[cfg(target_vendor = "apple")]
+use sys::USER_IMMUTABLE;
 
-/// How many levels of a tree are divided across `rayon` before the walk goes serial.
+/// How many recursive levels are divided across `rayon` before the walk goes serial.
 ///
-/// The bound is about stack depth rather than tuning — see `size::FANOUT_DEPTH`, which this
-/// mirrors. Below it the walk holds one descriptor per level, never one per directory seen.
+/// Removal stores narrow chains on an explicit stack, spending this budget only on branches;
+/// a cache's wide subtree can sit below a long prefix. Sizing still counts directory levels.
+/// Below the bound both walks hold one descriptor per level.
 const FANOUT_DEPTH: u32 = 10;
 
 /// The owner bits a directory needs to be listed and emptied.
 const DIRECTORY_BITS: u32 = 0o700;
+
+/// Amortizes rayon scheduling while allowing a flat cache to use the removal pool.
+const UNLINK_BATCH: usize = 64;
+
+/// Small directories leave the parallel file batches to larger flat caches.
+const PARALLEL_FILES: usize = 256;
 
 /// Waits before emptying a directory again after something wrote into it during its removal.
 const RESWEEP_BACKOFF: [Duration; 3] = [
@@ -310,9 +319,30 @@ impl Remover {
     ///
     /// `parent_repairable` is false only for the artifact itself, whose parent is outside it.
     fn remove(&self, parent: RawFd, sub: Sub, parent_repairable: bool, fanout: u32) {
-        let Some(frame) = self.open_and_empty(parent, sub) else {
-            return;
-        };
+        let mut prefix: Vec<Frame> = Vec::new();
+        let mut next = Some(sub);
+        while let Some(sub) = next.take() {
+            let current_parent = prefix.last().map_or(parent, |frame| frame.fd.as_raw_fd());
+            let Some(mut frame) = self.open_and_empty(current_parent, sub) else {
+                break;
+            };
+            if fanout > 0 && frame.pending.len() == 1 {
+                next = frame.pending.pop();
+                prefix.push(frame);
+                continue;
+            }
+            self.remove_branch(current_parent, frame, !prefix.is_empty() || parent_repairable, fanout);
+            break;
+        }
+        while let Some(Frame { fd, sub, blocked, .. }) = prefix.pop() {
+            drop(fd);
+            let current_parent = prefix.last().map_or(parent, |frame| frame.fd.as_raw_fd());
+            self.remove_empty(current_parent, &sub, !prefix.is_empty() || parent_repairable, blocked);
+        }
+    }
+
+    /// Spends a recursion level only where siblings can share the workers.
+    fn remove_branch(&self, parent: RawFd, frame: Frame, parent_repairable: bool, fanout: u32) {
         let Frame {
             fd,
             sub,
@@ -401,9 +431,8 @@ impl Remover {
             )));
         }
 
-        let mut repaired = false;
         let mut pending = Vec::new();
-        let mut freed = 0;
+        let mut files = Vec::new();
         let mut blocked = false;
         for entry in listing.entries {
             if entry.kind == Kind::Dir {
@@ -422,19 +451,38 @@ impl Remover {
                 });
                 continue;
             }
-            match self.unlink(&fd, &entry, &mut repaired) {
-                Ok(()) => freed += self.counted(entry.dev, entry.ino, entry.nlink, entry.bytes),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => self.fail(error),
-            }
+            files.push(entry);
         }
-        self.add_freed(freed);
+        self.unlink_files(&fd, &files);
         Some(Frame {
             fd,
             sub,
             pending,
             blocked,
         })
+    }
+
+    /// Files in one directory share the bounded removal pool, including a flat cache.
+    fn unlink_files(&self, fd: &OwnedFd, files: &[sys::Entry]) {
+        // Caches often have thousands of files directly inside one directory. Fanning out only
+        // over subdirectories leaves that whole directory on one worker regardless of `-j`.
+        let unlink_batch = |batch: &[sys::Entry]| {
+            let mut repaired = false;
+            let mut freed = 0;
+            for entry in batch {
+                match self.unlink(fd, entry, &mut repaired) {
+                    Ok(()) => freed += self.counted(entry.dev, entry.ino, entry.nlink, entry.bytes),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => self.fail(error),
+                }
+            }
+            self.add_freed(freed);
+        };
+        if cfg!(target_vendor = "apple") && files.len() < PARALLEL_FILES {
+            unlink_batch(files);
+        } else {
+            files.par_chunks(UNLINK_BATCH).for_each(unlink_batch);
+        }
     }
 
     /// Unlinks one non-directory, repairing its directory once if `--force` allows it.
@@ -453,6 +501,7 @@ impl Remover {
         }
         // A flag belongs to the inode, which a second hard link names from somewhere voom was
         // never given; clearing it there would widen a file outside the artifact.
+        #[cfg(target_vendor = "apple")]
         if entry.flags & USER_IMMUTABLE != 0 && entry.nlink <= 1 {
             sys::clear_immutable_at(dir.as_raw_fd(), &entry.name, entry.flags);
             return sys::unlink_at(dir.as_raw_fd(), &entry.name, false);
@@ -506,6 +555,7 @@ impl Remover {
             Err(error) if self.repair && denied(&error) => {
                 // The directory's own immutable flag stops its removal as surely as its
                 // parent's mode does; the first is inside the artifact whatever the parent is.
+                #[cfg(target_vendor = "apple")]
                 if sub.flags & USER_IMMUTABLE != 0
                     && let Ok(fd) = open(parent, &sub.name)
                 {
@@ -520,6 +570,9 @@ impl Remover {
         }
     }
 }
+
+#[cfg(test)]
+mod traversal_tests;
 
 #[cfg(test)]
 mod tests {
@@ -596,6 +649,23 @@ mod tests {
         assert!(!artifact.exists());
         assert!(root.path().join("keep.txt").exists());
         assert_eq!(removed.freed, expected);
+    }
+
+    #[test]
+    fn should_remove_flat_batches_and_count_hard_links_once() {
+        let root = tree(&["artifact/", "source/precious"]);
+        let artifact = root.path().join("artifact");
+        for index in 0..(UNLINK_BATCH * 8) {
+            std::fs::write(artifact.join(index.to_string()), [3u8; 4096]).unwrap();
+        }
+        std::fs::hard_link(artifact.join("0"), artifact.join("again")).unwrap();
+        std::os::unix::fs::symlink(root.path().join("source"), artifact.join("link")).unwrap();
+        let expected = crate::size::measure(&artifact);
+        let removed = remove_dir(&artifact, false);
+        assert!(removed.error.is_none(), "flat removal failed: {:?}", removed.error);
+        assert_eq!(removed.freed, expected, "batches must count a hard-linked inode once");
+        assert!(!artifact.exists(), "all flat batches must be removed");
+        assert!(root.path().join("source/precious").exists(), "symlink target survives");
     }
 
     #[test]

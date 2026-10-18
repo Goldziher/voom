@@ -231,6 +231,12 @@ hold hard links into it — but the next install of anything not yet linked down
 Browsers (Chrome, puppeteer's) and JetBrains' system directories are absent for lack of a marker
 their tools write; JetBrains' also holds Local History.
 
+For an ordinary removal with no size-based keep policy, voom counts reclaimed bytes while
+unlinking instead of walking the cache once to measure it and again to delete it. Dry runs and
+size-based policies still need a measurement pass. Flat directories use bounded batches of
+parallel unlinks. Reported MB/s includes per-file filesystem and security checks: a cache of
+thousands of tiny files can have much lower byte throughput than one containing large files.
+
 A cache whose contents are only shard directories — sccache, zig, NuGet, Maven — is deliberately
 absent: the marker would prove nothing the path had not already said. See
 [ADR 0012](adrs/0012-cache-catalog.md).
@@ -592,9 +598,25 @@ pre-commit:
 
 voom is I/O-bound, so the wins come from not walking things: it prunes matched artifacts, `.git/`,
 dependency directories and tool caches at the directory level rather than descending into them,
-and fans sizing and removal across every core. `-j` throttles the whole sweep, not just the walk —
-the point of the flag on a spinning disk or a network filesystem. Measure your own tree with
-`hyperfine`; see [ADR 0005](adrs/0005-traversal-and-parallelism.md) for the walk's design.
+and parallelizes sizing and removal separately. Removal defaults to a shared pool of eight
+workers on Apple platforms and sixteen elsewhere, subject to the file-descriptor limit.
+On Apple platforms, directories with fewer than 256 files use one serial batch to avoid
+scheduling many tiny tasks; larger flat directories use parallel 64-file batches across the
+pool. A long directory prefix does not consume removal's branching budget and serialize the
+cache below it. `-j` overrides the removal width and throttles the whole sweep, including the walk.
+
+Compare two release binaries and native `rm` on disposable small-file trees:
+
+```bash
+task bench -- --before /path/to/baseline --after /path/to/candidate --files 12000 --runs 3
+```
+
+The benchmark covers flat, sharded, package-shaped and deeply nested layouts. It creates its
+own temporary trees, excludes setup and validation from timing, and emits JSON with raw timings,
+files per second and verified byte totals. These warm synthetic fixtures expose regressions;
+measure representative copies of real caches with `hyperfine` before making throughput claims.
+See [ADR 0005](adrs/0005-traversal-and-parallelism.md) for traversal and
+[ADR 0019](adrs/0019-cache-deletion-concurrency.md) for removal concurrency.
 
 ## Development
 

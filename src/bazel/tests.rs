@@ -260,6 +260,52 @@ fn should_prune_only_old_files_from_the_shared_cache() {
     assert!(root.join("cache/repos/v1/new/blob").exists());
 }
 
+#[test]
+fn should_report_a_full_cache_clear_without_claiming_an_age_or_file_count() {
+    let fixture = tree(&["_bazel_dev/cache/repos/v1/new/blob"]);
+    let root = fixture.path().join("_bazel_dev");
+    let expected = crate::size::measure(&root.join("cache"));
+    let mut clear = options(&root);
+    clear.clear_all = true;
+
+    for dry_run in [true, false] {
+        clear.dry_run = dry_run;
+        let result = prune(&clear).expect("the cache root resolves");
+        assert_eq!(result.totals().removed, 1, "the whole cache is eligible");
+        assert_eq!(result.totals().bytes, expected, "the cache is measured exactly");
+        assert_eq!(
+            root.join("cache").exists(),
+            dry_run,
+            "only the real run removes the cache"
+        );
+        let mut output = Vec::new();
+        render_human(&result, &mut output).expect("the cache report renders");
+        let output = String::from_utf8(output).expect("the cache report is UTF-8");
+        assert!(output.contains("entire download cache cleared on request"), "{output}");
+        assert!(
+            !output.contains("past the age limit"),
+            "a full clear has no age gate: {output}"
+        );
+        assert_eq!(document(&result)["output_bases"][0]["state"], "cache");
+    }
+}
+
+#[test]
+fn should_clear_an_empty_download_cache_when_asked() {
+    let fixture = tree(&["_bazel_dev/cache/"]);
+    let root = fixture.path().join("_bazel_dev");
+    let mut clear = options(&root);
+    clear.clear_all = true;
+
+    let result = prune(&clear).expect("the cache root resolves");
+
+    assert_eq!(result.totals().removed, 1, "a full clear removes even an empty cache");
+    assert!(
+        !root.join("cache").exists(),
+        "the empty cache directory must be removed"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn should_clear_everything_under_a_bazel_root_when_asked() {

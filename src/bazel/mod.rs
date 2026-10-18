@@ -178,6 +178,8 @@ pub enum OutputBaseState {
         /// How many files were old enough to remove.
         files: usize,
     },
+    /// The entire shared download cache, explicitly requested without an age gate.
+    CacheCleared,
 }
 
 impl OutputBaseState {
@@ -189,6 +191,7 @@ impl OutputBaseState {
             | Self::Abandoned { .. }
             | Self::Stale { .. }
             | Self::Cleared { .. }
+            | Self::CacheCleared
             | Self::InstallBase { in_use: false } => true,
             Self::Cache { files } => *files > 0,
             Self::Unproven | Self::Owned { .. } | Self::Running { .. } | Self::InstallBase { in_use: true } => false,
@@ -201,7 +204,7 @@ impl OutputBaseState {
         match self {
             Self::Owned { owner } | Self::Orphaned { owner } | Self::Abandoned { owner } => Some(owner),
             Self::Running { owner } | Self::Cleared { owner } | Self::Stale { owner, .. } => owner.as_deref(),
-            Self::Unproven | Self::InstallBase { .. } | Self::Cache { .. } => None,
+            Self::Unproven | Self::InstallBase { .. } | Self::Cache { .. } | Self::CacheCleared => None,
         }
     }
 }
@@ -776,8 +779,9 @@ fn handle_install_base(
 /// by that removed afterwards.
 fn handle_cache(path: PathBuf, options: &BazelPruneOptions, guard: &Guard, removal: Removal) -> OutputBase {
     if options.clear_all {
-        let files = count_files(&path);
-        return finish_removal(path, OutputBaseState::Cache { files: files.max(1) }, guard, removal);
+        // Counting solely for the report would list every directory before the removal lists
+        // it again. A full clear needs no file census or age check, even for an empty cache.
+        return finish_removal(path, OutputBaseState::CacheCleared, guard, removal);
     }
 
     let now = std::time::SystemTime::now();
@@ -819,17 +823,6 @@ fn children(dir: &Path) -> Vec<(PathBuf, Option<std::fs::FileType>)> {
         .flatten()
         .map(|entry| (entry.path(), entry.file_type().ok()))
         .collect()
-}
-
-fn count_files(root: &Path) -> usize {
-    children(root)
-        .into_par_iter()
-        .map(|(path, file_type)| match file_type {
-            Some(file_type) if file_type.is_dir() => count_files(&path),
-            Some(file_type) if file_type.is_file() => 1,
-            _ => 0,
-        })
-        .sum()
 }
 
 /// Every file under `dir` not modified within `max_age`, with its size. Subdirectories are

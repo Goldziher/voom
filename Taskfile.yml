@@ -1,6 +1,11 @@
 version: "3"
 
 tasks:
+  bench:
+    desc: Compare cleanup binaries and native rm on disposable cache layouts
+    cmds:
+      - python3 scripts/bench-cache-cleanup.py {{.CLI_ARGS}}
+
   governance:hooks:
     desc: Provision pinned native governance hooks without replacing local preferences
     cmds:

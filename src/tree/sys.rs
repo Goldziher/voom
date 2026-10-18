@@ -60,8 +60,6 @@ pub(crate) struct Stat {
 /// The BSD user flags that stop an unlink regardless of mode.
 #[cfg(target_vendor = "apple")]
 pub(crate) const USER_IMMUTABLE: u32 = 0x0000_0002 | 0x0000_0004;
-#[cfg(not(target_vendor = "apple"))]
-pub(crate) const USER_IMMUTABLE: u32 = 0;
 
 fn check(result: libc::c_int) -> std::io::Result<libc::c_int> {
     if result < 0 {
@@ -233,9 +231,6 @@ pub(crate) fn clear_immutable_at(parent: RawFd, name: &CStr, flags: u32) {
     let fd = unsafe { OwnedFd::from_raw_fd(fd) };
     clear_immutable_fd(fd.as_raw_fd(), flags);
 }
-
-#[cfg(not(target_vendor = "apple"))]
-pub(crate) fn clear_immutable_at(_parent: RawFd, _name: &CStr, _flags: u32) {}
 
 /// Lists an open directory, skipping `.` and `..`.
 pub(crate) fn list(dir: &OwnedFd) -> std::io::Result<Listing> {

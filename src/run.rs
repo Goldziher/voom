@@ -24,7 +24,7 @@ use crate::delete::{Guard, Outcome, Removal};
 use crate::error::{Error, Result};
 use crate::report::{Entry, RunResult, Timings};
 use crate::scan::{PatternSet, ScanOptions, Skipped, scan};
-use crate::size::{Measured, measure_all};
+use crate::size::Measured;
 
 /// Everything one invocation needs.
 #[expect(
@@ -421,21 +421,34 @@ fn select(
 
     collected.policy += started.elapsed();
 
-    let paths: Vec<PathBuf> = survivors.iter().map(|(finding, _)| finding.path.clone()).collect();
-    let started = Instant::now();
-    let sizes = measure_all(&paths);
-    collected.size += started.elapsed();
+    // A size policy needs the bytes before deciding. Otherwise removal already counts every
+    // unlinked entry, and walking the same cache first just delays reclaiming its space.
+    let needs_size = |finding: &Finding, config: &Resolved| {
+        let keep = config.keep_for(&finding.path, finding.ecosystem());
+        options.dry_run || keep.min_size.is_some() || keep.max_size.is_some()
+    };
+    let sizes: Vec<Option<Measured>> = if survivors.iter().any(|(finding, config)| needs_size(finding, config)) {
+        let started = Instant::now();
+        let sizes = survivors
+            .par_iter()
+            .map(|(finding, config)| needs_size(finding, config).then(|| crate::size::measure_fully(&finding.path)))
+            .collect();
+        collected.size += started.elapsed();
+        sizes
+    } else {
+        vec![None; survivors.len()]
+    };
 
     // The `min_size` and `max_size` rules are answered from the sizes just measured, so this
     // loop is charged to the policy stage rather than to sizing.
     let started = Instant::now();
-    let mut to_remove: Vec<(Finding, Measured)> = Vec::with_capacity(survivors.len());
+    let mut to_remove: Vec<(Finding, Option<Measured>)> = Vec::with_capacity(survivors.len());
     for ((finding, config), measured) in survivors.into_iter().zip(sizes) {
         let keep = config.keep_for(&finding.path, finding.ecosystem());
         // Against the bytes that could be read. An artifact holding an unreadable directory
         // measures small, so a `min_size` can keep something far larger than the threshold —
         // which is why the count travels with the number instead of being discarded here.
-        match keep.holds_by_size(measured.bytes) {
+        match measured.and_then(|size| keep.holds_by_size(size.bytes)) {
             Some(reason) => note(collected, options.verbose, finding.path, reason),
             None => to_remove.push((finding, measured)),
         }
@@ -469,25 +482,29 @@ fn select(
 
 /// What survived the policy stage: what to remove, and what something else is expected to take.
 struct Selected {
-    to_remove: Vec<(Finding, Measured)>,
+    to_remove: Vec<(Finding, Option<Measured>)>,
     /// Each with the artifact expected to cover it. Held back rather than decided here, because
     /// "already inside X" is only true once X has actually been removed.
-    covered: Vec<(Finding, Measured, PathBuf)>,
+    covered: Vec<(Finding, Option<Measured>, PathBuf)>,
 }
 
 /// Removes each artifact, in parallel, recording an outcome per artifact.
-fn remove_all(mut to_remove: Vec<(Finding, Measured)>, guard: &Guard, removal: Removal) -> Vec<Entry> {
-    // Largest first. Unlinking is bounded by the machine rather than by voom, so the order is the
-    // one lever left on how soon space comes back: a 40 GB build cache goes before a thousand
-    // `__pycache__/`s. The report is sorted separately, so this is invisible in it.
-    to_remove.sort_by_key(|(_, measured)| std::cmp::Reverse(measured.bytes));
+fn remove_all(mut to_remove: Vec<(Finding, Option<Measured>)>, guard: &Guard, removal: Removal) -> Vec<Entry> {
+    // Prefer larger artifacts when a policy or dry run already measured them. Other artifacts
+    // are counted during removal instead of walking them first merely to choose their order.
+    to_remove.sort_by_key(|(_, measured)| std::cmp::Reverse(measured.map_or(0, |size| size.bytes)));
     // The whole fan-out runs inside the removal pool, so every artifact's task is a removal worker
     // and none parks a sizing worker to install into the pool it is already using.
     crate::delete::install_removal(|| {
         to_remove
             .into_par_iter()
             .map(|(finding, measured)| {
-                let outcome = guard.remove(&finding.path, measured.bytes, removal_for(&finding, removal));
+                let removal = removal_for(&finding, removal);
+                let (outcome, measured) = if let Some(measured) = measured {
+                    (guard.remove(&finding.path, measured.bytes, removal), measured)
+                } else {
+                    guard.reclaim_fully(&finding.path, removal)
+                };
                 Entry {
                     path: finding.path.clone(),
                     finding,
@@ -525,9 +542,10 @@ pub fn removal_progress(enabled: bool) -> Option<ProgressBar> {
     spinner.enable_steady_tick(Duration::from_millis(120));
     let ticker = spinner.clone();
     let started = Instant::now();
+    let initial_freed = crate::delete::freed_so_far();
     std::thread::spawn(move || {
         while !ticker.is_finished() {
-            let freed = crate::delete::freed_so_far();
+            let freed = crate::delete::freed_so_far().saturating_sub(initial_freed);
             let seconds = started.elapsed().as_secs_f64().max(1.0);
             #[expect(
                 clippy::cast_precision_loss,
@@ -615,6 +633,37 @@ mod tests {
     use crate::delete::Outcome;
     use crate::policy::KeepPolicy;
     use crate::testing::{snapshot, tree};
+
+    #[test]
+    fn should_count_during_removal_unless_a_size_policy_needs_measurement() {
+        let fixture = tree(&["Cargo.toml", "target/debug/app"]);
+        let expected = crate::size::measure(&fixture.path().join("target"));
+        let result = run(&options(fixture.path())).expect("the run completes");
+        assert_eq!(
+            result.timings.size,
+            Duration::ZERO,
+            "no recursive sizing before removal"
+        );
+        assert_eq!(result.entries[0].bytes, expected, "removal counts all allocated bytes");
+        assert_eq!(result.entries[0].outcome, Outcome::Removed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn should_preserve_unreadable_counts_when_counting_during_removal() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = tree(&["Cargo.toml", "target/locked/precious"]);
+        let locked = fixture.path().join("target/locked");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let result = run(&options(fixture.path())).expect("the run completes");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            result.entries[0].unreadable, 1,
+            "failed removal retains unreadable evidence"
+        );
+        assert!(locked.join("precious").exists(), "unreadable content survives");
+    }
 
     #[test]
     fn should_remove_a_proven_artifact_and_leave_the_source() {

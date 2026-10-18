@@ -501,31 +501,50 @@ impl Guard {
     /// is left.
     #[must_use]
     pub fn reclaim(&self, path: &Path, removal: Removal) -> (Outcome, u64) {
+        let (outcome, measured) = self.reclaim_fully(path, removal);
+        (outcome, measured.bytes)
+    }
+
+    /// Counts while removing, retaining unreadable-directory evidence on a partial failure.
+    pub(crate) fn reclaim_fully(&self, path: &Path, removal: Removal) -> (Outcome, crate::size::Measured) {
+        use crate::size::Measured;
+
         let verified = match self.check(path) {
             Ok(verified) => verified,
-            Err(refusal) => return (Outcome::Refused(refusal), 0),
+            Err(refusal) => return (Outcome::Refused(refusal), Measured::default()),
         };
         if removal.dry_run {
-            return (Outcome::WouldRemove, crate::size::measure(&verified.canonical));
+            return (Outcome::WouldRemove, crate::size::measure_fully(&verified.canonical));
         }
 
         let before = (!cfg!(unix) || !verified.is_dir).then(|| crate::size::measure(&verified.canonical));
         let (result, counted) = remove_in_pool(&verified, removal);
         let Some(freed) = counted.or(before) else {
-            return (Outcome::Removed, 0);
+            return (Outcome::Removed, Measured::default());
         };
         if counted.is_none() && result.is_ok() {
             note_freed(freed);
         }
         match result {
-            Ok(()) => (Outcome::Removed, freed),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (Outcome::Refused(Refusal::Vanished), 0),
+            Ok(()) => (
+                Outcome::Removed,
+                Measured {
+                    bytes: freed,
+                    unreadable: 0,
+                },
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                (Outcome::Refused(Refusal::Vanished), Measured::default())
+            }
             Err(error) => {
                 let failure = RemovalFailure::from_io(&error);
                 let remaining = if verified.is_dir {
-                    crate::size::measure(&verified.canonical)
+                    crate::size::measure_fully(&verified.canonical)
                 } else {
-                    freed
+                    Measured {
+                        bytes: freed,
+                        unreadable: 0,
+                    }
                 };
                 if counted.is_none() || freed == 0 {
                     return (Outcome::Failed(failure), remaining);
@@ -533,10 +552,13 @@ impl Guard {
                 (
                     Outcome::PartiallyRemoved {
                         freed,
-                        remaining,
+                        remaining: remaining.bytes,
                         failure,
                     },
-                    freed + remaining,
+                    Measured {
+                        bytes: freed + remaining.bytes,
+                        ..remaining
+                    },
                 )
             }
         }

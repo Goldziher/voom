@@ -130,6 +130,7 @@ fn reason(state: &OutputBaseState) -> String {
         OutputBaseState::Cleared { owner: None } => "cleared on request".to_owned(),
         OutputBaseState::InstallBase { .. } => "install base no output base uses".to_owned(),
         OutputBaseState::Cache { files } => format!("{files} cached files past the age limit"),
+        OutputBaseState::CacheCleared => "entire download cache cleared on request".to_owned(),
         OutputBaseState::Unproven | OutputBaseState::Owned { .. } | OutputBaseState::Running { .. } => {
             keep_reason(state)
         }
@@ -277,7 +278,7 @@ fn output_base_value(base: &OutputBase) -> Value {
         OutputBaseState::Stale { .. } => "stale",
         OutputBaseState::Cleared { .. } => "cleared",
         OutputBaseState::InstallBase { .. } => "install_base",
-        OutputBaseState::Cache { .. } => "cache",
+        OutputBaseState::Cache { .. } | OutputBaseState::CacheCleared => "cache",
     };
     let idle_seconds = match &base.state {
         OutputBaseState::Stale { idle, .. } => Some(idle.as_secs()),
