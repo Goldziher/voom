@@ -605,8 +605,10 @@ const REMOVAL_WORKERS: usize = 16;
 /// An explicit `-j`, recorded before the first removal; zero means none was given.
 static REMOVAL_JOBS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// Holds removal to `-j` workers instead of [`REMOVAL_WORKERS`]. The pool is built once per
-/// process, so only a call made before the first removal has any effect.
+/// Holds removal to `-j` workers instead of [`REMOVAL_WORKERS`].
+///
+/// The pool is rebuilt if the width changes, so a second run in the same process — a library
+/// caller or the test suite — is not stuck with the first run's `-j`.
 pub fn limit_removal_workers(jobs: Option<usize>) {
     if let Some(jobs) = jobs {
         REMOVAL_JOBS.store(jobs.max(1), std::sync::atomic::Ordering::Relaxed);
@@ -615,20 +617,30 @@ pub fn limit_removal_workers(jobs: Option<usize>) {
 
 /// The one pool every removal runs in, so that artifacts removed side by side share its width
 /// rather than each fanning out across the sizing pool.
-fn removal_pool() -> Option<&'static rayon::ThreadPool> {
-    static POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
-    POOL.get_or_init(|| {
-        let jobs = match REMOVAL_JOBS.load(std::sync::atomic::Ordering::Relaxed) {
-            0 => REMOVAL_WORKERS,
-            jobs => jobs,
-        };
+///
+/// Keyed on the requested width rather than built once: a `OnceLock` kept the first width for the
+/// life of the process, so a later `-j` was silently ignored.
+fn removal_pool() -> Option<std::sync::Arc<rayon::ThreadPool>> {
+    static POOL: std::sync::Mutex<Option<(usize, std::sync::Arc<rayon::ThreadPool>)>> = std::sync::Mutex::new(None);
+    let jobs = match REMOVAL_JOBS.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => REMOVAL_WORKERS,
+        jobs => jobs,
+    };
+    let mut slot = POOL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((width, pool)) = slot.as_ref()
+        && *width == jobs
+    {
+        return Some(std::sync::Arc::clone(pool));
+    }
+    let pool = std::sync::Arc::new(
         rayon::ThreadPoolBuilder::new()
             .num_threads(jobs)
             .thread_name(|index| format!("voom-remove-{index}"))
             .build()
-            .ok()
-    })
-    .as_ref()
+            .ok()?,
+    );
+    *slot = Some((jobs, std::sync::Arc::clone(&pool)));
+    Some(pool)
 }
 
 /// Runs one verified removal in the removal pool.
