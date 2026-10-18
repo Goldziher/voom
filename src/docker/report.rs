@@ -19,6 +19,46 @@ use super::{DockerPruneResult, Lane, LaneOutcome, SCHEMA_VERSION, Trim, TrimOutc
 const GUTTER: &str = "  ";
 const BECAUSE: &str = "— ";
 
+/// Strips terminal control sequences from text voom did not author — a daemon's error line, a
+/// profile or instance name parsed out of an endpoint, a `DOCKER_HOST` — before it reaches a TTY.
+///
+/// A hostile or merely broken peer could otherwise move the cursor, recolour the rest of the
+/// report, or (via OSC 52) write the clipboard. Docker's stdout/stderr and the environment are the
+/// only inputs here that are not voom's own literals.
+fn sanitize(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character != '\u{1b}' {
+            if !character.is_control() {
+                out.push(character);
+            }
+            continue;
+        }
+        match chars.next() {
+            // CSI: `ESC [ params… final`, the final byte in 0x40..=0x7e.
+            Some('[') => {
+                for byte in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&byte) {
+                        break;
+                    }
+                }
+            }
+            // OSC: `ESC ] … ` ended by BEL or ST (`ESC \`).
+            Some(']') => {
+                for byte in chars.by_ref() {
+                    if byte == '\u{7}' || byte == '\u{1b}' {
+                        break;
+                    }
+                }
+            }
+            // Any other escape: drop the introducer and the character after it.
+            _ => {}
+        }
+    }
+    out
+}
+
 mod palette {
     use owo_colors::Style;
 
@@ -93,6 +133,19 @@ fn lane_row(lane: &Lane, result: &DockerPruneResult) -> Row {
     );
     let (label, style, detail) = match &lane.outcome {
         LaneOutcome::WouldReclaim => ("would reclaim", palette::would_remove(), format!("{counted}: {scope}")),
+        // A real volume prune removes whatever the daemon finds unused at execution time, which can
+        // differ from the inventory taken earlier, so the count is named for what it is — what the
+        // inventory matched — and only the bytes are docker's own figure.
+        LaneOutcome::Reclaimed { bytes: Some(_) } if kind == LaneKind::Volumes => (
+            "reclaimed",
+            palette::removed(),
+            format!(
+                "{} {} matched in the inventory, {}: {scope}",
+                lane.plan.candidates,
+                noun(kind, lane.plan.candidates),
+                size(lane.bytes())
+            ),
+        ),
         LaneOutcome::Reclaimed { bytes: Some(_) } => ("reclaimed", palette::removed(), format!("{counted}: {scope}")),
         LaneOutcome::Reclaimed { bytes: None } => (
             "pruned",
@@ -157,14 +210,14 @@ fn trim_row(trim: &Trim) -> Row {
 /// Propagates any write failure from `out`.
 pub fn render_human(result: &DockerPruneResult, out: &mut impl io::Write) -> io::Result<()> {
     if let Some(skip) = &result.skipped {
-        return writeln!(out, "voom: docker: {} (skipped)", skip.reason);
+        return writeln!(out, "voom: docker: {} (skipped)", sanitize(&skip.reason));
     }
 
     let mut rows: Vec<Row> = result.lanes.iter().map(|lane| lane_row(lane, result)).collect();
     rows.extend(result.trim.as_ref().map(trim_row));
 
     let heading = result.backend.as_deref().unwrap_or("docker");
-    writeln!(out, "{}", format!("docker — {heading}").bold())?;
+    writeln!(out, "{}", sanitize(&format!("docker — {heading}")).bold())?;
     write_block(&rows, out)?;
     writeln!(out)?;
     write_footer(result, out)
@@ -179,7 +232,7 @@ fn write_block(rows: &[Row], out: &mut impl io::Write) -> io::Result<()> {
             "{GUTTER}{label:<label_width$}{GUTTER}{subject:<subject_width$}{GUTTER}{detail}",
             label = row.style.style(row.label),
             subject = row.subject,
-            detail = format_args!("{BECAUSE}{}", row.detail).style(palette::quiet()),
+            detail = format_args!("{BECAUSE}{}", sanitize(&row.detail)).style(palette::quiet()),
         )?;
     }
     Ok(())
@@ -323,6 +376,14 @@ mod tests {
         let mut buffer = Vec::new();
         render_human(result, &mut buffer).expect("writing to a Vec cannot fail");
         String::from_utf8(buffer).expect("the report is UTF-8")
+    }
+
+    #[test]
+    fn should_strip_terminal_escapes_from_peer_supplied_text() {
+        assert_eq!(sanitize("a\u{1b}[31mred\u{1b}[0m"), "ared");
+        assert_eq!(sanitize("clip\u{1b}]52;c;AAAA\u{7}board"), "clipboard");
+        assert_eq!(sanitize("bell\u{7}"), "bell");
+        assert_eq!(sanitize("plain text"), "plain text");
     }
 
     #[test]
