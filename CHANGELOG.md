@@ -9,6 +9,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-10-18
+
+### Fixed
+
+- **`voom git-prune` fans out on its own descriptor-aware pool** rather than rayon's core-wide
+  global pool, so the standalone subcommand is bounded the same way a sweep is.
+
 ## [0.11.2] - 2026-10-18
 
 ### Fixed
@@ -28,8 +35,6 @@ All notable changes to this project are documented here. The format follows
 - **ai-rulez is pinned at 5.5.0** across `.ai-rulez/`, `poly.toml`, `poly-hooks.lock` and
   CONTRIBUTING, and the generated outputs and lock are refreshed. The module-size-cap rule now
   records that a test enforces the cap, rather than saying nothing does.
-- The `git-prune` subcommand fans out on its own descriptor-aware pool rather than rayon's
-  core-wide global pool, so it is bounded the same way the sweep is.
 
 ## [0.11.1] - 2026-10-18
 
@@ -825,7 +830,8 @@ nothing; this is the tool.
 - Size accounting sums allocated blocks, so on a copy-on-write filesystem such as APFS the bytes
   reported can exceed the space actually freed where files are shared between clones.
 
-[Unreleased]: https://github.com/Goldziher/voom/compare/v0.11.2...HEAD
+[Unreleased]: https://github.com/Goldziher/voom/compare/v0.11.3...HEAD
+[0.11.3]: https://github.com/Goldziher/voom/compare/v0.11.2...v0.11.3
 [0.11.2]: https://github.com/Goldziher/voom/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/Goldziher/voom/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/Goldziher/voom/compare/v0.10.0...v0.11.0
