@@ -9,6 +9,7 @@
 //! and whole subtrees are pruned at the directory level (so the largest, deepest parts of a
 //! disk are never entered).
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
@@ -156,7 +157,27 @@ pub fn scan(roots: &[PathBuf], classifier: &Classifier, options: &ScanOptions) -
 fn scan_root(root: &Path, classifier: &Classifier, options: &ScanOptions, scan: &mut Scan) {
     let first_failure = scan.failures.len();
     walk_into(root, root, classifier, options, scan);
+    let found = scan.findings.len();
     retry_interrupted(root, classifier, options, scan, first_failure);
+    // A re-walk of an interrupted directory can re-emit an artifact the first walk had already
+    // reported before the read error reached the collector. The same path would then be taken
+    // twice, and the second removal refused as vanished and counted as a safety refusal it never
+    // was — a wrong statement in a destructive tool's only record.
+    dedupe_findings(scan, found);
+}
+
+/// Drops findings a retry emitted for a path that was already reported, keeping the first.
+fn dedupe_findings(scan: &mut Scan, from: usize) {
+    if scan.findings.len() <= from {
+        return;
+    }
+    let mut seen: HashSet<PathBuf> = scan.findings[..from]
+        .iter()
+        .map(|finding| finding.path.clone())
+        .collect();
+    let retried = scan.findings.split_off(from);
+    scan.findings
+        .extend(retried.into_iter().filter(|finding| seen.insert(finding.path.clone())));
 }
 
 /// Walks `start`, classifying against `root`, and appends what it finds to `scan`.
@@ -268,6 +289,30 @@ mod tests {
 
     fn classifier() -> Classifier {
         Classifier::new(Selection::all()).expect("the catalog compiles")
+    }
+
+    #[test]
+    fn should_drop_a_finding_a_retry_re_emitted() {
+        let finding = |path: &str| Finding {
+            path: PathBuf::from(path),
+            provenance: Provenance::Included {
+                pattern: "x".to_owned(),
+            },
+        };
+        let mut scan = Scan::default();
+        scan.findings.push(finding("/root/target"));
+        let from = scan.findings.len();
+        scan.findings.push(finding("/root/target"));
+        scan.findings.push(finding("/root/target-twin"));
+
+        dedupe_findings(&mut scan, from);
+
+        let paths: Vec<_> = scan
+            .findings
+            .iter()
+            .map(|finding| finding.path.display().to_string())
+            .collect();
+        assert_eq!(paths, ["/root/target", "/root/target-twin"]);
     }
 
     fn found(scan: &Scan, root: &Path) -> Vec<String> {
