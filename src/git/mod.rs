@@ -542,13 +542,21 @@ fn prune_with(work_trees: &[PathBuf], options: &GitPruneOptions, own_pool: bool)
     ensure_git_available(options.timeout)?;
 
     let resolved = discover::resolve_all(work_trees, &result.roots);
-    result.repositories = match options.jobs.filter(|_| own_pool) {
-        Some(jobs) => rayon::ThreadPoolBuilder::new()
-            .num_threads(jobs.max(1))
+    // The fan-out spawns one `git` per repository. During a sweep it runs on the caller's pool,
+    // which `run` has already sized (`own_pool` false). On its own it gets its own pool — `-j` if
+    // given, else the descriptor-aware default — rather than inheriting rayon's core-wide global
+    // pool, which can still exhaust the file table on a machine that sets the limit low.
+    result.repositories = if own_pool {
+        let jobs = options
+            .jobs
+            .map_or_else(crate::limits::default_width, |jobs| jobs.max(1));
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(jobs)
             .build()
             .map_err(|source| GitError::ThreadPool { jobs, source })?
-            .install(|| visit_all(&resolved, options)),
-        None => visit_all(&resolved, options),
+            .install(|| visit_all(&resolved, options))
+    } else {
+        visit_all(&resolved, options)
     };
     // Parallel work finishes in nondeterministic order, and a report that cannot be diffed
     // between two runs is not a report (ADR 0007).
