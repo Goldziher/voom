@@ -436,18 +436,21 @@ mod bulk {
             }
             let mut offset = 0;
             for _ in 0..count {
-                let Some(record) = buffer.get(offset..) else { break };
-                let length = Record { bytes: record, at: 0 }.u32() as usize;
+                let Some(rest) = buffer.get(offset..) else { break };
+                let length = Record { bytes: rest, at: 0 }.u32() as usize;
                 if length == 0 {
                     break;
                 }
-                let record = &record[..length.min(record.len())];
+                // Clamp both the record and the cursor to what the call actually filled: a record
+                // declaring a length past the buffer must not push `offset` out of it, where a
+                // wrapped cursor could re-enter the loop.
+                let record = &rest[..length.min(rest.len())];
                 match parse(record) {
                     Some(Ok(entry)) => listing.entries.push(entry),
                     Some(Err(())) => listing.unreadable += 1,
                     None => {}
                 }
-                offset += length;
+                offset += length.min(rest.len());
             }
         }
     }
