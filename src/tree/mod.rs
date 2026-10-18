@@ -272,8 +272,24 @@ impl Remover {
         }
     }
 
-    fn count(&self, dev: u64, ino: u64, nlink: u64, bytes: u64) {
-        if !self.seen.counted_inode(dev, ino, nlink) {
+    /// The bytes for an inode this removal has not counted yet, or zero for a repeat.
+    ///
+    /// [`Links::counted_inode`] answers `true` for a hard link whose inode is already counted, so
+    /// only an uncounted one contributes.
+    fn counted(&self, dev: u64, ino: u64, nlink: u64, bytes: u64) -> u64 {
+        if self.seen.counted_inode(dev, ino, nlink) {
+            0
+        } else {
+            bytes
+        }
+    }
+
+    /// Adds bytes a directory freed to the local and process-wide totals in one update each.
+    ///
+    /// Batched per directory rather than per unlinking entry: the process-wide counter is a single
+    /// atomic, and one contended read-modify-write per file does not scale across removal workers.
+    fn add_freed(&self, bytes: u64) {
+        if bytes > 0 {
             self.freed.fetch_add(bytes, Ordering::Relaxed);
             crate::delete::note_freed(bytes);
         }
@@ -376,6 +392,7 @@ impl Remover {
 
         let mut repaired = false;
         let mut pending = Vec::new();
+        let mut freed = 0;
         for entry in listing.entries {
             if entry.kind == Kind::Dir {
                 if entry.mount_point || entry.dev != self.dev {
@@ -393,11 +410,12 @@ impl Remover {
                 continue;
             }
             match self.unlink(&fd, &entry, &mut repaired) {
-                Ok(()) => self.count(entry.dev, entry.ino, entry.nlink, entry.bytes),
+                Ok(()) => freed += self.counted(entry.dev, entry.ino, entry.nlink, entry.bytes),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => self.fail(error),
             }
         }
+        self.add_freed(freed);
         Some(Frame { fd, sub, pending })
     }
 
@@ -448,10 +466,7 @@ impl Remover {
             result = self.unlink_empty(parent, sub, parent_repairable);
         }
         match result {
-            Ok(()) => {
-                crate::delete::note_freed(sub.bytes);
-                self.freed.fetch_add(sub.bytes, Ordering::Relaxed);
-            }
+            Ok(()) => self.add_freed(sub.bytes),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => self.fail(error),
         }
