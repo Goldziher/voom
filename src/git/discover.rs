@@ -79,10 +79,13 @@ fn walk(root: &Path, options: &GitPruneOptions, into: &mut Vec<PathBuf>) {
     // Shared by reference: every worker asks the same set, and `&CacheRoots` is `Copy`, which is
     // what lets the per-thread visitor be a `move` closure without cloning the set per thread.
     let caches = &caches;
-    // The sweep's own classifier, so the walk prunes build output exactly where a sweep would
-    // remove it: a `target/` is skipped only beside the marker that proves it. A failure here is
-    // the const catalog failing to compile its own patterns — impossible without a bug in voom —
-    // and would only make the walk prune less, so it is said once rather than silently ignored.
+    // The sweep's own classifier, so the walk prunes build output exactly where a *default* sweep
+    // would remove it: a `target/` is skipped only beside the marker that proves it. Built without
+    // `.permissive()`, so an off-by-default artifact (`build/` beside a `package.json`) is not
+    // pruned — a default sweep does not remove one either, and a repository nested inside it stays
+    // findable. A failure here is the const catalog failing to compile its own patterns,
+    // impossible without a bug in voom, and would only make the walk prune less, so it is said
+    // once rather than silently ignored.
     let classifier = match Classifier::new(Selection::all()) {
         Ok(classifier) => Some(classifier),
         Err(error) => {
@@ -129,6 +132,11 @@ fn walk(root: &Path, options: &GitPruneOptions, into: &mut Vec<PathBuf>) {
             {
                 return WalkState::Skip;
             }
+            // One `lstat` per directory is the price of pruning a linked-worktree checkout before
+            // descending into it. Deciding from the walker's own `.git` entry would fire only once
+            // the directory had already been entered — exactly the walk this prunes away — so the
+            // probe is done at the directory, and it is the cost the pruning buys back many times
+            // over on a monorepo's worktrees.
             match probe(path) {
                 Probe::None => WalkState::Continue,
                 Probe::Repository => {
@@ -817,6 +825,12 @@ mod tests {
         assert_eq!(discovered(fixture.path()), vec![fixture.path().join("stray")]);
     }
 
+    /// A submodule's `.git` file points into `<super>/.git/modules/<name>`, which is a main git
+    /// directory: `git submodule absorbgitdirs` writes **no** `commondir` there, unlike a linked
+    /// worktree's private directory. Confirmed against real absorbed submodules (the module dirs
+    /// of several repos under a sibling checkout have no `commondir`), so the fixture below
+    /// matches what git actually writes — a bare `HEAD` under `.git/modules/<name>` — and the walk
+    /// enters the submodule rather than reporting it once and stopping.
     #[test]
     fn should_still_walk_into_a_submodule_checkout() {
         let fixture = tree(&[
