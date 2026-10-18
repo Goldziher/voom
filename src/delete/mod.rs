@@ -30,9 +30,12 @@ use std::path::{Path, PathBuf};
 
 mod force;
 mod outcome;
+mod pool;
 
 pub use force::Removal;
 pub use outcome::{FailureKind, Outcome, Refusal, RemovalFailure};
+pub use pool::{freed_so_far, limit_removal_workers};
+pub(crate) use pool::{install_removal, note_freed, remove_in_pool};
 
 use crate::error::{Error, Result};
 
@@ -574,80 +577,6 @@ impl Guard {
             remaining,
             failure,
         }
-    }
-}
-
-/// Bytes every removal in the process has freed so far, for a progress line.
-static FREED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// Records bytes a removal has just freed.
-pub(crate) fn note_freed(bytes: u64) {
-    FREED.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// Bytes every removal in this process has freed so far. Only ever grows; a progress line reads
-/// it while removals run, and nothing decides anything by it.
-#[must_use]
-pub fn freed_so_far() -> u64 {
-    FREED.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-/// How many workers unlink at once when `-j` is not given, across every removal in the process.
-///
-/// Removal does not scale the way reading does. Unlinking contends on the directory being
-/// emptied and on whatever endpoint-security agent vets each call, so past a point more workers
-/// only queue in the kernel. Measured on a 100,000-file tree under two such agents, against
-/// 58 s for `rm -rf`: 35 s on one worker, 26 s on four, 19 s on sixteen, 42 s on forty-eight and
-/// 101 s on the hundred and twenty-eight that sizing wants. So sizing and removal get separate
-/// widths, and this one is a constant rather than a multiple of the cores.
-const REMOVAL_WORKERS: usize = 16;
-
-/// An explicit `-j`, recorded before the first removal; zero means none was given.
-static REMOVAL_JOBS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// Holds removal to `-j` workers instead of [`REMOVAL_WORKERS`].
-///
-/// The pool is rebuilt if the width changes, so a second run in the same process — a library
-/// caller or the test suite — is not stuck with the first run's `-j`.
-pub fn limit_removal_workers(jobs: Option<usize>) {
-    if let Some(jobs) = jobs {
-        REMOVAL_JOBS.store(jobs.max(1), std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-/// The one pool every removal runs in, so that artifacts removed side by side share its width
-/// rather than each fanning out across the sizing pool.
-///
-/// Keyed on the requested width rather than built once: a `OnceLock` kept the first width for the
-/// life of the process, so a later `-j` was silently ignored.
-fn removal_pool() -> Option<std::sync::Arc<rayon::ThreadPool>> {
-    static POOL: std::sync::Mutex<Option<(usize, std::sync::Arc<rayon::ThreadPool>)>> = std::sync::Mutex::new(None);
-    let jobs = match REMOVAL_JOBS.load(std::sync::atomic::Ordering::Relaxed) {
-        0 => REMOVAL_WORKERS,
-        jobs => jobs,
-    };
-    let mut slot = POOL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some((width, pool)) = slot.as_ref()
-        && *width == jobs
-    {
-        return Some(std::sync::Arc::clone(pool));
-    }
-    let pool = std::sync::Arc::new(
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(jobs)
-            .thread_name(|index| format!("voom-remove-{index}"))
-            .build()
-            .ok()?,
-    );
-    *slot = Some((jobs, std::sync::Arc::clone(&pool)));
-    Some(pool)
-}
-
-/// Runs one verified removal in the removal pool.
-fn remove_in_pool(verified: &Verified, removal: Removal) -> (std::io::Result<()>, Option<u64>) {
-    match removal_pool() {
-        Some(pool) => pool.install(|| force::remove(verified, removal)),
-        None => force::remove(verified, removal),
     }
 }
 

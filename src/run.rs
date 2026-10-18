@@ -476,19 +476,23 @@ fn remove_all(mut to_remove: Vec<(Finding, Measured)>, guard: &Guard, removal: R
     // one lever left on how soon space comes back: a 40 GB build cache goes before a thousand
     // `__pycache__/`s. The report is sorted separately, so this is invisible in it.
     to_remove.sort_by_key(|(_, measured)| std::cmp::Reverse(measured.bytes));
-    to_remove
-        .into_par_iter()
-        .map(|(finding, measured)| {
-            let outcome = guard.remove(&finding.path, measured.bytes, removal_for(&finding, removal));
-            Entry {
-                path: finding.path.clone(),
-                finding,
-                bytes: measured.bytes,
-                unreadable: measured.unreadable,
-                outcome,
-            }
-        })
-        .collect()
+    // The whole fan-out runs inside the removal pool, so every artifact's task is a removal worker
+    // and none parks a sizing worker to install into the pool it is already using.
+    crate::delete::install_removal(|| {
+        to_remove
+            .into_par_iter()
+            .map(|(finding, measured)| {
+                let outcome = guard.remove(&finding.path, measured.bytes, removal_for(&finding, removal));
+                Entry {
+                    path: finding.path.clone(),
+                    finding,
+                    bytes: measured.bytes,
+                    unreadable: measured.unreadable,
+                    outcome,
+                }
+            })
+            .collect()
+    })
 }
 
 /// The removal settings for one finding: a cache its tool writes read-only is removed with its
