@@ -176,20 +176,27 @@ pub(crate) fn add_mode_at(parent: RawFd, name: &CStr, mode: u32, wanted: u32) {
     if mode & wanted == wanted {
         return;
     }
-    #[cfg(target_vendor = "apple")]
-    let flags = libc::AT_SYMLINK_NOFOLLOW;
-    // Linux rejects `AT_SYMLINK_NOFOLLOW` for `fchmodat`. The caller has just seen a directory
-    // under this name through `fstatat`, so the gap is the same one `std`'s path-based
-    // `set_permissions` always carried.
-    #[cfg(not(target_vendor = "apple"))]
-    let flags = 0;
-    // SAFETY: `name` is NUL-terminated and outlives the call; failure is ignored as above.
     #[allow(
         clippy::cast_possible_truncation,
         reason = "a permission mode fits mode_t, whose width differs across unix targets"
     )]
-    unsafe {
-        libc::fchmodat(parent, name.as_ptr(), ((mode | wanted) & 0o7777) as libc::mode_t, flags);
+    let target = ((mode | wanted) & 0o7777) as libc::mode_t;
+    // `AT_SYMLINK_NOFOLLOW` closes the check-then-chmod race under `--force`, where a name just
+    // proven a directory by `stat_at` could be swapped for a symlink before the chmod. Apple
+    // honours the flag; Linux honours it only through `fchmodat2` (6.6+) and a glibc that uses it,
+    // and otherwise fails with `ENOTSUP`/`EINVAL`. So the flag is tried first and the plain form —
+    // the gap `std`'s path-based `set_permissions` always carried — is the fallback, never the
+    // response to a real permission error.
+    for flags in [libc::AT_SYMLINK_NOFOLLOW, 0] {
+        // SAFETY: `name` is NUL-terminated and outlives the call; failure is ignored as above.
+        let result = unsafe { libc::fchmodat(parent, name.as_ptr(), target, flags) };
+        if result == 0 {
+            return;
+        }
+        let error = std::io::Error::last_os_error();
+        if !matches!(error.raw_os_error(), Some(libc::ENOTSUP | libc::EINVAL)) {
+            return;
+        }
     }
 }
 
