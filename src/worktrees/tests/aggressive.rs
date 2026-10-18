@@ -102,7 +102,10 @@ fn should_keep_the_current_checkout_even_with_aggressive() {
     let path = add_worktree(&main, "current");
     let listing = git(&main, &["worktree", "list", "--porcelain"]).unwrap();
     let entries = parse_listing(&listing);
-    let entry = entries.iter().find(|entry| entry.path == path).unwrap();
+    let entry = entries
+        .iter()
+        .find(|entry| entry.path.canonicalize().is_ok_and(|canonical| canonical == path))
+        .expect("the canonical worktree path is listed");
     let (_, sha) = default_branch(&main).unwrap();
     let hosted = |_: &str, _: Option<&str>| Ok(github::Hosted::NotMerged);
     let result = judge(
