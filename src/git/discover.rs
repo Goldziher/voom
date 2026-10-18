@@ -80,9 +80,16 @@ fn walk(root: &Path, options: &GitPruneOptions, into: &mut Vec<PathBuf>) {
     // what lets the per-thread visitor be a `move` closure without cloning the set per thread.
     let caches = &caches;
     // The sweep's own classifier, so the walk prunes build output exactly where a sweep would
-    // remove it: a `target/` is skipped only beside the marker that proves it. Without one
-    // (it only fails if the catalog does not compile) the walk simply prunes less.
-    let classifier = Classifier::new(Selection::all()).ok();
+    // remove it: a `target/` is skipped only beside the marker that proves it. A failure here is
+    // the const catalog failing to compile its own patterns — impossible without a bug in voom —
+    // and would only make the walk prune less, so it is said once rather than silently ignored.
+    let classifier = match Classifier::new(Selection::all()) {
+        Ok(classifier) => Some(classifier),
+        Err(error) => {
+            eprintln!("voom: git-prune: {error}; the discovery walk will not prune build output");
+            None
+        }
+    };
     let classifier = classifier.as_ref();
     let (sender, receiver) = std::sync::mpsc::channel();
 
