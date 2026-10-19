@@ -13,7 +13,7 @@ jobs:
       - uses: Goldziher/poly@8a85d746736986ce80ae4a2315c15c27e5844d28 # v0
         with:
           version: "0.29.0"
-      - uses: xberg-io/actions/setup-ai-rulez@98adf87f1ed4c62a57ff56f9010d62faf42d4db6
+      - uses: xberg-io/actions/setup-ai-rulez@0c528a8b4fc40259211d21c47216a776ead6370c
         with:
           ai-rulez-version: "5.5.0"
           source-revision: "b10177f2f04debf7f3528a02a9524a224b853617"
