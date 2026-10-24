@@ -27,6 +27,11 @@ use crate::classify::{Classifier, Finding, SkipReason};
 /// that the opt-in artifacts declared for them (ADR 0001's amendment) can fire.
 pub const NEVER_DESCEND: &[&str] = &[".git", ".hg", ".svn"];
 
+#[cfg(unix)]
+mod guided;
+/// The index-guided walk needs unix link counts; elsewhere every work tree is walked as before.
+#[cfg(not(unix))]
+#[path = "guided_portable.rs"]
 mod guided;
 mod patterns;
 mod visitor;

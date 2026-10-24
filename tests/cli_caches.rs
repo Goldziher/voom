@@ -1,7 +1,9 @@
 //! The cache-cleaning flags: listing, clearing, and the safety of both.
 //!
 //! Split from `tests/cli.rs` to keep each suite under the file-size limit; the exit codes and
-//! output are asserted against the real binary there too.
+//! output are asserted against the real binary there too. Every case plants caches under a fake
+//! unix home, so the suite is unix-only.
+#![cfg(unix)]
 
 // Helper functions here are not `#[test]` bodies, which is all `allow-expect-in-tests` covers.
 // In a test crate a panic is the failure report, which is exactly what these want.
@@ -51,7 +53,6 @@ fn voom() -> Command {
 /// Driven with a fake `HOME`, so a machine that happens to lack, say, a Cargo registry does not
 /// change what the command prints.
 #[test]
-#[cfg(unix)]
 fn should_list_only_present_caches_without_measuring_them() {
     let home = TempDir::new().unwrap();
 
@@ -90,7 +91,6 @@ fn should_list_only_present_caches_without_measuring_them() {
 /// `--sizes` measures what the listing names, with the sweep's own sizer, so the figure is what
 /// `--clean-caches` would reclaim.
 #[test]
-#[cfg(unix)]
 fn should_size_the_listing_when_asked() {
     let home = TempDir::new().unwrap();
     let registry = home.path().join(".cargo/registry");
@@ -117,7 +117,6 @@ fn should_size_the_listing_when_asked() {
 /// `--verbose` prints the whole table — every known location with its state, the markers, and
 /// what removing each cache costs — including the locations this machine does not have.
 #[test]
-#[cfg(unix)]
 fn should_list_the_whole_table_when_verbose() {
     let home = TempDir::new().unwrap();
 
@@ -150,7 +149,6 @@ fn should_list_the_whole_table_when_verbose() {
 /// go, each still on marker proof, and a location whose marker is absent is left alone. Driven
 /// with a fake `HOME`, which is process-scoped and so leaves other tests alone.
 #[test]
-#[cfg(unix)]
 fn should_clean_every_proven_cache_with_a_bare_flag() {
     let home = TempDir::new().unwrap();
 
@@ -176,7 +174,6 @@ fn should_clean_every_proven_cache_with_a_bare_flag() {
 /// `--clear-caches` is an alias for `--clean-caches`, because "clear" is how people reach for
 /// it; the bare alias means the whole table, exactly like the spelled-out flag.
 #[test]
-#[cfg(unix)]
 fn should_treat_clear_caches_as_an_alias_for_clean_caches() {
     let home = TempDir::new().unwrap();
 
@@ -197,7 +194,6 @@ fn should_treat_clear_caches_as_an_alias_for_clean_caches() {
 /// An explicit `--clean-caches=all` is the same request as the bare flag, spelled out for a
 /// script that wants to say what it means.
 #[test]
-#[cfg(unix)]
 fn should_clean_every_proven_cache_with_an_explicit_all() {
     let home = TempDir::new().unwrap();
 
@@ -221,7 +217,6 @@ fn should_clean_every_proven_cache_with_an_explicit_all() {
 }
 
 /// Plants a tool cache the way its tool leaves it: the directory, and one proving marker.
-#[cfg(unix)]
 fn plant_cache(home: &Path, location: &str, marker: &str) -> std::path::PathBuf {
     let dir = home.join(location);
     let proof = dir.join(marker);
@@ -235,7 +230,6 @@ fn plant_cache(home: &Path, location: &str, marker: &str) -> std::path::PathBuf 
 /// they must agree on every path, and the audit that found one extra directory in `=all` was in
 /// fact racing a concurrent build that created `target/` between the two runs.
 #[test]
-#[cfg(unix)]
 fn should_plan_the_same_removals_for_a_bare_flag_and_for_all() {
     let home = TempDir::new().unwrap();
     plant_cache(home.path(), ".cargo/registry", "CACHEDIR.TAG");
@@ -276,7 +270,6 @@ fn should_plan_the_same_removals_for_a_bare_flag_and_for_all() {
 /// Models are gigabytes and sometimes gated, so the bare flag leaves them and only their id
 /// removes them.
 #[test]
-#[cfg(unix)]
 fn should_remove_the_expensive_caches_only_when_named() {
     let home = TempDir::new().unwrap();
     let models = plant_cache(home.path(), ".cache/huggingface/hub", ".locks");
@@ -303,7 +296,6 @@ fn should_remove_the_expensive_caches_only_when_named() {
 /// pnpm's store sits under `Library/pnpm`, beside the global installs, so the walk must prune
 /// the parent and still reach the store by name — and only the store.
 #[test]
-#[cfg(unix)]
 fn should_remove_the_pnpm_store_without_touching_the_global_installs() {
     let home = TempDir::new().unwrap();
     let store = plant_cache(home.path(), "Library/pnpm/store", "v11/index.db");
@@ -324,7 +316,6 @@ fn should_remove_the_pnpm_store_without_touching_the_global_installs() {
 /// `--clean-caches=<ids>` removes only the named caches, so the command can stay explicit about
 /// what survives when a run sweeps a real home directory.
 #[test]
-#[cfg(unix)]
 fn should_clean_only_the_named_caches() {
     let home = TempDir::new().unwrap();
 
@@ -351,7 +342,6 @@ fn should_clean_only_the_named_caches() {
 }
 
 #[test]
-#[cfg(unix)]
 fn should_include_relocated_tagged_builds_only_in_a_full_cache_clear() {
     for flag in [
         None,
@@ -468,7 +458,6 @@ fn should_reject_an_unknown_cache_id() {
 /// `all` carries the machine-wide Bazel clear, which stops servers other work may be building
 /// with; `-bazel` takes exactly that back out and leaves the rest of the table.
 #[test]
-#[cfg(unix)]
 fn should_take_an_id_back_out_of_clean_caches_all() {
     let home = TempDir::new().unwrap();
     let pip = plant_cache(home.path(), "Library/Caches/pip", "http-v2");
@@ -514,7 +503,6 @@ fn should_take_an_id_back_out_of_clean_caches_all() {
 /// Go writes its module cache read-only on purpose; `go clean -modcache` restores the bits
 /// before it unlinks, and so must voom, or the cache comes out part-way without `--force`.
 #[test]
-#[cfg(unix)]
 fn should_remove_a_read_only_module_cache_whole_without_force() {
     use std::os::unix::fs::PermissionsExt;
 
