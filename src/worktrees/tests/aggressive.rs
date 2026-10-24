@@ -110,18 +110,20 @@ fn should_keep_the_current_checkout_even_with_aggressive() {
     let hosted = |_: &str, _: Option<&str>| Ok(github::Hosted::NotMerged);
     let result = judge(
         entry,
-        &main,
-        MergeProof {
-            default_sha: Some(&sha),
-            hosted_merge: &hosted,
+        &JudgeContext {
+            main: &main,
+            merge_proof: MergeProof {
+                default_sha: Some(&sha),
+                hosted_merge: &hosted,
+            },
+            roots: &[main.parent().unwrap().to_path_buf()],
+            current: Some(&path),
+            options: WorktreeOptions {
+                aggressive: true,
+                ..WorktreeOptions::default()
+            },
+            removal_lock: &std::sync::Mutex::new(()),
         },
-        &[main.parent().unwrap().to_path_buf()],
-        Some(&path),
-        WorktreeOptions {
-            aggressive: true,
-            ..WorktreeOptions::default()
-        },
-        &std::sync::Mutex::new(()),
     );
     assert_eq!(result.state, State::Current);
     assert!(path.exists());

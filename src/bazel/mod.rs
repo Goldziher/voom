@@ -388,18 +388,7 @@ pub fn prune(options: &BazelPruneOptions) -> Result<BazelPruneResult> {
         force: options.force,
     };
 
-    let scope = Scope::new(options);
-    let mut output_bases = Vec::new();
-    let mut install_bases = Vec::new();
-    let mut caches = Vec::new();
-    for candidate in candidates {
-        match candidate {
-            Candidate::OutputBase(path) if scope.holds_base(&path) => output_bases.push(path),
-            Candidate::InstallBase(path) if scope.machine => install_bases.push(path),
-            Candidate::Cache(path) if scope.machine => caches.push(path),
-            _ => {}
-        }
-    }
+    let (output_bases, install_bases, caches) = partition_candidates(candidates, &Scope::new(options));
 
     // Every base is independent of the others, and each one is a handful of small reads followed
     // by a removal: latency-bound work that serial execution leaves the disk idle for. The
@@ -409,29 +398,7 @@ pub fn prune(options: &BazelPruneOptions) -> Result<BazelPruneResult> {
     crate::delete::limit_removal_workers(options.jobs);
     let (mut found, cache_found) = pool.install(|| {
         rayon::join(
-            || {
-                let mut found: Vec<OutputBase> = output_bases
-                    .into_par_iter()
-                    .map(|path| handle_output_base(path, options, &guard, removal))
-                    .collect();
-
-                // An install base is in use when a base that survived this run still points at
-                // it. A dry run leaves everything on disk, so what *would* be removed is
-                // excluded explicitly rather than by looking.
-                let referenced: Vec<PathBuf> = found
-                    .iter()
-                    .filter(|base| {
-                        !base.is_removable() || base.outcome.as_ref().is_some_and(|outcome| !outcome.is_reclaimed())
-                    })
-                    .filter_map(|base| std::fs::canonicalize(base.path.join("install")).ok())
-                    .collect();
-                found.par_extend(
-                    install_bases
-                        .into_par_iter()
-                        .map(|path| handle_install_base(path, &referenced, options, &guard, removal)),
-                );
-                found
-            },
+            || prune_bases(output_bases, install_bases, options, &guard, removal),
             || {
                 caches
                     .into_par_iter()
@@ -450,6 +417,53 @@ pub fn prune(options: &BazelPruneOptions) -> Result<BazelPruneResult> {
         dry_run: options.dry_run,
         elapsed: started.elapsed(),
     })
+}
+
+/// Sorts candidates into the three kinds a run acts on, dropping those outside its scope.
+///
+/// Returns the output bases, the install bases and the shared caches, in that order.
+fn partition_candidates(candidates: Vec<Candidate>, scope: &Scope) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
+    let mut output_bases = Vec::new();
+    let mut install_bases = Vec::new();
+    let mut caches = Vec::new();
+    for candidate in candidates {
+        match candidate {
+            Candidate::OutputBase(path) if scope.holds_base(&path) => output_bases.push(path),
+            Candidate::InstallBase(path) if scope.machine => install_bases.push(path),
+            Candidate::Cache(path) if scope.machine => caches.push(path),
+            _ => {}
+        }
+    }
+    (output_bases, install_bases, caches)
+}
+
+/// Handles every output base, then every install base that no surviving output base still uses.
+fn prune_bases(
+    output_bases: Vec<PathBuf>,
+    install_bases: Vec<PathBuf>,
+    options: &BazelPruneOptions,
+    guard: &Guard,
+    removal: Removal,
+) -> Vec<OutputBase> {
+    let mut found: Vec<OutputBase> = output_bases
+        .into_par_iter()
+        .map(|path| handle_output_base(path, options, guard, removal))
+        .collect();
+
+    // An install base is in use when a base that survived this run still points at
+    // it. A dry run leaves everything on disk, so what *would* be removed is
+    // excluded explicitly rather than by looking.
+    let referenced: Vec<PathBuf> = found
+        .iter()
+        .filter(|base| !base.is_removable() || base.outcome.as_ref().is_some_and(|outcome| !outcome.is_reclaimed()))
+        .filter_map(|base| std::fs::canonicalize(base.path.join("install")).ok())
+        .collect();
+    found.par_extend(
+        install_bases
+            .into_par_iter()
+            .map(|path| handle_install_base(path, &referenced, options, guard, removal)),
+    );
+    found
 }
 
 /// Which candidates a run's scope reaches. See [`BazelPruneOptions::scope`].

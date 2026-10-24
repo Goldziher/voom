@@ -319,15 +319,17 @@ fn examine(
         .map(|entry| {
             judge(
                 entry,
-                &repository.repository,
-                MergeProof {
-                    default_sha: default.as_ref().map(|(_, sha)| sha.as_str()),
-                    hosted_merge: &hosted_merge,
+                &JudgeContext {
+                    main: &repository.repository,
+                    merge_proof: MergeProof {
+                        default_sha: default.as_ref().map(|(_, sha)| sha.as_str()),
+                        hosted_merge: &hosted_merge,
+                    },
+                    roots,
+                    current,
+                    options,
+                    removal_lock: &removal_lock,
                 },
-                roots,
-                current,
-                options,
-                &removal_lock,
             )
         })
         .collect();
@@ -344,15 +346,72 @@ struct MergeProof<'a> {
     hosted_merge: &'a HostedLookup<'a>,
 }
 
-fn judge(
-    entry: &Entry,
-    main: &Path,
-    merge_proof: MergeProof<'_>,
-    roots: &[PathBuf],
-    current: Option<&Path>,
+/// What `judge` needs to know about the repository and the run, shared by every worktree.
+#[derive(Clone, Copy)]
+struct JudgeContext<'a> {
+    main: &'a Path,
+    merge_proof: MergeProof<'a>,
+    roots: &'a [PathBuf],
+    current: Option<&'a Path>,
     options: WorktreeOptions,
-    removal_lock: &std::sync::Mutex<()>,
-) -> Worktree {
+    removal_lock: &'a std::sync::Mutex<()>,
+}
+
+/// The state of a worktree that can be settled without any git query, if there is one.
+fn preliminary_state(entry: &Entry, canonical: &Path, context: &JudgeContext<'_>) -> Option<State> {
+    if entry.locked {
+        return Some(State::Locked);
+    }
+    if !entry.path.is_dir() {
+        return Some(State::Missing);
+    }
+    if !context
+        .roots
+        .iter()
+        .any(|root| canonical != *root && canonical.starts_with(root))
+    {
+        return Some(State::OutsideRoot);
+    }
+    if context.current.is_some_and(|cwd| cwd.starts_with(canonical)) {
+        return Some(State::Current);
+    }
+    None
+}
+
+/// Whether the worktree's `HEAD` is merged, and whether local ancestry alone proved it.
+fn hosted_proof(entry: &Entry, context: &JudgeContext<'_>) -> Result<(github::Hosted, bool), String> {
+    let ancestor = context
+        .merge_proof
+        .default_sha
+        .map_or(Ok(false), |sha| is_ancestor(context.main, &entry.head, sha));
+    let locally_merged = ancestor.as_ref().is_ok_and(|merged| *merged);
+    let proof = match ancestor {
+        Ok(true) => Ok(github::Hosted::Merged),
+        Ok(false) => (context.merge_proof.hosted_merge)(&entry.head, entry.branch.as_deref()),
+        Err(message) => Err(message),
+    };
+    proof.map(|hosted| (hosted, locally_merged))
+}
+
+/// The state of a worktree that has passed every check and is about to be removed.
+fn removable_state(options: WorktreeOptions, merged: bool, discarded: usize) -> State {
+    if options.aggressive {
+        State::Discarded
+    } else if merged {
+        State::Merged { discarded }
+    } else {
+        State::Stale { discarded }
+    }
+}
+
+fn judge(entry: &Entry, context: &JudgeContext<'_>) -> Worktree {
+    let JudgeContext {
+        main,
+        roots,
+        options,
+        removal_lock,
+        ..
+    } = *context;
     // git reports a worktree path in its own spelling; canonicalize it to the form the roots and
     // the rest of voom compare (on Windows that is the verbatim `\\?\` form). A path that no
     // longer exists — an already-removed worktree — falls back to what git said.
@@ -363,23 +422,8 @@ fn judge(
         state: State::NotMerged,
         outcome: None,
     };
-    if entry.locked {
-        worktree.state = State::Locked;
-        return worktree;
-    }
-    if !entry.path.is_dir() {
-        worktree.state = State::Missing;
-        return worktree;
-    }
-    if !roots
-        .iter()
-        .any(|root| canonical != *root && canonical.starts_with(root))
-    {
-        worktree.state = State::OutsideRoot;
-        return worktree;
-    }
-    if current.is_some_and(|cwd| cwd.starts_with(&canonical)) {
-        worktree.state = State::Current;
+    if let Some(state) = preliminary_state(entry, &canonical, context) {
+        worktree.state = state;
         return worktree;
     }
     let guard = match removal_guard(roots, &entry.path) {
@@ -389,17 +433,8 @@ fn judge(
             return worktree;
         }
     };
-    let ancestor = merge_proof
-        .default_sha
-        .map_or(Ok(false), |sha| is_ancestor(main, &entry.head, sha));
-    let locally_merged = ancestor.as_ref().is_ok_and(|merged| *merged);
-    let proof = match ancestor {
-        Ok(true) => Ok(github::Hosted::Merged),
-        Ok(false) => (merge_proof.hosted_merge)(&entry.head, entry.branch.as_deref()),
-        Err(message) => Err(message),
-    };
-    let hosted = match proof {
-        Ok(hosted) => hosted,
+    let (hosted, locally_merged) = match hosted_proof(entry, context) {
+        Ok(proof) => proof,
         Err(message) => {
             worktree.state = State::Unchecked(message);
             return worktree;
@@ -430,13 +465,7 @@ fn judge(
         worktree.state = State::Unchecked("worktree HEAD or path changed while checking it".to_owned());
         return worktree;
     }
-    worktree.state = if options.aggressive {
-        State::Discarded
-    } else if merged {
-        State::Merged { discarded }
-    } else {
-        State::Stale { discarded }
-    };
+    worktree.state = removable_state(options, merged, discarded);
     worktree.outcome = Some(if options.dry_run {
         Outcome::WouldRemove
     } else {

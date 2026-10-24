@@ -143,6 +143,71 @@ pub fn should_watch(path: &Path) -> bool {
     !(is_dependency_dir(name) || vcs)
 }
 
+/// Seeds `tracker` with everything a dry run currently finds reclaimable.
+fn seed_baseline(options: &RunOptions, tracker: &mut QuietTracker) -> Result<()> {
+    // The baseline pass *seeds* the tracker; it does not remove anything.
+    //
+    // At startup voom has no history for any subtree, so an artifact being written to right now
+    // is indistinguishable from one abandoned last week. A baseline that removed immediately
+    // would walk straight past the quiet period — which ADR 0008 makes the rail that stops
+    // watch mode deleting an in-progress build — and `voom watch` started during a build would
+    // take that build's output. Seeding costs one quiet period before the first removal, and
+    // buys the rail applying to every artifact rather than only to the ones that appear later.
+    let baseline = run(&RunOptions {
+        dry_run: true,
+        ..options.clone()
+    })?;
+    let started = Instant::now();
+    for entry in &baseline.entries {
+        tracker.touch(&entry.path, started);
+    }
+    Ok(())
+}
+
+/// Registers every root with `watch`, failing with all the roots that could not be watched.
+fn register_roots(roots: &[PathBuf], mut watch: impl FnMut(&Path) -> notify::Result<()>) -> Result<()> {
+    let mut unwatched = Vec::new();
+    for root in roots {
+        if let Err(error) = watch(root) {
+            unwatched.push(format!("{}: {error}", root.display()));
+        }
+    }
+    if !unwatched.is_empty() {
+        return Err(Error::Watch {
+            reason: format!("could not watch {}", unwatched.join("; ")),
+        });
+    }
+    Ok(())
+}
+
+/// Removes the candidates, which are exactly the artifacts that have gone quiet, and forgets
+/// the ones that were reclaimed.
+fn remove_quiet(
+    candidates: &mut RunResult,
+    roots: &[PathBuf],
+    options: &RunOptions,
+    tracker: &mut QuietTracker,
+) -> Result<()> {
+    // Remove exactly the artifacts that have gone quiet — not everything the sweep found.
+    // This is the one-shot deleter, so every rail applies unchanged; only the trigger and
+    // the scoping differ.
+    let guard = Guard::new(roots, options.one_file_system)?;
+    // Watch never forces. It already re-runs on every quiet period, so the retry is
+    // inherent — and repeatedly repairing permissions unattended, in a loop, against a tree
+    // something is actively building is the last place that belongs.
+    let removal = Removal {
+        dry_run: options.dry_run,
+        force: false,
+    };
+    for entry in &mut candidates.entries {
+        entry.outcome = guard.remove(&entry.path, entry.bytes, removal);
+        if entry.outcome.is_reclaimed() {
+            tracker.forget(&entry.path);
+        }
+    }
+    Ok(())
+}
+
 /// Runs the watcher until interrupted.
 ///
 /// A full scan establishes the baseline at startup; after that only the subtrees that
@@ -161,39 +226,14 @@ pub fn watch(
     let roots = options.roots.clone();
     let mut tracker = QuietTracker::new();
 
-    // The baseline pass *seeds* the tracker; it does not remove anything.
-    //
-    // At startup voom has no history for any subtree, so an artifact being written to right now
-    // is indistinguishable from one abandoned last week. A baseline that removed immediately
-    // would walk straight past the quiet period — which ADR 0008 makes the rail that stops
-    // watch mode deleting an in-progress build — and `voom watch` started during a build would
-    // take that build's output. Seeding costs one quiet period before the first removal, and
-    // buys the rail applying to every artifact rather than only to the ones that appear later.
-    let baseline = run(&RunOptions {
-        dry_run: true,
-        ..options.clone()
-    })?;
-    let started = Instant::now();
-    for entry in &baseline.entries {
-        tracker.touch(&entry.path, started);
-    }
+    seed_baseline(options, &mut tracker)?;
 
     let (sender, receiver) = std::sync::mpsc::channel();
     let mut debouncer = new_debouncer(watch_options.debounce, None, sender).map_err(|error| Error::Watch {
         reason: error.to_string(),
     })?;
 
-    let mut unwatched = Vec::new();
-    for root in &roots {
-        if let Err(error) = debouncer.watch(root, RecursiveMode::Recursive) {
-            unwatched.push(format!("{}: {error}", root.display()));
-        }
-    }
-    if !unwatched.is_empty() {
-        return Err(Error::Watch {
-            reason: format!("could not watch {}", unwatched.join("; ")),
-        });
-    }
+    register_roots(&roots, |root| debouncer.watch(root, RecursiveMode::Recursive))?;
 
     // The loop wakes on events *and* on a timer. A subtree that has gone quiet by definition
     // stops producing events, so without the timer the quiet period could never be observed to
@@ -204,11 +244,9 @@ pub fn watch(
         match receiver.recv_timeout(tick) {
             Ok(Ok(events)) => {
                 let now = Instant::now();
-                for event in events {
-                    for path in &event.paths {
-                        if should_watch(path) {
-                            tracker.touch(path, now);
-                        }
+                for path in events.iter().flat_map(|event| &event.paths) {
+                    if should_watch(path) {
+                        tracker.touch(path, now);
                     }
                 }
             }
@@ -246,23 +284,7 @@ pub fn watch(
             continue;
         }
 
-        // Remove exactly the artifacts that have gone quiet — not everything the sweep found.
-        // This is the one-shot deleter, so every rail applies unchanged; only the trigger and
-        // the scoping differ.
-        let guard = Guard::new(&roots, options.one_file_system)?;
-        // Watch never forces. It already re-runs on every quiet period, so the retry is
-        // inherent — and repeatedly repairing permissions unattended, in a loop, against a tree
-        // something is actively building is the last place that belongs.
-        let removal = Removal {
-            dry_run: options.dry_run,
-            force: false,
-        };
-        for entry in &mut candidates.entries {
-            entry.outcome = guard.remove(&entry.path, entry.bytes, removal);
-            if entry.outcome.is_reclaimed() {
-                tracker.forget(&entry.path);
-            }
-        }
+        remove_quiet(&mut candidates, &roots, options, &mut tracker)?;
 
         candidates.dry_run = options.dry_run;
         candidates.skips.clear();
