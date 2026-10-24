@@ -10,8 +10,7 @@
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use rayon::prelude::*;
@@ -26,7 +25,9 @@ use crate::report::{Entry, RunResult, Timings};
 use crate::scan::{PatternSet, ScanOptions, Skipped, scan};
 use crate::size::Measured;
 
+mod select;
 mod tracked;
+use select::select;
 use tracked::without_tracked;
 
 /// Everything one invocation needs.
@@ -224,19 +225,7 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
     let roots = std::slice::from_ref(&root.to_path_buf()).to_vec();
     let guard = Guard::new(&roots, options.one_file_system)?;
 
-    let scan_options = ScanOptions {
-        jobs: options.jobs,
-        one_file_system: options.one_file_system,
-        collect_skips: options.verbose,
-        exclude: PatternSet::new(at_root.exclude.clone())?,
-        include: PatternSet::new(at_root.include.clone())?,
-        caches: CacheRoots::for_root(root, &at_root.clean_caches),
-        // Always: the walk passes them anyway, and merged-worktree removal (opt-in) needs them
-        // whether or not git housekeeping is on.
-        collect_repositories: true,
-        clean_tagged: at_root.clean_tagged,
-        guide_repositories: true,
-    };
+    let scan_options = scan_options_for(root, options, &at_root)?;
     // Progress goes to stderr so it never contaminates piped stdout, and only when stderr is a
     // terminal — a redirected run gets nothing.
     let spinner = start_progress(options.progress, root);
@@ -275,31 +264,7 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
             let progress = (!options.dry_run).then(|| removal_progress(options.progress)).flatten();
             let entries = remove_all(selected.to_remove, &guard, removal);
 
-            // A covered artifact is only *covered* if the removal that was supposed to take it actually
-            // happened. Deciding that before the rails run would let a refused `vendor/` leave its
-            // `vendor/bundle/` neither removed nor reported as removable, on every subsequent run —
-            // a skip line asserting something that never took place. Nesting is rare, so this second
-            // pass is almost always empty.
-            //
-            // `PartiallyRemoved` counts as covered even though it is not `is_reclaimed`: the outer
-            // removal *ran*, its `freed` already counts whatever it took out of the inner artifact, and
-            // retrying on the pre-removal size would report those bytes a second time. Only a removal
-            // that never happened at all sends the inner one back.
-            let ran: std::collections::HashSet<&Path> = entries
-                .iter()
-                .filter(|entry| {
-                    entry.outcome.is_reclaimed() || matches!(entry.outcome, Outcome::PartiallyRemoved { .. })
-                })
-                .map(|entry| entry.path.as_path())
-                .collect();
-            let mut uncovered = Vec::new();
-            for (finding, measured, by) in selected.covered {
-                if ran.contains(by.as_path()) {
-                    note(collected, options.verbose, finding.path, SkipReason::Covered { by });
-                } else {
-                    uncovered.push((finding, measured));
-                }
-            }
+            let uncovered = settle_covered(selected.covered, &entries, options, collected);
             let retried = remove_all(uncovered, &guard, removal);
             if let Some(progress) = progress {
                 progress.finish_and_clear();
@@ -321,6 +286,57 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
     collected.entries.extend(entries);
     collected.entries.extend(retried);
     Ok(())
+}
+
+/// The walk's options for one scan root, from the run's flags and the configuration at the root.
+fn scan_options_for(root: &Path, options: &RunOptions, at_root: &Resolved) -> Result<ScanOptions> {
+    Ok(ScanOptions {
+        jobs: options.jobs,
+        one_file_system: options.one_file_system,
+        collect_skips: options.verbose,
+        exclude: PatternSet::new(at_root.exclude.clone())?,
+        include: PatternSet::new(at_root.include.clone())?,
+        caches: CacheRoots::for_root(root, &at_root.clean_caches),
+        // Always: the walk passes them anyway, and merged-worktree removal (opt-in) needs them
+        // whether or not git housekeeping is on.
+        collect_repositories: true,
+        clean_tagged: at_root.clean_tagged,
+        guide_repositories: true,
+    })
+}
+
+/// Splits the artifacts an outer removal was expected to take into those it did take, which are
+/// reported as covered, and those that must be removed after all, which are returned.
+fn settle_covered(
+    covered: Vec<(Finding, Option<Measured>, PathBuf)>,
+    entries: &[Entry],
+    options: &RunOptions,
+    collected: &mut Collected,
+) -> Vec<(Finding, Option<Measured>)> {
+    // A covered artifact is only *covered* if the removal that was supposed to take it actually
+    // happened. Deciding that before the rails run would let a refused `vendor/` leave its
+    // `vendor/bundle/` neither removed nor reported as removable, on every subsequent run —
+    // a skip line asserting something that never took place. Nesting is rare, so this second
+    // pass is almost always empty.
+    //
+    // `PartiallyRemoved` counts as covered even though it is not `is_reclaimed`: the outer
+    // removal *ran*, its `freed` already counts whatever it took out of the inner artifact, and
+    // retrying on the pre-removal size would report those bytes a second time. Only a removal
+    // that never happened at all sends the inner one back.
+    let ran: std::collections::HashSet<&Path> = entries
+        .iter()
+        .filter(|entry| entry.outcome.is_reclaimed() || matches!(entry.outcome, Outcome::PartiallyRemoved { .. }))
+        .map(|entry| entry.path.as_path())
+        .collect();
+    let mut uncovered = Vec::new();
+    for (finding, measured, by) in covered {
+        if ran.contains(by.as_path()) {
+            note(collected, options.verbose, finding.path, SkipReason::Covered { by });
+        } else {
+            uncovered.push((finding, measured));
+        }
+    }
+    uncovered
 }
 
 /// Runs git's own housekeeping over the repositories the walk passed.
@@ -376,121 +392,6 @@ fn selection_for(options: &RunOptions) -> Result<Selection> {
         return Err(Error::UnknownEcosystem { name: name.clone() });
     }
     Ok(selection.permissive())
-}
-
-/// Decides which findings are actually removed, and measures the ones that survive.
-///
-/// The configuration in effect for an artifact is the one resolved at its own directory, so a
-/// repository's committed `voom.toml` governs its own subtree during a `$HOME`-wide run.
-///
-/// # Errors
-///
-/// [`Error::Config`] if a `voom.toml` below the root is missing, unreadable, or invalid.
-fn select(
-    root: &Path,
-    resolver: &Resolver,
-    findings: Vec<Finding>,
-    options: &RunOptions,
-    collected: &mut Collected,
-) -> Result<Selected> {
-    let now = SystemTime::now();
-    let started = Instant::now();
-    let mut survivors: Vec<(Finding, Arc<Resolved>)> = Vec::with_capacity(findings.len());
-    for finding in findings {
-        let dir = finding.path.parent().unwrap_or(root);
-        let config = resolver.for_dir(dir)?;
-
-        // An `include` is the user naming a path outright, so ecosystem selection has nothing
-        // to say about it — there is no ecosystem. Keep policies still apply: they are about
-        // whether *now* is the moment to remove something, not about what it is.
-        if let Some(id) = finding.artifact()
-            && !config.is_enabled(&finding.path, id)
-        {
-            let reason = not_enabled(id);
-            note(collected, options.verbose, finding.path, reason);
-            continue;
-        }
-
-        // `min_age` is answered from the artifact's own timestamp, so an artifact held by age
-        // costs one `stat` instead of a recursive size walk.
-        let keep = config.keep_for(&finding.path, finding.ecosystem());
-        let held = std::fs::symlink_metadata(&finding.path)
-            .and_then(|metadata| metadata.modified())
-            .ok()
-            .and_then(|modified| keep.holds_by_age(modified, now));
-        match held {
-            Some(reason) => note(collected, options.verbose, finding.path, reason),
-            None => survivors.push((finding, config)),
-        }
-    }
-
-    collected.policy += started.elapsed();
-
-    // A size policy needs the bytes before deciding. Otherwise removal already counts every
-    // unlinked entry, and walking the same cache first just delays reclaiming its space.
-    let needs_size = |finding: &Finding, config: &Resolved| {
-        let keep = config.keep_for(&finding.path, finding.ecosystem());
-        options.dry_run || keep.min_size.is_some() || keep.max_size.is_some()
-    };
-    let sizes: Vec<Option<Measured>> = if survivors.iter().any(|(finding, config)| needs_size(finding, config)) {
-        let started = Instant::now();
-        let sizes = survivors
-            .par_iter()
-            .map(|(finding, config)| needs_size(finding, config).then(|| crate::size::measure_fully(&finding.path)))
-            .collect();
-        collected.size += started.elapsed();
-        sizes
-    } else {
-        vec![None; survivors.len()]
-    };
-
-    // The `min_size` and `max_size` rules are answered from the sizes just measured, so this
-    // loop is charged to the policy stage rather than to sizing.
-    let started = Instant::now();
-    let mut to_remove: Vec<(Finding, Option<Measured>)> = Vec::with_capacity(survivors.len());
-    for ((finding, config), measured) in survivors.into_iter().zip(sizes) {
-        let keep = config.keep_for(&finding.path, finding.ecosystem());
-        // Against the bytes that could be read. An artifact holding an unreadable directory
-        // measures small, so a `min_size` can keep something far larger than the threshold —
-        // which is why the count travels with the number instead of being discarded here.
-        match measured.and_then(|size| keep.holds_by_size(size.bytes)) {
-            Some(reason) => note(collected, options.verbose, finding.path, reason),
-            None => to_remove.push((finding, measured)),
-        }
-    }
-
-    // An artifact nested inside another artifact that is also being removed is redundant: the
-    // outer removal takes it, so removing both would count its bytes twice in the report and
-    // then refuse the second as `Vanished`. Only the opt-in dependency artifacts can produce
-    // the nesting — the walker prunes at every other match — but the check is general, because
-    // the invariant it defends is.
-    //
-    // Sorted, one path of state: `Path`'s ordering is component-wise, so everything under a
-    // kept path sorts immediately after it and before anything that is not under it. Comparing
-    // each candidate against the last one kept is therefore enough, and keeps this linear
-    // rather than quadratic on a sweep with thousands of artifacts.
-    to_remove.sort_by(|(left, _), (right, _)| left.path.cmp(&right.path));
-    let mut covering: Option<PathBuf> = None;
-    let mut covered = Vec::new();
-    to_remove.retain(|(finding, measured)| {
-        if let Some(outer) = covering.as_ref().filter(|outer| finding.path.starts_with(outer)) {
-            covered.push((finding.clone(), *measured, outer.clone()));
-            return false;
-        }
-        covering = Some(finding.path.clone());
-        true
-    });
-    collected.policy += started.elapsed();
-
-    Ok(Selected { to_remove, covered })
-}
-
-/// What survived the policy stage: what to remove, and what something else is expected to take.
-struct Selected {
-    to_remove: Vec<(Finding, Option<Measured>)>,
-    /// Each with the artifact expected to cover it. Held back rather than decided here, because
-    /// "already inside X" is only true once X has actually been removed.
-    covered: Vec<(Finding, Option<Measured>, PathBuf)>,
 }
 
 /// Removes each artifact, in parallel, recording an outcome per artifact.
