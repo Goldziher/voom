@@ -9,6 +9,64 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-26
+
+### Changed
+
+- **A real run detaches instead of unlinking.** Once every rail has passed, an artifact is renamed
+  into voom's trash (`voom/trash` under the platform cache directory, or `VOOM_TRASH_DIR`) in one
+  `rename`, and a background reaper started when the run ends frees the trash at low priority. A
+  sweep of Bazel output bases and package caches that kept its user waiting 5,360 seconds now
+  returns once the walk is done. Detached artifacts are reported `detached`, without a size; the
+  reaper counts what it frees, and the next run and `voom reap` report it. `--wait` (or
+  `VOOM_WAIT=1`) keeps the in-place removal; an artifact on another filesystem than the trash is
+  still removed in place. The JSON totals gain `detached`. See ADR 0020.
+- **Git work trees on APFS are walked from their index.** A tracked directory whose link count and
+  modification time agree with the index holds nothing untracked and costs one `lstat` instead of
+  an `open` and a listing. Over 43 linked worktrees the scan went from 20.9 s to 5.9 s, and over a
+  home directory from 32 s to 15 s, with identical findings.
+- Long functions across the scanner, pipeline, configuration, classifier, Bazel, worktree, watch
+  and report modules are split into helpers, and the CLI and safety integration suites are split
+  into smaller files, clearing every `poly lint` quality warning.
+- Dependencies are refreshed; ai-rulez is pinned at 5.6.3, OpenCode agents get a
+  provider-qualified model, and the `poly` MCP server declares its package.
+
+### Added
+
+- **`voom reap`** frees whatever earlier runs detached, waiting first for a background reaper, and
+  says what reapers freed.
+
+### Fixed
+
+- **A sweep no longer removes a directory its repository tracks.** A `dist/` holding a committed
+  icon sprite sat beside a `package.json`, so the marker proved it, and every checkout of the
+  repository was left with deleted tracked files. An inferred artifact holding a tracked file is
+  now refused (`tracked_by_git`).
+- The cache-cleanup benchmark measures in-place removal (`VOOM_WAIT=1`) now that a run detaches.
+- The npm wrapper no longer returns a value from a promise executor, and the PyPI wrapper and
+  benchmark write their messages without `print`.
+
+## [0.12.0] - 2026-10-18
+
+### Added
+
+- **`--aggressive`** enables every catalog artifact, dependencies, caches, permission repair and
+  unused Docker cleanup, and removes eligible worktrees without an age limit — discarding
+  uncommitted and ignored files — plus dangling checkouts whose git administration is gone.
+  Detached commits are retained under `refs/voom/aggressive-worktrees/`. See ADR 0018.
+
+### Changed
+
+- **Cache traversal and deletion are faster.** The removal pool defaults to eight workers on Apple
+  platforms, small directories are unlinked in one serial batch there, single-child prefixes no
+  longer spend the parallel recursion budget, and a full Bazel download-cache clear removes and
+  counts in one pass. `task bench` compares binaries against native `rm`. See ADR 0019.
+
+### Fixed
+
+- CI validates the Windows test leg and generation from a clean checkout, and governance
+  validation follows the project lock.
+
 ## [0.11.3] - 2026-10-18
 
 ### Fixed
@@ -830,11 +888,29 @@ nothing; this is the tool.
 - Size accounting sums allocated blocks, so on a copy-on-write filesystem such as APFS the bytes
   reported can exceed the space actually freed where files are shared between clones.
 
-[Unreleased]: https://github.com/Goldziher/voom/compare/v0.11.3...HEAD
+[Unreleased]: https://github.com/Goldziher/voom/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/Goldziher/voom/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/Goldziher/voom/compare/v0.11.3...v0.12.0
 [0.11.3]: https://github.com/Goldziher/voom/compare/v0.11.2...v0.11.3
 [0.11.2]: https://github.com/Goldziher/voom/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/Goldziher/voom/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/Goldziher/voom/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Goldziher/voom/compare/v0.9.1...v0.10.0
+[0.9.1]: https://github.com/Goldziher/voom/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/Goldziher/voom/compare/v0.8.1...v0.9.0
+[0.8.1]: https://github.com/Goldziher/voom/compare/v0.8.0...v0.8.1
+[0.8.0]: https://github.com/Goldziher/voom/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/Goldziher/voom/compare/v0.6.1...v0.7.0
+[0.6.1]: https://github.com/Goldziher/voom/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/Goldziher/voom/compare/v0.5.0...v0.6.0
+[0.4.5]: https://github.com/Goldziher/voom/compare/v0.4.4...v0.4.5
+[0.4.4]: https://github.com/Goldziher/voom/compare/v0.4.3...v0.4.4
+[0.4.3]: https://github.com/Goldziher/voom/compare/v0.4.2...v0.4.3
+[0.4.2]: https://github.com/Goldziher/voom/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/Goldziher/voom/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/Goldziher/voom/compare/v0.3.2...v0.4.0
+[0.3.2]: https://github.com/Goldziher/voom/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/Goldziher/voom/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/Goldziher/voom/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Goldziher/voom/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Goldziher/voom/releases/tag/v0.1.0
