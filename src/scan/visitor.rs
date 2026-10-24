@@ -102,6 +102,50 @@ impl Visitor<'_> {
             return WalkState::Skip;
         }
 
+        if let Some(state) = self.decide_by_configuration(path, sender) {
+            return state;
+        }
+
+        if let Some(state) = self.decide_by_cache(path, is_dir, sender) {
+            return state;
+        }
+
+        // Git housekeeping discovers repositories here, at the moment the walker meets `.git`
+        // and is about to prune it: one name comparison, no syscall (ADR 0011). A second walk
+        // over `$HOME` to find the same directories would roughly double the run, which is the
+        // whole reason this is a line in the artifact walk rather than a pass of its own.
+        //
+        // It does not return: the prune below still refuses to descend into a `.git` directory,
+        // and a `.git` *file* — a linked worktree or a submodule — falls through to the
+        // classifier, which has nothing to say about it.
+        if self.options.collect_repositories
+            && let Some(work_tree) = crate::git::repository_at(name, path, is_symlink)
+        {
+            let _ = sender.send(Message::Repository(work_tree.to_path_buf()));
+        }
+
+        if let Some(state) = self.decide_by_name(name, path, is_dir, sender) {
+            return state;
+        }
+
+        if let Some(state) = self.decide_by_verdict(path, is_dir, is_symlink, sender) {
+            return state;
+        }
+
+        // A work tree is walked from its index instead (`super::guided`): one `lstat` here, so
+        // that its tracked directories cost one more each rather than an `open` and a listing.
+        if may_guide && self.guide && is_dir && super::guided::is_work_tree(path) {
+            let _ = sender.send(Message::Guide(path.to_path_buf()));
+            return WalkState::Skip;
+        }
+
+        WalkState::Continue
+    }
+
+    /// The user's own `exclude` and `include` patterns, which outrank every other rule here.
+    ///
+    /// `exclude` first, because ADR 0004 makes it absolute. `None` means neither pattern matched.
+    fn decide_by_configuration(&self, path: &Path, sender: &mpsc::Sender<Message>) -> Option<WalkState> {
         if let Some(pattern) = self.options.exclude.matched(path) {
             self.note_skip(
                 sender,
@@ -110,7 +154,7 @@ impl Visitor<'_> {
                     pattern: pattern.to_owned(),
                 },
             );
-            return WalkState::Skip;
+            return Some(WalkState::Skip);
         }
 
         // `include` outranks every prune below but never `exclude`, which ADR 0004 makes
@@ -130,9 +174,16 @@ impl Visitor<'_> {
                 },
             };
             let _ = sender.send(Message::Found(Box::new(finding)));
-            return WalkState::Skip;
+            return Some(WalkState::Skip);
         }
 
+        None
+    }
+
+    /// The tool-cache rules: a named cache the run asked for, then the blanket skip of cache roots.
+    ///
+    /// `None` means `path` is not a cache location and the decision continues.
+    fn decide_by_cache(&self, path: &Path, is_dir: bool, sender: &mpsc::Sender<Message>) -> Option<WalkState> {
         // A named cache is checked before the blanket skip below, so `--clean-caches=uv`
         // reaches `~/.cache/uv` without opening every cache location at once. The marker still
         // has to prove it (ADR 0012): the id says which directory to look at, never that it may
@@ -141,7 +192,7 @@ impl Visitor<'_> {
             self.visit_named_cache(path, cache, true, sender);
             // Skipped either way: a cache is an indivisible unit like any other artifact, and
             // one that failed its marker check is still somewhere a walk must not wander.
-            return WalkState::Skip;
+            return Some(WalkState::Skip);
         }
 
         // After `exclude`, which ADR 0004 makes absolute, and before anything that could
@@ -155,32 +206,44 @@ impl Visitor<'_> {
                 self.visit_named_cache(cache_path, cache, false, sender);
             }
             self.note_skip(sender, path, SkipReason::ToolCache);
-            return WalkState::Skip;
+            return Some(WalkState::Skip);
         }
 
-        // Git housekeeping discovers repositories here, at the moment the walker meets `.git`
-        // and is about to prune it: one name comparison, no syscall (ADR 0011). A second walk
-        // over `$HOME` to find the same directories would roughly double the run, which is the
-        // whole reason this is a line in the artifact walk rather than a pass of its own.
-        //
-        // It does not return: the prune below still refuses to descend into a `.git` directory,
-        // and a `.git` *file* — a linked worktree or a submodule — falls through to the
-        // classifier, which has nothing to say about it.
-        if self.options.collect_repositories
-            && let Some(work_tree) = crate::git::repository_at(name, path, is_symlink)
-        {
-            let _ = sender.send(Message::Repository(work_tree.to_path_buf()));
-        }
+        None
+    }
 
+    /// Directories pruned by name alone: never-descended ones, then dependency directories.
+    ///
+    /// `None` means the name carries no prune and the decision continues.
+    fn decide_by_name(
+        &self,
+        name: &OsStr,
+        path: &Path,
+        is_dir: bool,
+        sender: &mpsc::Sender<Message>,
+    ) -> Option<WalkState> {
         if is_dir && is_never_descended(name) {
-            return WalkState::Skip;
+            return Some(WalkState::Skip);
         }
 
         if is_dir && is_dependency_dir(name) {
             self.visit_dependency_dir(name, path, sender);
-            return WalkState::Skip;
+            return Some(WalkState::Skip);
         }
 
+        None
+    }
+
+    /// Classifies `path` and reports what the classifier found.
+    ///
+    /// `Some(Skip)` when the entry is pruned, `None` when the walk goes on past it.
+    fn decide_by_verdict(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        is_symlink: bool,
+        sender: &mpsc::Sender<Message>,
+    ) -> Option<WalkState> {
         // A symlink is classified as though it were a directory so a symlinked `target/` is
         // *seen* rather than silently invisible. It can never become a deletion — the deletion
         // guard refuses to remove through a link (ADR 0006) — but it is reported as a finding
@@ -196,7 +259,7 @@ impl Visitor<'_> {
                 // make the report unreadable. A symlink is not descended for the older reason:
                 // the walker does not follow links at all.
                 if is_dir || is_symlink {
-                    return WalkState::Skip;
+                    return Some(WalkState::Skip);
                 }
             }
             // An `Inside` anchor that found no marker is the one skip worth pruning on. The
@@ -212,7 +275,7 @@ impl Visitor<'_> {
                 // more specific — it names an ecosystem and an artifact a reader can act on —
                 // so `target/` beside a `Cargo.toml` stays Rust's even though Cargo also tags it.
                 if self.take_if_tagged(path, is_dir, sender) {
-                    return WalkState::Skip;
+                    return Some(WalkState::Skip);
                 }
                 // ~keep The `NoInnerMarker` prune above is a measured 6x win, and `--clean-tagged`
                 // has to give it up. The prune's premise is that an unproven self-declaring cache
@@ -225,24 +288,17 @@ impl Visitor<'_> {
                 let prune = is_dir && !self.options.clean_tagged && matches!(reason, SkipReason::NoInnerMarker { .. });
                 self.note_skip(sender, path, reason);
                 if prune {
-                    return WalkState::Skip;
+                    return Some(WalkState::Skip);
                 }
             }
             Verdict::NotACandidate => {
                 if self.take_if_tagged(path, is_dir, sender) {
-                    return WalkState::Skip;
+                    return Some(WalkState::Skip);
                 }
             }
         }
 
-        // A work tree is walked from its index instead (`super::guided`): one `lstat` here, so
-        // that its tracked directories cost one more each rather than an `open` and a listing.
-        if may_guide && self.guide && is_dir && super::guided::is_work_tree(path) {
-            let _ = sender.send(Message::Guide(path.to_path_buf()));
-            return WalkState::Skip;
-        }
-
-        WalkState::Continue
+        None
     }
 
     /// Claims `path` when the run asked for tagged directories and this one declares itself.
