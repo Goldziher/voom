@@ -484,20 +484,22 @@ fn judge_with(main: &Path, path: &Path, dry_run: bool, proof: &Result<github::Ho
     let (_, sha) = default_branch(main).unwrap();
     judge(
         entry,
-        main,
-        MergeProof {
-            default_sha: Some(&sha),
-            hosted_merge: &|_, _| proof.clone(),
+        &JudgeContext {
+            main,
+            merge_proof: MergeProof {
+                default_sha: Some(&sha),
+                hosted_merge: &|_, _| proof.clone(),
+            },
+            roots: &[main.parent().unwrap().to_path_buf()],
+            current: None,
+            options: WorktreeOptions {
+                dry_run,
+                stale_after: None,
+                github_merged: true,
+                aggressive: false,
+            },
+            removal_lock: &std::sync::Mutex::new(()),
         },
-        &[main.parent().unwrap().to_path_buf()],
-        None,
-        WorktreeOptions {
-            dry_run,
-            stale_after: None,
-            github_merged: true,
-            aggressive: false,
-        },
-        &std::sync::Mutex::new(()),
     )
 }
 
@@ -590,24 +592,26 @@ fn should_refuse_a_head_changed_while_hosted_merge_proof_was_checked() {
         .expect("the canonical worktree path is listed");
     let worktree = judge(
         entry,
-        &main,
-        MergeProof {
-            default_sha: None,
-            hosted_merge: &|_, _| {
-                std::fs::write(path.join("new.txt"), "new work").unwrap();
-                run(&path, &["add", "new.txt"]);
-                run(&path, &["commit", "-q", "-m", "new work"]);
-                Ok(github::Hosted::Merged)
+        &JudgeContext {
+            main: &main,
+            merge_proof: MergeProof {
+                default_sha: None,
+                hosted_merge: &|_, _| {
+                    std::fs::write(path.join("new.txt"), "new work").unwrap();
+                    run(&path, &["add", "new.txt"]);
+                    run(&path, &["commit", "-q", "-m", "new work"]);
+                    Ok(github::Hosted::Merged)
+                },
             },
+            roots: &[main.parent().unwrap().to_path_buf()],
+            current: None,
+            options: WorktreeOptions {
+                github_merged: true,
+                aggressive: false,
+                ..WorktreeOptions::default()
+            },
+            removal_lock: &std::sync::Mutex::new(()),
         },
-        &[main.parent().unwrap().to_path_buf()],
-        None,
-        WorktreeOptions {
-            github_merged: true,
-            aggressive: false,
-            ..WorktreeOptions::default()
-        },
-        &std::sync::Mutex::new(()),
     );
     assert!(matches!(worktree.state, State::Unchecked(_)));
     assert!(path.exists());

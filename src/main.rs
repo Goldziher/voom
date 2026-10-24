@@ -279,21 +279,7 @@ fn prune_stages(cli: &Cli, options: &voom::run::RunOptions) -> anyhow::Result<i3
         Some(joined) => Some(joined.map_err(|_| anyhow::anyhow!("the bazel housekeeping panicked"))??),
         None => None,
     };
-    // A docker problem is a note and nothing more; it must not fail the sweep. A daemon that is
-    // simply down is a `Skip` inside the result and is rendered with the docker block; a genuine
-    // error or a panic — for instance resolving the user config — is said aloud rather than
-    // dropped, so a stage that never ran is never silent.
-    let docker = match docker {
-        Ok(Ok(found)) => found,
-        Ok(Err(error)) => {
-            eprintln!("voom: docker: {error}");
-            None
-        }
-        Err(_) => {
-            eprintln!("voom: docker: the docker stage panicked");
-            None
-        }
-    };
+    let docker = docker_found(docker);
     let json = matches!(cli.prune.format, voom::cli::Format::Json);
 
     // Human output streams each stage as it finishes; JSON waits for every stage so that stdout
@@ -333,16 +319,7 @@ fn prune_stages(cli: &Cli, options: &voom::run::RunOptions) -> anyhow::Result<i3
     }
 
     if json {
-        let mut document = voom::report::json::document(&result);
-        document["bazel"] = bazel.as_ref().map_or(serde_json::Value::Null, voom::bazel::document);
-        document["docker"] = docker.as_ref().map_or(serde_json::Value::Null, voom::docker::document);
-        document["worktrees"] = worktrees
-            .as_ref()
-            .map_or(serde_json::Value::Null, voom::worktrees::document);
-        let mut out = anstream::stdout().lock();
-        serde_json::to_writer_pretty(&mut out, &document).context("writing the report")?;
-        writeln!(out)?;
-        out.flush().context("flushing the report")?;
+        write_json_document(&result, bazel.as_ref(), docker.as_ref(), worktrees.as_ref())?;
     } else {
         report_bazel(bazel.as_ref())?;
         if let Some(docker) = &docker {
@@ -350,17 +327,62 @@ fn prune_stages(cli: &Cli, options: &voom::run::RunOptions) -> anyhow::Result<i3
         }
     }
 
+    Ok(first_failure(&result, cli, worktrees.as_ref(), bazel.as_ref()))
+}
+
+/// The docker stage's finding, with its failure reported on stderr rather than propagated.
+fn docker_found(
+    docker: std::thread::Result<anyhow::Result<Option<voom::docker::DockerPruneResult>>>,
+) -> Option<voom::docker::DockerPruneResult> {
+    // A docker problem is a note and nothing more; it must not fail the sweep. A daemon that is
+    // simply down is a `Skip` inside the result and is rendered with the docker block; a genuine
+    // error or a panic — for instance resolving the user config — is said aloud rather than
+    // dropped, so a stage that never ran is never silent.
+    match docker {
+        Ok(Ok(found)) => found,
+        Ok(Err(error)) => {
+            eprintln!("voom: docker: {error}");
+            None
+        }
+        Err(_) => {
+            eprintln!("voom: docker: the docker stage panicked");
+            None
+        }
+    }
+}
+
+/// Writes the one JSON document that holds every stage.
+fn write_json_document(
+    result: &voom::report::RunResult,
+    bazel: Option<&voom::bazel::BazelPruneResult>,
+    docker: Option<&voom::docker::DockerPruneResult>,
+    worktrees: Option<&voom::worktrees::WorktreePruneResult>,
+) -> anyhow::Result<()> {
+    let mut document = voom::report::json::document(result);
+    document["bazel"] = bazel.map_or(serde_json::Value::Null, voom::bazel::document);
+    document["docker"] = docker.map_or(serde_json::Value::Null, voom::docker::document);
+    document["worktrees"] = worktrees.map_or(serde_json::Value::Null, voom::worktrees::document);
+    let mut out = anstream::stdout().lock();
+    serde_json::to_writer_pretty(&mut out, &document).context("writing the report")?;
+    writeln!(out)?;
+    out.flush().context("flushing the report")?;
+    Ok(())
+}
+
+/// The first non-success exit code among the sweep, the worktrees and Bazel.
+fn first_failure(
+    result: &voom::report::RunResult,
+    cli: &Cli,
+    worktrees: Option<&voom::worktrees::WorktreePruneResult>,
+    bazel: Option<&voom::bazel::BazelPruneResult>,
+) -> i32 {
     let code = result.exit_code(cli.prune.exit_code);
-    let worktree_code = worktrees
-        .as_ref()
-        .map_or(exit::SUCCESS, voom::worktrees::WorktreePruneResult::exit_code);
-    let bazel_code = bazel
-        .as_ref()
-        .map_or(exit::SUCCESS, voom::bazel::BazelPruneResult::exit_code);
-    Ok([code, worktree_code, bazel_code]
+    let worktree_code = worktrees.map_or(exit::SUCCESS, voom::worktrees::WorktreePruneResult::exit_code);
+    let bazel_code = bazel.map_or(exit::SUCCESS, voom::bazel::BazelPruneResult::exit_code);
+    [code, worktree_code, bazel_code]
         .into_iter()
         .find(|code| *code != exit::SUCCESS)
-        .unwrap_or(exit::SUCCESS))
+        .unwrap_or(exit::SUCCESS)
 }
 
 /// Docker's housekeeping, when `--docker` or `[docker] enabled` asked for it.
