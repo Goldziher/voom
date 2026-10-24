@@ -164,7 +164,31 @@ followed. Every target is canonicalized. An append-only denylist protects `/`, `
 Filesystem boundaries are not crossed (`--one-file-system=false` to opt out). A failure on one
 artifact is reported and isolated rather than aborting the run.
 
-**5. `--dry-run` is the real pipeline with the last step withheld**, not a simulation.
+**5. Nothing a repository tracks is removed.** A marker proves an ecosystem, not that nobody
+committed the directory beside it: a checked-in `dist/` is shaped exactly like a build's. Before
+anything the walk inferred is removed, the repository's index is asked whether it tracks a file
+inside, and if it does the artifact is refused — `holds files git tracks`. An `include` names a
+path outright and is not asked.
+
+**6. `--dry-run` is the real pipeline with the last step withheld**, not a simulation.
+
+### Detached removal
+
+A real run does not unlink anything while you wait. Once every rail has passed, each artifact is
+renamed into voom's trash — `voom/trash` in the platform cache directory, or `VOOM_TRASH_DIR` —
+in one `rename`, whatever it holds, and a background reaper started when the run ends frees the
+trash at low priority. The report says `detached` for these, without a size: the reaper counts
+the bytes as it frees them, and the next run, or `voom reap`, reports what it freed. An artifact
+on another filesystem than the trash, or one the trash sits inside, is removed in place.
+
+```bash
+voom ~                # returns once everything is detached
+voom reap             # wait for the reaper, free whatever is left, and say what it freed
+voom --wait ~         # unlink in place before exiting, as before (also VOOM_WAIT=1)
+```
+
+The reaper removes each trash entry through the same rails, rooted at the trash. A crash or a
+reboot leaves the trash for the next `voom reap`, or for the reaper the next run starts.
 
 Full reasoning in [ADR 0002](adrs/0002-marker-anchored-classification.md) and
 [ADR 0006](adrs/0006-deletion-semantics.md).
@@ -639,7 +663,15 @@ pre-commit:
 
 voom is I/O-bound, so the wins come from not walking things: it prunes matched artifacts, `.git/`,
 dependency directories and tool caches at the directory level rather than descending into them,
-and parallelizes sizing and removal separately. Removal defaults to a shared pool of eight
+and parallelizes sizing and removal separately. Removal is detached (see [Safety](#detached-removal)):
+a run renames each artifact into the trash and a background reaper unlinks it, so a sweep that
+used to wait an hour and a half on Bazel output bases and package caches returns in seconds.
+
+A git work tree on APFS is walked from its index rather than its directories. A tracked directory
+whose link count and modification time agree with what the index lists is clean — it holds
+nothing untracked — and costs one `lstat` instead of an `open` and a listing; only directories
+with untracked entries are listed. Over 43 linked worktrees of one large repository that took
+the scan from 21 s to 6 s. See [ADR 0020](adrs/0020-detached-removal-and-index-guided-walk.md). Removal defaults to a shared pool of eight
 workers on Apple platforms and sixteen elsewhere, subject to the file-descriptor limit.
 On Apple platforms, directories with fewer than 256 files use one serial batch to avoid
 scheduling many tiny tasks; larger flat directories use parallel 64-file batches across the

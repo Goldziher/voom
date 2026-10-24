@@ -99,9 +99,9 @@ pre-releases.
 
 ## AI governance
 
-Install ai-rulez 5.5.0 and Poly, then run `task governance:hooks`.
+Install ai-rulez 5.6.3 (or run it as `npx -y ai-rulez@5.6.3`) and Poly, then run `task governance:hooks`.
 Installing governance hooks requires Python 3.11 or newer. CI uses the reviewed
-5.5.0 source revision `b10177f2f04debf7f3528a02a9524a224b853617`.
+5.6.3 source revision `d4a0cbe4712319312104ba3f2a618ef55645ef9f`.
 
 Edit `.ai-rulez/` sources, then run `ai-rulez migrate okf --check`,
 `ai-rulez validate --strict --no-local`, `ai-rulez lock --content-only`, and

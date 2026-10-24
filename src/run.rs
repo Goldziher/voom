@@ -26,6 +26,9 @@ use crate::report::{Entry, RunResult, Timings};
 use crate::scan::{PatternSet, ScanOptions, Skipped, scan};
 use crate::size::Measured;
 
+mod tracked;
+use tracked::without_tracked;
+
 /// Everything one invocation needs.
 #[expect(
     clippy::struct_excessive_bools,
@@ -232,6 +235,7 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
         // whether or not git housekeeping is on.
         collect_repositories: true,
         clean_tagged: at_root.clean_tagged,
+        guide_repositories: true,
     };
     // Progress goes to stderr so it never contaminates piped stdout, and only when stderr is a
     // terminal — a redirected run gets nothing.
@@ -258,7 +262,8 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
     let (git, removed) = rayon::join(
         || prune_repositories(root, &scanned.repositories, &at_root, options),
         || -> Result<(Vec<Entry>, Vec<Entry>)> {
-            let selected = select(root, &resolver, scanned.findings, options, collected)?;
+            let mut selected = select(root, &resolver, scanned.findings, options, collected)?;
+            let tracked = without_tracked(&mut selected.to_remove, &scanned.repositories);
 
             // Removal is independent per artifact and embarrassingly parallel; a failure on one is
             // recorded and never aborts the run.
@@ -301,7 +306,7 @@ fn sweep(root: &Path, options: &RunOptions, collected: &mut Collected) -> Result
             }
             collected.delete += started.elapsed();
 
-            Ok((entries, retried))
+            Ok((entries.into_iter().chain(tracked).collect(), retried))
         },
     );
     if let Some((pruned, elapsed)) = git? {

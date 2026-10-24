@@ -22,8 +22,8 @@ your session, use its comms tools: check `room_list` + `inbox_read` and recent `
 on start (both return front-matter only — call `message_get` with an id to read a body), then
 `room_post {room, subject, body, reply_to?}` when you begin, finish, or hit a decision, and
 reply with `reply_to` to messages about your work. `agent_list` discovers peers, `dm_send`
-reaches one directly, and an orchestrator can drive named subagents via `as_agent`. See the
-`multi-agent-room` skill.
+reaches one directly, and an orchestrator can drive named subagents via `as_agent`. The basemind
+plugin's multi-agent room skill covers the pattern, where that plugin is installed.
 
 If it is not available — which is the normal case when only `poly` is configured in
 `.mcp.json` — coordinate through whatever the harness gives you: the subagent report you

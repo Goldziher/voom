@@ -33,6 +33,12 @@ pub enum Refusal {
     FilesystemBoundary,
     /// The path stopped existing between the walk and the removal.
     Vanished,
+    /// The directory holds files its git repository tracks.
+    ///
+    /// A marker proves the ecosystem, not that nobody committed the directory beside it: a
+    /// checked-in `dist/` is shaped exactly like a build's. Committed files are work someone
+    /// wrote, so the repository's index outranks the marker.
+    Tracked,
 }
 
 impl Refusal {
@@ -46,6 +52,7 @@ impl Refusal {
             Self::EscapesRoot => "escapes_root",
             Self::FilesystemBoundary => "filesystem_boundary",
             Self::Vanished => "vanished",
+            Self::Tracked => "tracked_by_git",
         }
     }
 }
@@ -64,6 +71,7 @@ impl std::fmt::Display for Refusal {
             Self::EscapesRoot => write!(f, "resolves outside the scan root"),
             Self::FilesystemBoundary => write!(f, "on a different filesystem than its scan root"),
             Self::Vanished => write!(f, "no longer exists"),
+            Self::Tracked => write!(f, "holds files git tracks"),
         }
     }
 }
@@ -260,6 +268,11 @@ impl std::fmt::Display for RemovalFailure {
 pub enum Outcome {
     /// It was removed.
     Removed,
+    /// It passed every rail and was moved out of its tree into voom's trash, in one `rename`.
+    ///
+    /// The space comes back when the background reaper frees the trash, which counts the bytes
+    /// as it goes; the run that detached it does not know them unless a policy measured first.
+    Detached,
     /// It passed every rail and would have been removed, but this was a dry run.
     WouldRemove,
     /// A rail refused it.
@@ -303,7 +316,7 @@ impl Outcome {
     /// quiet-period rule and is retried on the next pass rather than being dropped.
     #[must_use]
     pub fn is_reclaimed(&self) -> bool {
-        matches!(self, Self::Removed | Self::WouldRemove)
+        matches!(self, Self::Removed | Self::Detached | Self::WouldRemove)
     }
 }
 

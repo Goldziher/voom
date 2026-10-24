@@ -27,6 +27,7 @@ use crate::classify::{Classifier, Finding, SkipReason};
 /// that the opt-in artifacts declared for them (ADR 0001's amendment) can fire.
 pub const NEVER_DESCEND: &[&str] = &[".git", ".hg", ".svn"];
 
+mod guided;
 mod patterns;
 mod visitor;
 
@@ -65,6 +66,8 @@ pub struct ScanOptions {
     /// pruned — which is *less* work than the alternative, because a relocated build directory is
     /// otherwise descended in full and yields nothing but skips.
     pub clean_tagged: bool,
+    /// Whether to walk a git work tree from its index where the filesystem allows (`guided`).
+    pub guide_repositories: bool,
 }
 
 impl Default for ScanOptions {
@@ -78,6 +81,7 @@ impl Default for ScanOptions {
             caches: CacheRoots::default(),
             collect_repositories: false,
             clean_tagged: false,
+            guide_repositories: true,
         }
     }
 }
@@ -139,6 +143,8 @@ enum Message {
     SkippedCount,
     Failure(Box<WalkFailure>),
     Repository(PathBuf),
+    /// A work tree to walk from its index rather than its directories.
+    Guide(PathBuf),
 }
 
 /// Walks every root and classifies what it finds.
@@ -181,22 +187,48 @@ fn dedupe_findings(scan: &mut Scan, from: usize) {
 }
 
 /// Walks `start`, classifying against `root`, and appends what it finds to `scan`.
+///
+/// Work trees are handed to `guided`, which walks them from their index and returns the
+/// untracked directories still to walk; those are walked here in turn, until nothing is left.
 fn walk_into(start: &Path, root: &Path, classifier: &Classifier, options: &ScanOptions, scan: &mut Scan) {
-    let (sender, receiver) = mpsc::channel();
     let visitor = Visitor {
         root,
         classifier,
         options,
+        guide: options.guide_repositories && guided::supported(root),
     };
+    // A root that is itself a work tree is never offered to the visitor as an entry.
+    let mut work_trees = Vec::new();
+    let mut starts = vec![start.to_path_buf()];
+    if visitor.guide && start == root && guided::is_work_tree(start) {
+        work_trees = std::mem::take(&mut starts);
+    }
+    loop {
+        if !starts.is_empty() {
+            let (sender, receiver) = mpsc::channel();
+            let mut builder = WalkBuilder::new(&starts[0]);
+            for more in &starts[1..] {
+                builder.add(more);
+            }
+            configure(&mut builder, options).build_parallel().run(|| {
+                let sender = sender.clone();
+                Box::new(move |result| visitor.visit(result, &sender))
+            });
+            drop(sender);
+            collect(receiver, scan, &mut work_trees);
+        }
+        if work_trees.is_empty() {
+            return;
+        }
+        let (sender, receiver) = mpsc::channel();
+        starts = guided::walk(visitor, &std::mem::take(&mut work_trees), &sender);
+        drop(sender);
+        collect(receiver, scan, &mut work_trees);
+    }
+}
 
-    configure(&mut WalkBuilder::new(start), options)
-        .build_parallel()
-        .run(|| {
-            let sender = sender.clone();
-            Box::new(move |result| visitor.visit(result, &sender))
-        });
-
-    drop(sender);
+/// Folds every message a walk sent into `scan`, setting work trees aside for the guided walk.
+fn collect(receiver: mpsc::Receiver<Message>, scan: &mut Scan, work_trees: &mut Vec<PathBuf>) {
     for message in receiver {
         match message {
             Message::Found(finding) => scan.findings.push(*finding),
@@ -207,6 +239,7 @@ fn walk_into(start: &Path, root: &Path, classifier: &Classifier, options: &ScanO
             Message::SkippedCount => scan.skipped_count += 1,
             Message::Failure(failure) => scan.failures.push(*failure),
             Message::Repository(path) => scan.repositories.push(path),
+            Message::Guide(path) => work_trees.push(path),
         }
     }
 }

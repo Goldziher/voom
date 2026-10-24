@@ -100,6 +100,11 @@ fn row(job: &Job, dry_run: bool, remove: bool, base: Option<&Path>) -> Row {
             palette::removed(),
             Some(format!("quiet for {} days{}", days(*age), size_phrase(job.bytes))),
         ),
+        (JobState::Eligible { age }, Some(Outcome::Detached)) => (
+            "detached",
+            palette::removed(),
+            Some(format!("quiet for {} days; freeing in the background", days(*age))),
+        ),
         (JobState::Eligible { age }, Some(Outcome::WouldRemove)) => (
             if dry_run { "would remove" } else { "removed" },
             palette::would_remove(),
@@ -287,6 +292,7 @@ fn job_value(job: &Job) -> Value {
 fn outcome_code(outcome: &Outcome) -> &'static str {
     match outcome {
         Outcome::Removed => "removed",
+        Outcome::Detached => "detached",
         Outcome::WouldRemove => "would_remove",
         Outcome::Refused(_) => "refused",
         Outcome::Failed(_) => "failed",

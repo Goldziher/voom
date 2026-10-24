@@ -136,7 +136,7 @@ fn remove(checkout: &Path, expected: &Orphan, roots: &[PathBuf], dry_run: bool) 
     };
     let (outcome, bytes) = guard.reclaim(checkout, removal);
     let outcome = match outcome {
-        crate::delete::Outcome::Removed => Outcome::Removed,
+        crate::delete::Outcome::Removed | crate::delete::Outcome::Detached => Outcome::Removed,
         crate::delete::Outcome::WouldRemove => Outcome::WouldRemove,
         outcome => Outcome::Failed(format!(
             "removing dangling checkout {}: {outcome:?}",

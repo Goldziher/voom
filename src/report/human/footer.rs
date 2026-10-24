@@ -142,6 +142,16 @@ pub(super) fn write_footer(
         );
         writeln!(out, "{GUTTER}{}", text.style(palette::quiet()))?;
     }
+    if totals.detached > 0 {
+        // The headline counts these as reclaimed, and they are gone from the tree; the space is
+        // not back until the reaper has freed them, and that is the reader's to know.
+        let text = format!(
+            "{} {} detached into the trash — the space returns as the background reaper frees them (`voom reap` waits)",
+            totals.detached,
+            plural(totals.detached, "artifact"),
+        );
+        writeln!(out, "{GUTTER}{}", text.style(palette::quiet()))?;
+    }
     if totals.refused > 0 {
         let text = format!(
             "{} {} refused by a safety rail",

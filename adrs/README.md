@@ -28,6 +28,7 @@ which is the safety rule the rest of the tool is built around.
 | [0017](0017-docker-housekeeping.md) | Docker Housekeeping: Opt-In, Never a Container's State, and the Blocks Handed Back | Accepted |
 | [0018](0018-aggressive-cleanup.md) | Aggressive Cleanup: Explicitly Discard Rebuildable and Worktree Contents | Accepted |
 | [0019](0019-cache-deletion-concurrency.md) | Cache Deletion: Bound Metadata Contention and Preserve Deep Fan-Out | Accepted |
+| [0020](0020-detached-removal-and-index-guided-walk.md) | Detached Removal, the Tracked-Files Rail, and the Index-Guided Walk | Accepted |
 
 ## Conventions
 

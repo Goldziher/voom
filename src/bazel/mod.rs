@@ -271,7 +271,7 @@ impl BazelPruneResult {
         };
         for base in &self.output_bases {
             match (base.is_removable(), &base.outcome) {
-                (true, Some(Outcome::Removed | Outcome::WouldRemove)) => {
+                (true, Some(Outcome::Removed | Outcome::Detached | Outcome::WouldRemove)) => {
                     totals.removed += 1;
                     totals.bytes += base.bytes.unwrap_or(0);
                 }
@@ -557,15 +557,15 @@ fn finish_removal(path: PathBuf, state: OutputBaseState, guard: &Guard, removal:
     // parent.
     let removal = Removal { force: true, ..removal };
     let (outcome, bytes) = guard.reclaim(&path, removal);
-    if matches!(outcome, Outcome::Removed)
-        && let Some(owner) = state.owner()
-    {
+    let gone = matches!(outcome, Outcome::Removed | Outcome::Detached);
+    if gone && let Some(owner) = state.owner() {
         unlink_convenience_symlinks(owner, &path);
     }
     OutputBase {
         path,
         state,
-        bytes: Some(bytes),
+        // A detached base was not measured; its size is the reaper's to count.
+        bytes: (outcome != Outcome::Detached).then_some(bytes),
         outcome: Some(outcome),
     }
 }

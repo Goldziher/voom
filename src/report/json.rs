@@ -19,6 +19,7 @@ use crate::delete::Outcome;
 fn outcome_value(outcome: &Outcome) -> Value {
     match outcome {
         Outcome::Removed => json!({ "status": "removed" }),
+        Outcome::Detached => json!({ "status": "detached" }),
         Outcome::WouldRemove => json!({ "status": "would_remove" }),
         Outcome::Refused(refusal) => json!({
             "status": "refused",
@@ -127,6 +128,7 @@ pub fn document(result: &RunResult) -> Value {
             // Already inside `reclaimed`; broken out because ADR 0001 promised these would
             // never be removed and its amendment made them reachable only by explicit opt-in.
             "dependencies": totals.dependencies,
+            "detached": totals.detached,
             // Artifacts whose `bytes` is a lower bound. A consumer checking the run's arithmetic
             // needs to know the arithmetic was done on incomplete input.
             "unmeasured": totals.unmeasured,

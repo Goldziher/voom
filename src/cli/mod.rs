@@ -7,6 +7,9 @@ use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 
 mod aggressive;
 mod housekeeping;
+mod reap;
+
+pub use reap::{ReapArgs, write_summary as write_reap_summary};
 
 pub use housekeeping::{ClaudePruneArgs, DockerPruneArgs, GitPruneArgs, render_claude, render_docker, render_git};
 
@@ -76,6 +79,8 @@ pub enum Command {
     /// Never removes containers or anything a container uses. Volumes only with `--volumes`. See
     /// `adrs/0017-docker-housekeeping.md`.
     DockerPrune(DockerPruneArgs),
+    /// Free what earlier runs detached into the trash, waiting for a background reaper first.
+    Reap(ReapArgs),
 }
 
 /// `voom suggest` arguments.
@@ -267,6 +272,11 @@ pub struct PruneArgs {
     /// Filed under Behaviour rather than Safety deliberately — it is not one of the protections.
     #[arg(long, help_heading = "Behaviour")]
     pub force: bool,
+
+    /// Unlink every artifact before exiting, instead of detaching it into the trash for a
+    /// background reaper to free. Also set by `VOOM_WAIT=1`.
+    #[arg(long, help_heading = "Behaviour")]
+    pub wait: bool,
 
     /// Explain every candidate that was passed over, and expand `--list-caches` to the whole
     /// table rather than only the caches present on this machine.

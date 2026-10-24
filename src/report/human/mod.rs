@@ -118,6 +118,7 @@ pub(super) mod palette {
 fn outcome_label(outcome: &Outcome) -> &'static str {
     match outcome {
         Outcome::Removed => "removed",
+        Outcome::Detached => "detached",
         Outcome::WouldRemove => "would remove",
         Outcome::Refused(_) => "refused",
         Outcome::PartiallyRemoved { .. } => "partial",
@@ -127,7 +128,7 @@ fn outcome_label(outcome: &Outcome) -> &'static str {
 
 fn outcome_style(outcome: &Outcome) -> Style {
     match outcome {
-        Outcome::Removed => palette::removed(),
+        Outcome::Removed | Outcome::Detached => palette::removed(),
         Outcome::WouldRemove => palette::would_remove(),
         Outcome::Refused(_) => palette::refused(),
         Outcome::PartiallyRemoved { .. } => palette::partial(),
@@ -205,7 +206,7 @@ fn artifact_line(entry: &Entry, base: Option<&Path>, forced: bool) -> Line {
             forced,
         )),
         Outcome::Failed(failure) => Some(with_hint(&failure.to_string(), failure.kind(), forced)),
-        Outcome::Removed | Outcome::WouldRemove => match &entry.finding.provenance {
+        Outcome::Removed | Outcome::Detached | Outcome::WouldRemove => match &entry.finding.provenance {
             // Shortened against the same base as the path. An `include` pattern is usually
             // the path it matched, so printing it in full puts the longest string on the line
             // twice and undoes the width this layout exists for.
@@ -230,7 +231,12 @@ fn artifact_line(entry: &Entry, base: Option<&Path>, forced: bool) -> Line {
     Line {
         label: outcome_label(&entry.outcome),
         label_style: outcome_style(&entry.outcome),
-        size: Some(format_size(entry.reclaimed_bytes(), DECIMAL)),
+        // A detached artifact nobody measured has no size yet: the reaper counts it as it frees it.
+        size: Some(if entry.outcome == Outcome::Detached && entry.bytes == 0 {
+            "—".to_owned()
+        } else {
+            format_size(entry.reclaimed_bytes(), DECIMAL)
+        }),
         tag: Some(ecosystem.unwrap_or(UNANCHORED)),
         tag_style: if ecosystem.is_some() {
             palette::quiet()

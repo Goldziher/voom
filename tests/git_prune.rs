@@ -550,6 +550,8 @@ fn voom() -> assert_cmd::Command {
     let mut command = assert_cmd::Command::cargo_bin("voom").expect("the binary builds");
     // The sweep runs Bazel housekeeping over the real machine's output roots unless told not to.
     command.env(voom::bazel::ROOTS_ENV, "");
+    // Unlink in place; detached removal has its own suite in `tests/detach.rs`.
+    command.env("VOOM_WAIT", "1");
     command
 }
 
