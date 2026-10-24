@@ -286,6 +286,50 @@ impl Resolver {
 
     /// Applies the command line on top of the accumulated layers.
     fn effective(&self, accumulated: &Accumulated) -> Result<Resolved> {
+        let selection = self.selection(accumulated)?;
+
+        // Appended, not layered above: `include` and `exclude` are sets whose members are
+        // independent, and a flag naming one more directory does not contradict a config file
+        // naming another. Precedence between the two lists is settled in the walker, where
+        // `exclude` wins, and is unchanged by where either pattern came from.
+        let mut exclude = accumulated.exclude.clone();
+        exclude.extend(expand_flag_patterns(&self.flags.exclude, &self.root));
+        let mut include = accumulated.include.clone();
+        include.extend(expand_flag_patterns(&self.flags.include, &self.root));
+
+        let (clean_caches, clear_all) = self.clean_caches(accumulated)?;
+
+        Ok(Resolved {
+            selection,
+            keep: accumulated.keep.narrow(self.flags.keep),
+            flags_keep: self.flags.keep,
+            keep_by_ecosystem: accumulated.keep_by_ecosystem.clone(),
+            rules: accumulated.rules.clone(),
+            exclude,
+            include,
+            clean_caches,
+            // Flags last, on the same principle as the selection above: no `voom.toml` below a
+            // scan root may turn housekeeping back on for a run that was invoked with
+            // `--no-git`. On by default, which is what makes it ordinary behaviour.
+            git: self.flags.git.or(accumulated.git).unwrap_or(true),
+            bazel: self.flags.bazel.or(accumulated.bazel).unwrap_or(true),
+            bazel_max_age: self.flags.bazel_max_age.or(accumulated.bazel_max_age),
+            docker: self.flags.docker.or(accumulated.docker).unwrap_or(false),
+            docker_max_age: self.flags.docker_max_age.or(accumulated.docker_max_age),
+            // A full cache clear includes relocated tagged build output. Named cache ids do
+            // not widen the scan; an ordinary run still leaves tagged directories alone.
+            clean_tagged: self
+                .flags
+                .clean_tagged
+                .or_else(|| self.flags.clean_caches.iter().any(|id| id == "all").then_some(true))
+                .or(accumulated.clean_tagged)
+                .unwrap_or(clear_all),
+            sources: accumulated.sources.clone(),
+        })
+    }
+
+    /// The ecosystem selection: the `--only` base, then configuration operations, then flags.
+    fn selection(&self, accumulated: &Accumulated) -> Result<Selection> {
         let mut selection = match &self.flags.ecosystems {
             Some(ids) => {
                 let (selection, unknown) = Selection::only(ids.iter().map(String::as_str));
@@ -317,15 +361,11 @@ impl Resolver {
             }
         }
 
-        // Appended, not layered above: `include` and `exclude` are sets whose members are
-        // independent, and a flag naming one more directory does not contradict a config file
-        // naming another. Precedence between the two lists is settled in the walker, where
-        // `exclude` wins, and is unchanged by where either pattern came from.
-        let mut exclude = accumulated.exclude.clone();
-        exclude.extend(expand_flag_patterns(&self.flags.exclude, &self.root));
-        let mut include = accumulated.include.clone();
-        include.extend(expand_flag_patterns(&self.flags.include, &self.root));
+        Ok(selection)
+    }
 
+    /// The cache ids to clear, with `all` expanded and exclusions applied, and whether `all` was named.
+    fn clean_caches(&self, accumulated: &Accumulated) -> Result<(Vec<String>, bool)> {
         let mut clean_caches = accumulated.clean_caches.clone();
         clean_caches.extend(self.flags.clean_caches.iter().cloned());
         let clear_all = clean_caches.iter().any(|id| id == "all");
@@ -366,33 +406,7 @@ impl Resolver {
             return Err(Error::UnknownCache { id: id.clone() });
         }
 
-        Ok(Resolved {
-            selection,
-            keep: accumulated.keep.narrow(self.flags.keep),
-            flags_keep: self.flags.keep,
-            keep_by_ecosystem: accumulated.keep_by_ecosystem.clone(),
-            rules: accumulated.rules.clone(),
-            exclude,
-            include,
-            clean_caches,
-            // Flags last, on the same principle as the selection above: no `voom.toml` below a
-            // scan root may turn housekeeping back on for a run that was invoked with
-            // `--no-git`. On by default, which is what makes it ordinary behaviour.
-            git: self.flags.git.or(accumulated.git).unwrap_or(true),
-            bazel: self.flags.bazel.or(accumulated.bazel).unwrap_or(true),
-            bazel_max_age: self.flags.bazel_max_age.or(accumulated.bazel_max_age),
-            docker: self.flags.docker.or(accumulated.docker).unwrap_or(false),
-            docker_max_age: self.flags.docker_max_age.or(accumulated.docker_max_age),
-            // A full cache clear includes relocated tagged build output. Named cache ids do
-            // not widen the scan; an ordinary run still leaves tagged directories alone.
-            clean_tagged: self
-                .flags
-                .clean_tagged
-                .or_else(|| self.flags.clean_caches.iter().any(|id| id == "all").then_some(true))
-                .or(accumulated.clean_tagged)
-                .unwrap_or(clear_all),
-            sources: accumulated.sources.clone(),
-        })
+        Ok((clean_caches, clear_all))
     }
 }
 
@@ -418,6 +432,27 @@ fn apply(accumulated: &mut Accumulated, layer: &Layer) -> Result<()> {
     if let Some(enabled) = layer.file.git.enabled {
         accumulated.git = Some(enabled);
     }
+
+    apply_machine_global(accumulated, layer)?;
+
+    apply_keep(accumulated, layer)?;
+
+    for pattern in &layer.file.exclude {
+        accumulated.exclude.push(expand(pattern, dir));
+    }
+    for pattern in &layer.file.include {
+        accumulated.include.push(expand(pattern, dir));
+    }
+
+    apply_rules(accumulated, layer, dir)?;
+
+    accumulated.sources.push(source.clone());
+    Ok(())
+}
+
+/// Folds the machine-global tables (`[bazel]`, `[docker]`, `[caches]`) of one file into the accumulated layers.
+fn apply_machine_global(accumulated: &mut Accumulated, layer: &Layer) -> Result<()> {
+    let source = &layer.source;
 
     // `[bazel]`, `[docker]` and `[caches]` drive removal outside the swept tree — machine-global
     // Bazel output bases, Docker state and tool caches. Only the user's own configuration or an explicit `--config`
@@ -461,6 +496,12 @@ fn apply(accumulated: &mut Accumulated, layer: &Layer) -> Result<()> {
                 .to_owned(),
         });
     }
+    Ok(())
+}
+
+/// Folds the `[keep]` tables of one file into the accumulated layers.
+fn apply_keep(accumulated: &mut Accumulated, layer: &Layer) -> Result<()> {
+    let source = &layer.source;
 
     accumulated.keep = accumulated.keep.narrow(keep_from(&layer.file.keep.scalars(), source)?);
     for (id, table) in &layer.file.keep.per_ecosystem {
@@ -474,13 +515,12 @@ fn apply(accumulated: &mut Accumulated, layer: &Layer) -> Result<()> {
         let entry = accumulated.keep_by_ecosystem.entry(id.clone()).or_default();
         *entry = entry.narrow(policy);
     }
+    Ok(())
+}
 
-    for pattern in &layer.file.exclude {
-        accumulated.exclude.push(expand(pattern, dir));
-    }
-    for pattern in &layer.file.include {
-        accumulated.include.push(expand(pattern, dir));
-    }
+/// Folds the `[[paths]]` rules of one file into the accumulated layers.
+fn apply_rules(accumulated: &mut Accumulated, layer: &Layer, dir: &Path) -> Result<()> {
+    let source = &layer.source;
 
     for rule in &layer.file.paths {
         let pattern = expand(&rule.pattern, dir);
@@ -501,8 +541,6 @@ fn apply(accumulated: &mut Accumulated, layer: &Layer) -> Result<()> {
             ops: rule_ops(rule.ecosystems.as_ref(), source)?,
         });
     }
-
-    accumulated.sources.push(source.clone());
     Ok(())
 }
 

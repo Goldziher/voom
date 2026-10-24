@@ -79,36 +79,11 @@ fn walk(root: &Path, options: &GitPruneOptions, into: &mut Vec<PathBuf>) {
     // Shared by reference: every worker asks the same set, and `&CacheRoots` is `Copy`, which is
     // what lets the per-thread visitor be a `move` closure without cloning the set per thread.
     let caches = &caches;
-    // The sweep's own classifier, so the walk prunes build output exactly where a *default* sweep
-    // would remove it: a `target/` is skipped only beside the marker that proves it. Built without
-    // `.permissive()`, so an off-by-default artifact (`build/` beside a `package.json`) is not
-    // pruned — a default sweep does not remove one either, and a repository nested inside it stays
-    // findable. A failure here is the const catalog failing to compile its own patterns,
-    // impossible without a bug in voom, and would only make the walk prune less, so it is said
-    // once rather than silently ignored.
-    let classifier = match Classifier::new(Selection::all()) {
-        Ok(classifier) => Some(classifier),
-        Err(error) => {
-            eprintln!("voom: git-prune: {error}; the discovery walk will not prune build output");
-            None
-        }
-    };
+    let classifier = prune_classifier();
     let classifier = classifier.as_ref();
     let (sender, receiver) = std::sync::mpsc::channel();
 
-    let mut builder = WalkBuilder::new(root);
-    builder
-        .git_ignore(false)
-        .git_global(false)
-        .git_exclude(false)
-        .ignore(false)
-        .parents(false)
-        .hidden(false)
-        .follow_links(false)
-        .same_file_system(options.one_file_system);
-    if let Some(jobs) = options.jobs {
-        builder.threads(jobs.max(1));
-    }
+    let builder = walk_builder(root, options);
 
     builder.build_parallel().run(|| {
         let sender = sender.clone();
@@ -156,6 +131,42 @@ fn walk(root: &Path, options: &GitPruneOptions, into: &mut Vec<PathBuf>) {
 
     drop(sender);
     into.extend(receiver);
+}
+
+/// The sweep's own classifier, if it can be built, for pruning build output during the walk.
+fn prune_classifier() -> Option<Classifier> {
+    // The sweep's own classifier, so the walk prunes build output exactly where a *default* sweep
+    // would remove it: a `target/` is skipped only beside the marker that proves it. Built without
+    // `.permissive()`, so an off-by-default artifact (`build/` beside a `package.json`) is not
+    // pruned — a default sweep does not remove one either, and a repository nested inside it stays
+    // findable. A failure here is the const catalog failing to compile its own patterns,
+    // impossible without a bug in voom, and would only make the walk prune less, so it is said
+    // once rather than silently ignored.
+    match Classifier::new(Selection::all()) {
+        Ok(classifier) => Some(classifier),
+        Err(error) => {
+            eprintln!("voom: git-prune: {error}; the discovery walk will not prune build output");
+            None
+        }
+    }
+}
+
+/// The ignore-blind parallel walker over `root`, shaped by the job count and filesystem options.
+fn walk_builder(root: &Path, options: &GitPruneOptions) -> WalkBuilder {
+    let mut builder = WalkBuilder::new(root);
+    builder
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false)
+        .ignore(false)
+        .parents(false)
+        .hidden(false)
+        .follow_links(false)
+        .same_file_system(options.one_file_system);
+    if let Some(jobs) = options.jobs {
+        builder.threads(jobs.max(1));
+    }
+    builder
 }
 
 /// What a directory's `.git` says about it.
