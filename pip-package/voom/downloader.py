@@ -130,7 +130,7 @@ def ensure_binary() -> str:
         return str(binary_path)
 
     url, ext = _asset(__version__)
-    print(f"Downloading voom binary v{__version__}...", file=sys.stderr)
+    sys.stderr.write(f"Downloading voom binary v{__version__}...\n")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         archive_path = Path(tmpdir) / f"{BINARY}.{ext}"
@@ -140,7 +140,7 @@ def ensure_binary() -> str:
     if platform.system().lower() != "windows":
         binary_path.chmod(0o755)
 
-    print("Binary downloaded successfully.", file=sys.stderr)
+    sys.stderr.write("Binary downloaded successfully.\n")
     return str(binary_path)
 
 

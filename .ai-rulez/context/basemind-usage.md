@@ -19,8 +19,8 @@ they share one index across the session.
 `.ai-rulez/config.toml`, and whether a basemind server is actually running depends on the
 harness and the machine. So: **check whether the tools are available, use them if they are,
 and use shell / grep / git if they are not.** Neither is a violation. Do not spend turns
-hunting for a server that is not connected, and do not refuse to answer a question because
-the preferred tool is absent.
+hunting for a server that is not connected; when the preferred tool is absent, answer with the
+fallback.
 
 Below is the mapping, for when the tools *are* available. Each line is "prefer the left over
 the right", not "the right is forbidden".

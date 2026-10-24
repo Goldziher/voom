@@ -205,7 +205,7 @@ impl ClaudePruneResult {
                 totals.eligible_bytes += job.bytes.unwrap_or(0);
             }
             match (&job.state, &job.outcome) {
-                (JobState::Eligible { .. }, Some(Outcome::Removed | Outcome::WouldRemove)) => {
+                (JobState::Eligible { .. }, Some(Outcome::Removed | Outcome::Detached | Outcome::WouldRemove)) => {
                     totals.removed += 1;
                     totals.bytes += job.bytes.unwrap_or(0);
                 }

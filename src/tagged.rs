@@ -33,7 +33,7 @@ const SIGNATURE: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
 /// Whether `dir` carries a valid `CACHEDIR.TAG` and so declares itself regenerable.
 ///
 /// Answers `false` for anything it cannot prove: no tag, an unreadable one, a short or
-/// mis-signed one, or a tag that is not a regular file. Every one of those is the safe
+/// wrongly signed one, or a tag that is not a regular file. Every one of those is the safe
 /// direction — a false negative leaves a cache on disk, a false positive deletes a directory
 /// nobody declared.
 ///

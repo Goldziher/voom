@@ -31,11 +31,16 @@ use std::path::{Path, PathBuf};
 mod force;
 mod outcome;
 mod pool;
+mod trash;
 
 pub use force::Removal;
 pub use outcome::{FailureKind, Outcome, Refusal, RemovalFailure};
 pub use pool::{freed_so_far, limit_removal_workers};
 pub(crate) use pool::{install_removal, note_freed, remove_in_pool};
+pub use trash::{
+    Reaped, TRASH_ENV, Trash, collect_ledger, detach_removals, detached_count, reap, spawn_reaper, trash_location,
+    yield_to_foreground,
+};
 
 use crate::error::{Error, Result};
 
@@ -475,6 +480,9 @@ impl Guard {
         if removal.dry_run {
             return Outcome::WouldRemove;
         }
+        if let Some(outcome) = trash::try_detach(&verified, removal) {
+            return outcome;
+        }
 
         let (result, counted) = remove_in_pool(&verified, removal);
         if result.is_ok() && counted.is_none() {
@@ -515,6 +523,11 @@ impl Guard {
         };
         if removal.dry_run {
             return (Outcome::WouldRemove, crate::size::measure_fully(&verified.canonical));
+        }
+        // Detached, the artifact is not measured: what it held is counted by the reaper as it
+        // frees it, and measuring it here would cost the very walk detaching exists to avoid.
+        if let Some(outcome) = trash::try_detach(&verified, removal) {
+            return (outcome, Measured::default());
         }
 
         let before = (!cfg!(unix) || !verified.is_dir).then(|| crate::size::measure(&verified.canonical));

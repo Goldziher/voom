@@ -75,6 +75,11 @@ fn shorten(path: &Path, base: Option<&Path>) -> String {
 fn row(base: &OutputBase, dry_run: bool, root_base: Option<&Path>) -> Row {
     let (label, style, detail) = match (&base.outcome, base.is_removable()) {
         (Some(Outcome::Removed), true) => (removed_label(false), palette::removed(), reason(&base.state)),
+        (Some(Outcome::Detached), true) => (
+            "detached",
+            palette::removed(),
+            format!("{}; freeing in the background", reason(&base.state)),
+        ),
         (Some(Outcome::WouldRemove), true) => (removed_label(dry_run), palette::would_remove(), reason(&base.state)),
         (Some(Outcome::Refused(refusal)), true) => (
             "refused",
@@ -297,6 +302,7 @@ fn output_base_value(base: &OutputBase) -> Value {
 fn outcome_code(outcome: &Outcome) -> &'static str {
     match outcome {
         Outcome::Removed => "removed",
+        Outcome::Detached => "detached",
         Outcome::WouldRemove => "would_remove",
         Outcome::Refused(_) => "refused",
         Outcome::Failed(_) => "failed",

@@ -80,6 +80,11 @@ fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
         Some(Command::GitPrune(args)) => git_prune(cli, args),
         Some(Command::ClaudePrune(args)) => claude_prune(args),
         Some(Command::DockerPrune(args)) => docker_prune_command(args),
+        Some(Command::Reap(args)) => {
+            let mut out = anstream::stdout().lock();
+            args.run(&mut out)?;
+            Ok(exit::SUCCESS)
+        }
         None => prune(cli),
     }
 }
@@ -202,6 +207,51 @@ fn prune(cli: &Cli) -> anyhow::Result<i32> {
     }
 
     let options = cli.prune.to_run_options()?;
+    let detach = !options.dry_run && !cli.prune.wait && std::env::var_os("VOOM_WAIT").is_none_or(|value| value != "1");
+    if detach {
+        report_reaped()?;
+        voom::delete::detach_removals(true);
+    }
+    let code = prune_stages(cli, &options)?;
+    if detach {
+        start_reaper()?;
+    }
+    Ok(code)
+}
+
+/// Says what background reapers freed since the last run collected their ledger.
+fn report_reaped() -> anyhow::Result<()> {
+    let Some(dir) = voom::delete::trash_location() else {
+        return Ok(());
+    };
+    let freed = voom::delete::collect_ledger(&dir);
+    if freed != voom::delete::Reaped::default() {
+        voom::cli::write_reap_summary(&freed, &dir, &mut anstream::stderr())?;
+    }
+    Ok(())
+}
+
+/// Starts the background reaper for what this run detached, and says so.
+fn start_reaper() -> anyhow::Result<()> {
+    let detached = voom::delete::detached_count();
+    match voom::delete::spawn_reaper() {
+        Ok(Some(pid)) => writeln!(
+            anstream::stderr(),
+            "voom: freeing {detached} detached {} in the background (reaper pid {pid}); `voom reap` waits for it",
+            if detached == 1 { "artifact" } else { "artifacts" },
+        )?,
+        Ok(None) => {}
+        Err(error) => writeln!(
+            anstream::stderr(),
+            "voom: could not start the background reaper ({error}); `voom reap` frees the trash"
+        )?,
+    }
+    Ok(())
+}
+
+/// Every stage of a sweep: the walk, Bazel, Docker and worktrees, and their reports.
+fn prune_stages(cli: &Cli, options: &voom::run::RunOptions) -> anyhow::Result<i32> {
+    let options = options.clone();
 
     // Bazel's housekeeping is machine-global and shares nothing with the sweep, so the two always
     // run side by side. Merged-worktree removal is the one thing that feeds it — a removed

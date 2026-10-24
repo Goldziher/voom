@@ -25,6 +25,7 @@
 mod discover;
 mod report;
 mod run;
+mod tracked;
 
 pub(crate) use run::for_git;
 
@@ -39,6 +40,7 @@ use crate::scan::PatternSet;
 
 pub use discover::repository_at;
 pub use report::{document, render_human, render_json, write_sweep_block};
+pub use tracked::{holding_tracked_files, index_listing};
 
 use discover::{Located, Resolution};
 use run::{ensure_git_available, run_step};

@@ -40,6 +40,9 @@ fn voom() -> Command {
     let mut command = Command::cargo_bin("voom").expect("the binary builds");
     // The sweep runs Bazel housekeeping over the real machine's output roots unless told not to.
     command.env(voom::bazel::ROOTS_ENV, "");
+    // Unlink in place: a detaching run would move fixtures into the real trash and start a
+    // background reaper. Detached removal has its own suite in `tests/detach.rs`.
+    command.env("VOOM_WAIT", "1");
     command
 }
 

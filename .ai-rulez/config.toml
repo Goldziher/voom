@@ -14,14 +14,20 @@ presets = ["claude", "codex", "opencode"]
 # a test that can fail — was folded into `tdd-and-hooks` before the exclusion landed.
 builtins = ["rust", "security", "git-workflow", "code-quality", "!testing", "documentation", "default-commands"]
 
+# OpenCode reads a bare alias such as `sonnet` as a provider with no model, so its agents get a
+# provider-qualified model; every other preset keeps the agents' own `model`.
+[defaults.model_by_preset]
+opencode = "anthropic/claude-sonnet-5-5"
+
 [[mcp_servers]]
 name = "poly"
 description = "Lint, format, and cache over MCP — the poly binary's stdio server."
 command = "poly"
 args = ["mcp"]
+package = "pkg:github/Goldziher/poly@v0.29.0"
 
 [mcp]
-self_server_command = ["pnpm", "dlx", "ai-rulez@5.5.0", "mcp"]
+self_server_command = ["npx", "-y", "ai-rulez@5.6.3", "mcp"]
 
 [lock]
 include_outputs = false

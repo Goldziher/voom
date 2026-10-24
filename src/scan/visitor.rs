@@ -35,6 +35,8 @@ pub(super) struct Visitor<'a> {
     pub(super) root: &'a Path,
     pub(super) classifier: &'a Classifier,
     pub(super) options: &'a ScanOptions,
+    /// Whether work trees under this root are walked from their index (`super::guided`).
+    pub(super) guide: bool,
 }
 
 impl Visitor<'_> {
@@ -75,6 +77,30 @@ impl Visitor<'_> {
         let file_type = entry.file_type();
         let is_dir = file_type.is_some_and(|file_type| file_type.is_dir());
         let is_symlink = file_type.is_some_and(|file_type| file_type.is_symlink());
+        self.decide(path, entry.file_name(), is_dir, is_symlink, true, sender)
+    }
+
+    /// Decides one entry: prune it, descend it, or hand it to the index-guided walk.
+    ///
+    /// Shared by the directory walk and by [`super::guided`], which offers it the entries a
+    /// repository's index cannot vouch for and the tracked directories it descends, so both
+    /// walks answer every entry identically. `may_guide` is false for a tracked directory, which
+    /// is never a work tree of its own and is not worth the `lstat` that would ask.
+    pub(super) fn decide(
+        &self,
+        path: &Path,
+        name: &OsStr,
+        is_dir: bool,
+        is_symlink: bool,
+        may_guide: bool,
+        sender: &mpsc::Sender<Message>,
+    ) -> WalkState {
+        // voom's own trash holds artifacts that have already passed every rail and are being freed
+        // by the reaper; walking it would only find them again. Compared by name first, so the
+        // path comparison runs on a handful of directories rather than on every one.
+        if is_dir && is_trash(name, path) {
+            return WalkState::Skip;
+        }
 
         if let Some(pattern) = self.options.exclude.matched(path) {
             self.note_skip(
@@ -141,17 +167,17 @@ impl Visitor<'_> {
         // and a `.git` *file* — a linked worktree or a submodule — falls through to the
         // classifier, which has nothing to say about it.
         if self.options.collect_repositories
-            && let Some(work_tree) = crate::git::repository_at(entry.file_name(), path, is_symlink)
+            && let Some(work_tree) = crate::git::repository_at(name, path, is_symlink)
         {
             let _ = sender.send(Message::Repository(work_tree.to_path_buf()));
         }
 
-        if is_dir && is_never_descended(entry.file_name()) {
+        if is_dir && is_never_descended(name) {
             return WalkState::Skip;
         }
 
-        if is_dir && is_dependency_dir(entry.file_name()) {
-            self.visit_dependency_dir(entry.file_name(), path, sender);
+        if is_dir && is_dependency_dir(name) {
+            self.visit_dependency_dir(name, path, sender);
             return WalkState::Skip;
         }
 
@@ -207,6 +233,13 @@ impl Visitor<'_> {
                     return WalkState::Skip;
                 }
             }
+        }
+
+        // A work tree is walked from its index instead (`super::guided`): one `lstat` here, so
+        // that its tracked directories cost one more each rather than an `open` and a listing.
+        if may_guide && self.guide && is_dir && super::guided::is_work_tree(path) {
+            let _ = sender.send(Message::Guide(path.to_path_buf()));
+            return WalkState::Skip;
         }
 
         WalkState::Continue
@@ -348,6 +381,13 @@ impl Visitor<'_> {
         };
         let _ = sender.send(message);
     }
+}
+
+/// Whether a directory is voom's own trash.
+fn is_trash(name: &OsStr, path: &Path) -> bool {
+    name == OsStr::new("trash")
+        && crate::delete::trash_location()
+            .is_some_and(|trash| path == trash || path.canonicalize().is_ok_and(|resolved| resolved == trash))
 }
 
 /// Whether a directory is one voom neither enters nor classifies.

@@ -104,7 +104,7 @@ impl Entry {
     #[must_use]
     pub fn reclaimed_bytes(&self) -> u64 {
         match &self.outcome {
-            Outcome::Removed | Outcome::WouldRemove => self.bytes,
+            Outcome::Removed | Outcome::Detached | Outcome::WouldRemove => self.bytes,
             Outcome::PartiallyRemoved { freed, .. } => *freed,
             _ => 0,
         }
@@ -146,6 +146,11 @@ pub struct Totals {
     /// amendment made them reachable by explicit opt-in. A run that took one has to say so
     /// outright rather than let it sit anonymously in the total.
     pub dependencies: usize,
+    /// Artifacts moved into the trash rather than unlinked. **Already included in `reclaimed`.**
+    ///
+    /// Their bytes are in `bytes` only when something measured them first; otherwise the
+    /// background reaper counts them as it frees them.
+    pub detached: usize,
 }
 
 /// Everything one run produced.
@@ -236,6 +241,10 @@ impl RunResult {
             }
             match &entry.outcome {
                 Outcome::Removed | Outcome::WouldRemove => totals.reclaimed += 1,
+                Outcome::Detached => {
+                    totals.reclaimed += 1;
+                    totals.detached += 1;
+                }
                 Outcome::Refused(_) => totals.refused += 1,
                 Outcome::PartiallyRemoved { freed, .. } => {
                     totals.partial += 1;

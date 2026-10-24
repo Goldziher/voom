@@ -70,7 +70,8 @@ function binaryName() {
 function downloadWithRedirects(url, dest, maxRedirects = 5) {
   return new Promise((resolve, reject) => {
     if (maxRedirects <= 0) {
-      return reject(new Error("Too many redirects"));
+      reject(new Error("Too many redirects"));
+      return;
     }
 
     const urlObj = new URL(url);

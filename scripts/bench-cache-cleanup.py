@@ -127,7 +127,9 @@ def measure(method: str, args: argparse.Namespace, seed: Path, root: Path, nativ
     (root / "voom.toml").write_text("")
     command = command_for(method, args, root, native_rm)
     start = time.perf_counter()
-    completed = subprocess.run(command, capture_output=True, text=True, cwd=root, check=False)
+    # Unlinking is what is being measured, so voom must not detach into its trash (ADR 0020).
+    environment = {**os.environ, "VOOM_WAIT": "1", "VOOM_BAZEL_ROOTS": ""}
+    completed = subprocess.run(command, capture_output=True, text=True, cwd=root, check=False, env=environment)
     elapsed = time.perf_counter() - start
     if completed.returncode != 0:
         raise RuntimeError(f"{method} exited {completed.returncode}: {completed.stderr.strip()}")
@@ -169,7 +171,7 @@ def benchmark_layout(args: argparse.Namespace, layout: str, base: Path, native_r
             root.mkdir()
             sample = measure(method, args, seed, root, native_rm)
             samples[method].append(sample)
-            print(f"{layout}: run {run + 1}/{args.runs} {method}: {sample['wall_seconds']:.3f}s", file=sys.stderr)
+            sys.stderr.write(f"{layout}: run {run + 1}/{args.runs} {method}: {sample['wall_seconds']:.3f}s\n")
     return {
         "execution_order": execution_order,
         "methods": {method: summarize(runs, args.files) for method, runs in samples.items()},
@@ -198,9 +200,9 @@ def main() -> int:
                 base.mkdir()
                 result["layouts"][layout] = benchmark_layout(args, layout, base, native_rm)
     except (OSError, RuntimeError, ValueError, KeyError, TypeError) as error:
-        print(f"cache cleanup benchmark failed: {error}", file=sys.stderr)
+        sys.stderr.write(f"cache cleanup benchmark failed: {error}\n")
         return 1
-    print(json.dumps(result, indent=2))
+    sys.stdout.write(json.dumps(result, indent=2) + "\n")
     return 0
 
 

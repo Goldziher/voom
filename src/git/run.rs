@@ -159,6 +159,38 @@ pub(super) fn run_step(
     }
 }
 
+/// Runs `git -C <work_tree> <args>` and returns what it printed, or `None` when it did not
+/// succeed in time. For the read-only queries the sweep makes of a repository's index.
+pub(super) fn git_stdout(work_tree: &Path, args: &[&std::ffi::OsStr], timeout: Duration) -> Option<String> {
+    let mut command = Command::new(GIT);
+    command.arg("-C").arg(for_git(work_tree).as_os_str()).args(args);
+    let completed = run_command(&mut command, Instant::now() + timeout).ok()?;
+    (completed.code == Some(0) && !completed.timed_out).then_some(completed.stdout)
+}
+
+/// Runs `git -C <work_tree> <args>` and returns its raw stdout, for output that names paths git
+/// does not promise are UTF-8. `None` when it did not succeed in time.
+pub(super) fn git_bytes(work_tree: &Path, args: &[&str], timeout: Duration) -> Option<Vec<u8>> {
+    let mut child = Command::new(GIT)
+        .arg("-C")
+        .arg(for_git(work_tree).as_os_str())
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let (code, timed_out) = wait_with_deadline(&mut child, Instant::now() + timeout).ok()?;
+    let bytes = reader.join().ok()?.ok()?;
+    (code == Some(0) && !timed_out).then_some(bytes)
+}
+
 /// Runs a command to completion, killing it if the deadline passes first.
 ///
 /// [`Command`] has no timeout, so this is `spawn` plus a bounded `try_wait` poll. Both output

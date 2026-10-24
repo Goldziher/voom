@@ -98,6 +98,7 @@ impl Sandbox {
             .env("PATH", path)
             .env("HOME", self.dir.path())
             .env(voom::bazel::ROOTS_ENV, "")
+            .env("VOOM_WAIT", "1")
             .env(voom::docker::DISK_IMAGES_ENV, &self.disk)
             .env("DOCKER_HOST", COLIMA_SOCKET)
             .env("FAKE_LOG", self.dir.path().join("calls.log"))

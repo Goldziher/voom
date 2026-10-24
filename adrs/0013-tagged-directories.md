@@ -79,7 +79,7 @@ a self-referential constant test cannot detect a wrong constant. A name-only mat
 inherited that bug silently and deleted on the strength of it.
 
 So `tagged::is_tagged` reads the first 43 bytes and compares them to the specified signature. It
-answers `false` for everything it cannot prove: no tag, an unreadable one, a short or mis-signed
+answers `false` for everything it cannot prove: no tag, an unreadable one, a short or wrongly signed
 one, a tag that is not a regular file, or a tag that is a symlink. Each of those is the safe
 direction, per the `safety-first` rule: a false negative costs gigabytes, a false positive costs
 work nobody can get back.
