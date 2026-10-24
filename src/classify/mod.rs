@@ -211,8 +211,12 @@ impl Classifier {
                 continue;
             }
 
-            match (self.prove(root, path, anchor_dir, id), self.selection.is_enabled(id)) {
-                (Proof::Found(marker_dir), true) => {
+            match weigh(
+                id,
+                self.prove(root, path, anchor_dir, id),
+                self.selection.is_enabled(id),
+            ) {
+                Weighed::Proven(marker_dir) => {
                     return Verdict::Artifact(Finding {
                         path: path.to_path_buf(),
                         provenance: Provenance::Anchored {
@@ -221,32 +225,7 @@ impl Classifier {
                         },
                     });
                 }
-                (Proof::Found(_), false) => {
-                    record(
-                        RANK_PROVEN_OPT_IN,
-                        SkipReason::NotEnabled {
-                            spec: id.spec(),
-                            note: artifact.note,
-                        },
-                    );
-                }
-                (Proof::Missing, true) => record(RANK_NO_MARKER, unproven(id)),
-                (Proof::BoundReached(levels), true) => record(
-                    RANK_NO_MARKER,
-                    SkipReason::MarkerOutOfReach {
-                        ecosystem: id.ecosystem().id,
-                        markers: id.ecosystem().markers,
-                        levels,
-                    },
-                ),
-                (Proof::BoundReached(_) | Proof::Missing, false) => record(
-                    RANK_UNPROVEN_OPT_IN,
-                    SkipReason::NotEnabled {
-                        spec: id.spec(),
-                        note: artifact.note,
-                    },
-                ),
-                (Proof::Unreadable, _) => record(RANK_UNREADABLE, SkipReason::Unreadable),
+                Weighed::Skipped(rank, reason) => record(rank, reason),
             }
         }
 
@@ -273,29 +252,8 @@ impl Classifier {
             };
         }
 
-        // `WorkspaceRoot` climbs with no level bound, all the way to the scan root. Unlike the
-        // bounded loop below, running out of climb here always means the marker genuinely is
-        // not above this candidate within the scanned tree — there is no bound left to report
-        // as reached, because none was imposed. See `Anchor::WorkspaceRoot`'s doc comment.
         if anchor.is_workspace_root() {
-            let mut dir = anchor_dir;
-            let mut unreadable = false;
-            loop {
-                let facts = self.facts(dir);
-                if facts.markers & bit != 0 {
-                    return Proof::Found(dir.to_path_buf());
-                }
-                unreadable |= !facts.readable;
-                // Stop at the scan root, and never climb past it: a root spelling that does not
-                // compare equal to `dir` must not let the climb walk above the scanned tree and
-                // prove an artifact from a marker outside it.
-                if dir == root || !dir.starts_with(root) {
-                    break;
-                }
-                let Some(parent) = dir.parent() else { break };
-                dir = parent;
-            }
-            return if unreadable { Proof::Unreadable } else { Proof::Missing };
+            return self.prove_workspace_root(root, anchor_dir, bit);
         }
 
         let levels = anchor.levels();
@@ -334,6 +292,32 @@ impl Classifier {
             // exactly like a directory that was never this ecosystem's at all.
             Proof::BoundReached(levels)
         }
+    }
+
+    /// Climbs from the anchor towards the scan root looking for a marker, with no level bound.
+    fn prove_workspace_root(&self, root: &Path, anchor_dir: &Path, bit: u32) -> Proof {
+        // `WorkspaceRoot` climbs with no level bound, all the way to the scan root. Unlike the
+        // bounded loop below, running out of climb here always means the marker genuinely is
+        // not above this candidate within the scanned tree — there is no bound left to report
+        // as reached, because none was imposed. See `Anchor::WorkspaceRoot`'s doc comment.
+        let mut dir = anchor_dir;
+        let mut unreadable = false;
+        loop {
+            let facts = self.facts(dir);
+            if facts.markers & bit != 0 {
+                return Proof::Found(dir.to_path_buf());
+            }
+            unreadable |= !facts.readable;
+            // Stop at the scan root, and never climb past it: a root spelling that does not
+            // compare equal to `dir` must not let the climb walk above the scanned tree and
+            // prove an artifact from a marker outside it.
+            if dir == root || !dir.starts_with(root) {
+                break;
+            }
+            let Some(parent) = dir.parent() else { break };
+            dir = parent;
+        }
+        if unreadable { Proof::Unreadable } else { Proof::Missing }
     }
 
     /// Everything we know about a directory, listing it exactly once per run.
@@ -383,6 +367,38 @@ enum Proof {
     /// The `Ancestor(n)` climb used all `n` levels and the scan root was still above it.
     BoundReached(u8),
     Unreadable,
+}
+
+/// What one candidate artifact came to once its proof and its enablement are both known.
+enum Weighed {
+    /// Proven and enabled: the marker directory that justifies removal.
+    Proven(PathBuf),
+    /// Not removable, with the rank of the reason and the reason itself.
+    Skipped(u8, SkipReason),
+}
+
+/// Combines a proof with whether the artifact is enabled into either a finding or a ranked skip.
+fn weigh(id: ArtifactId, proof: Proof, enabled: bool) -> Weighed {
+    let artifact = id.artifact();
+    let not_enabled = || SkipReason::NotEnabled {
+        spec: id.spec(),
+        note: artifact.note,
+    };
+    match (proof, enabled) {
+        (Proof::Found(marker_dir), true) => Weighed::Proven(marker_dir),
+        (Proof::Found(_), false) => Weighed::Skipped(RANK_PROVEN_OPT_IN, not_enabled()),
+        (Proof::Missing, true) => Weighed::Skipped(RANK_NO_MARKER, unproven(id)),
+        (Proof::BoundReached(levels), true) => Weighed::Skipped(
+            RANK_NO_MARKER,
+            SkipReason::MarkerOutOfReach {
+                ecosystem: id.ecosystem().id,
+                markers: id.ecosystem().markers,
+                levels,
+            },
+        ),
+        (Proof::BoundReached(_) | Proof::Missing, false) => Weighed::Skipped(RANK_UNPROVEN_OPT_IN, not_enabled()),
+        (Proof::Unreadable, _) => Weighed::Skipped(RANK_UNREADABLE, SkipReason::Unreadable),
+    }
 }
 
 /// The reason to report when a selected artifact's marker was looked for and not found.
