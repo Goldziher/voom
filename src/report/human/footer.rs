@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::io;
 
 use humansize::{DECIMAL, format_size};
-use owo_colors::OwoColorize;
+use owo_colors::{OwoColorize, Style};
 
 use super::table::GUTTER;
 use super::{HumanOptions, MAX_ECOSYSTEMS_NAMED, UNANCHORED, palette};
@@ -94,13 +94,28 @@ pub(super) fn write_footer(
     wrote_body: bool,
     out: &mut impl io::Write,
 ) -> io::Result<()> {
-    let totals = result.totals();
-    let verb = if result.dry_run { "reclaimable" } else { "reclaimed" };
-
     if wrote_body {
         writeln!(out)?;
     }
+    write_headline(result, out)?;
+    write_breakdown(result, out)?;
+    write_skipped_and_inaccessible(result, options, out)?;
+    write_removal_notices(result, out)?;
+    write_failure_notices(result, out)?;
+    if result.dry_run {
+        writeln!(out, "{}", "Dry run — nothing was removed.".style(palette::quiet()))?;
+    }
+    Ok(())
+}
 
+/// One gutter-indented footer line in `style`.
+fn write_line(out: &mut impl io::Write, text: &str, style: Style) -> io::Result<()> {
+    writeln!(out, "{GUTTER}{}", text.style(style))
+}
+
+fn write_headline(result: &RunResult, out: &mut impl io::Write) -> io::Result<()> {
+    let totals = result.totals();
+    let verb = if result.dry_run { "reclaimable" } else { "reclaimed" };
     writeln!(
         out,
         "{} {}, {} {verb} in {:.2?}",
@@ -108,16 +123,25 @@ pub(super) fn write_footer(
         plural(totals.reclaimed, "artifact"),
         format_size(totals.bytes, DECIMAL).bold(),
         result.timings.total
-    )?;
+    )
+}
 
-    writeln!(out, "{GUTTER}{}", stage_breakdown(result).style(palette::quiet()))?;
-
+fn write_breakdown(result: &RunResult, out: &mut impl io::Write) -> io::Result<()> {
+    write_line(out, &stage_breakdown(result), palette::quiet())?;
     if let Some(summary) = ecosystem_summary(result) {
-        writeln!(out, "{GUTTER}{}", summary.style(palette::quiet()))?;
+        write_line(out, &summary, palette::quiet())?;
     }
+    Ok(())
+}
 
-    // Totals of different kinds get their own lines. On the one line they used to share, the
-    // number that matters — what was reclaimed — was the hardest of the four to find.
+// Totals of different kinds get their own lines. On the one line they used to share, the
+// number that matters — what was reclaimed — was the hardest of the four to find.
+fn write_skipped_and_inaccessible(
+    result: &RunResult,
+    options: HumanOptions,
+    out: &mut impl io::Write,
+) -> io::Result<()> {
+    let totals = result.totals();
     if totals.skipped > 0 {
         let text = format!("{} {} skipped", totals.skipped, plural(totals.skipped, "candidate"));
         write!(out, "{GUTTER}{}", text.style(palette::quiet()))?;
@@ -140,8 +164,14 @@ pub(super) fn write_footer(
                 " — --verbose lists them"
             },
         );
-        writeln!(out, "{GUTTER}{}", text.style(palette::quiet()))?;
+        write_line(out, &text, palette::quiet())?;
     }
+    Ok(())
+}
+
+/// The lines about how the removals that succeeded were carried out.
+fn write_removal_notices(result: &RunResult, out: &mut impl io::Write) -> io::Result<()> {
+    let totals = result.totals();
     if totals.detached > 0 {
         // The headline counts these as reclaimed, and they are gone from the tree; the space is
         // not back until the reaper has freed them, and that is the reader's to know.
@@ -150,7 +180,7 @@ pub(super) fn write_footer(
             totals.detached,
             plural(totals.detached, "artifact"),
         );
-        writeln!(out, "{GUTTER}{}", text.style(palette::quiet()))?;
+        write_line(out, &text, palette::quiet())?;
     }
     if totals.refused > 0 {
         let text = format!(
@@ -158,9 +188,14 @@ pub(super) fn write_footer(
             totals.refused,
             plural(totals.refused, "artifact")
         );
-        writeln!(out, "{GUTTER}{}", text.style(palette::refused()))?;
+        write_line(out, &text, palette::refused())?;
     }
+    Ok(())
+}
 
+/// The lines about artifacts that were not, or not fully, removed or measured.
+fn write_failure_notices(result: &RunResult, out: &mut impl io::Write) -> io::Result<()> {
+    let totals = result.totals();
     if totals.unmeasured > 0 {
         // The one number in this footer that is knowingly wrong, said out loud. Everything else
         // here is exact; presenting a lower bound in the same typeface without a word would make
@@ -170,9 +205,8 @@ pub(super) fn write_footer(
             totals.unmeasured,
             plural(totals.unmeasured, "artifact"),
         );
-        writeln!(out, "{GUTTER}{}", text.style(palette::failed()))?;
+        write_line(out, &text, palette::failed())?;
     }
-
     if totals.dependencies > 0 {
         // Named outright rather than left inside the headline: ADR 0001 promised these would
         // never be removed, and its amendment made them reachable only by explicit opt-in. A
@@ -187,9 +221,8 @@ pub(super) fn write_footer(
             totals.dependencies,
             if totals.dependencies == 1 { "is" } else { "are" },
         );
-        writeln!(out, "{GUTTER}{}", text.style(palette::refused()))?;
+        write_line(out, &text, palette::refused())?;
     }
-
     if totals.partial > 0 {
         // "counted above" is the whole point of the line: without it a reader who sees an
         // artifact still on disk has no way to know whether its bytes made it into the total.
@@ -200,7 +233,7 @@ pub(super) fn write_footer(
             format_size(totals.partial_bytes, DECIMAL),
             super::remaining_words(remaining_bytes(result)),
         );
-        writeln!(out, "{GUTTER}{}", text.style(palette::partial()))?;
+        write_line(out, &text, palette::partial())?;
     }
     if totals.failed > 0 {
         let text = format!(
@@ -208,11 +241,7 @@ pub(super) fn write_footer(
             totals.failed,
             plural(totals.failed, "artifact")
         );
-        writeln!(out, "{GUTTER}{}", text.style(palette::failed()))?;
-    }
-
-    if result.dry_run {
-        writeln!(out, "{}", "Dry run — nothing was removed.".style(palette::quiet()))?;
+        write_line(out, &text, palette::failed())?;
     }
     Ok(())
 }
