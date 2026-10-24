@@ -4,7 +4,6 @@
 //! output are asserted against the real binary there too. Every case plants caches under a fake
 //! unix home, so the suite is unix-only.
 #![cfg(unix)]
-
 // Helper functions here are not `#[test]` bodies, which is all `allow-expect-in-tests` covers.
 // In a test crate a panic is the failure report, which is exactly what these want.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
