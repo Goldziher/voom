@@ -17,6 +17,13 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  toolchain:
+    name: Toolchain baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: xberg-io/actions/check-toolchain@v1
+
   # The shared org gate (poly fmt --check + poly lint over the whole repo), same as
   # basemind and uncomment run. `setup-rust` is required because poly.toml enables the
   # cargo/clippy hook. It needs no permissions beyond the workflow-level `contents: read`.
