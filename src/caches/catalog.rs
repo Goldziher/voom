@@ -205,6 +205,24 @@ pub static CACHES: &[Cache] = &[
         read_only: false,
     },
     Cache {
+        id: "codex-cache",
+        name: "Codex app cache",
+        locations: &[".codex/cache"],
+        markers: &["codex_app_directory"],
+        note: "Plugin and app metadata Codex rebuilds on the next launch.",
+        in_all: true,
+        read_only: false,
+    },
+    Cache {
+        id: "codex-scratch",
+        name: "Codex scratch directories",
+        locations: &[".codex/.tmp"],
+        markers: &["marketplaces"],
+        note: "Marketplace bundles and scratch checkouts. Refetched when a plugin is installed.",
+        in_all: true,
+        read_only: false,
+    },
+    Cache {
         id: "pnpm-store",
         name: "pnpm content-addressable store",
         locations: &[
@@ -523,6 +541,18 @@ mod tests {
             "tree-sitter-language-pack",
         ] {
             assert!(CACHES.iter().any(|cache| cache.id == id), "`{id}` is not in the table");
+        }
+    }
+
+    #[test]
+    fn should_name_the_agent_caches_it_can_reclaim() {
+        for id in ["codex-cache", "codex-scratch"] {
+            let cache = CACHES
+                .iter()
+                .find(|cache| cache.id == id)
+                .unwrap_or_else(|| panic!("`{id}` is not in the table"));
+            assert!(!cache.markers.is_empty(), "`{id}` has no marker, so nothing proves it");
+            assert!(cache.in_all, "`{id}` is a cache a bare --clean-caches should reach");
         }
     }
 }

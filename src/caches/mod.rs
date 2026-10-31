@@ -94,6 +94,8 @@ pub(crate) const CACHE_DIRS: &[&str] = &[
     "Library/pnpm",
     // Editor and agent state
     ".antigravity",
+    ".codex/cache",
+    ".codex/.tmp",
     ".hermes",
     ".vscode",
     ".vscode-server",

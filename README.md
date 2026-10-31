@@ -106,8 +106,9 @@ What a run prints:
 ## Usage
 
 Start narrow: `voom --dry-run --verbose ~/projects`, and read the skips before widening to `~`.
-With no path, voom scans `.`. Pass `~ /tmp` explicitly to cover home-directory caches and relocated
-build output in temporary directories.
+With no path, voom scans `.`. Pass `~ /tmp` explicitly to cover home-directory caches. Relocated
+build output whose name no catalog entry knows — a `CARGO_TARGET_DIR` pointed at `/tmp` — also
+needs `--clean-tagged`, which is the only proof that does not depend on a name.
 
 ```bash
 voom --dry-run --verbose ~                                  # preview, with a reason for every skip
@@ -223,6 +224,8 @@ The ecosystem catalog covers build output; it has nothing to say about `~/.cargo
 | `deno` | Deno cache | `~/Library/Caches/deno`, `~/.cache/deno`, `~/.deno` |
 | `poly` | poly cache | `~/.cache/poly`, `~/Library/Caches/poly`, `~/AppData/Local/poly` |
 | `alef-global` | alef global cache | `~/.cache/alef` |
+| `codex-cache` | Codex app cache | `~/.codex/cache` |
+| `codex-scratch` | Codex scratch directories | `~/.codex/.tmp` |
 
 The id is what `--clean-caches` and `[caches] enable` take — not always the tool's name, since a
 cache id and an ecosystem id sharing one word would leave a report unable to say which table a
