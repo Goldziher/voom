@@ -9,6 +9,30 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-31
+
+### Added
+
+- **`voom reap --dry-run`** lists the entries waiting in the trash with their sizes, and changes
+  nothing. The trash was previously invisible without freeing it.
+- **Codex caches** are in the cache catalog: `~/.codex/cache` (`codex-cache`) and `~/.codex/.tmp`
+  (`codex-scratch`), reached by `--clean-caches`. `~/.codex` is skipped by location, so a default
+  sweep no longer walks it looking for artifacts that are never there.
+- **A `tagged_not_enabled` skip reason** under `--verbose` names a directory that declares itself
+  regenerable and the flag that would remove it. A tree of relocated build output used to report
+  `0 artifacts` with nothing saying `--clean-tagged` exists.
+
+### Fixed
+
+- **The trash drains itself after an interrupted run.** A real run now starts a reaper for entries
+  an earlier run left behind before adding to them; before this the next run only collected the
+  ledger and the entries waited for a manual `voom reap`. Observed on one machine: 24 GB, the
+  oldest entry 11 hours old.
+- **A read-only directory inside a detached artifact no longer makes the entry immortal.** The
+  reaper retries a failed entry with permission repair inside the trash, which is voom-owned and
+  owner-only. `voom reap` now exits non-zero when an entry survives, instead of reporting success
+  over a trash that is still full.
+
 ## [0.13.0] - 2026-10-26
 
 ### Changed
@@ -888,7 +912,8 @@ nothing; this is the tool.
 - Size accounting sums allocated blocks, so on a copy-on-write filesystem such as APFS the bytes
   reported can exceed the space actually freed where files are shared between clones.
 
-[Unreleased]: https://github.com/Goldziher/voom/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/Goldziher/voom/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/Goldziher/voom/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/Goldziher/voom/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Goldziher/voom/compare/v0.11.3...v0.12.0
 [0.11.3]: https://github.com/Goldziher/voom/compare/v0.11.2...v0.11.3
