@@ -172,8 +172,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.tag }}
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@v1
         with:
+          toolchain: stable
           targets: ${{ matrix.triple }}
       - uses: Swatinem/rust-cache@v2
         with:
@@ -199,8 +200,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.tag }}
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@v1
         with:
+          toolchain: stable
           targets: x86_64-pc-windows-gnu
       - uses: Swatinem/rust-cache@v2
         with:
@@ -384,7 +386,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.tag }}
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
       - uses: rust-lang/crates-io-auth-action@v1
         id: crates_auth
       - name: cargo publish
@@ -460,7 +464,7 @@ jobs:
           cd pip-package && python -m build
       # Uses OIDC trusted publishing when configured. PYPI_API_TOKEN is a fallback
       # so the first release is not blocked on the trusted publisher existing.
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@v1.14.3
         with:
           packages-dir: pip-package/dist
           skip-existing: true
