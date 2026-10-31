@@ -100,8 +100,7 @@ pre-releases.
 ## AI governance
 
 Run `mise install`, then `mise run governance:hooks:install`. The governance tasks run the latest
-ai-rulez through `npx -y ai-rulez@latest`, which needs the Node that mise installs. CI uses the reviewed
-5.6.3 source revision `d4a0cbe4712319312104ba3f2a618ef55645ef9f`.
+ai-rulez through `npx -y ai-rulez@latest`, which needs the Node that mise installs.
 
 Edit `.ai-rulez/` sources, then run `mise run governance:generate` and `npx -y ai-rulez@latest lock`.
 `mise run governance:check` runs `migrate okf --check`, `validate --strict --no-local`, `lock --check`
