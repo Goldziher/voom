@@ -41,12 +41,14 @@ fn keep_survivors(
             continue;
         }
 
-        // `min_age` is answered from the artifact's own timestamp, so an artifact held by age
-        // costs one `stat` instead of a recursive size walk.
+        // `min_age` is answered from the newest modification *anywhere* in the artifact. A
+        // build writes deep inside its output directory, and the directory's own mtime does not
+        // move when it does — so a single `stat` on the root called a running build weeks old.
+        // The walk is paid only when the policy is set.
         let keep = config.keep_for(&finding.path, finding.ecosystem());
-        let held = std::fs::symlink_metadata(&finding.path)
-            .and_then(|metadata| metadata.modified())
-            .ok()
+        let held = keep
+            .min_age
+            .and_then(|_| crate::size::newest_mtime(&finding.path))
             .and_then(|modified| keep.holds_by_age(modified, now));
         match held {
             Some(reason) => note(collected, options.verbose, finding.path, reason),

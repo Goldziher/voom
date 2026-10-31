@@ -9,6 +9,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-10-31
+
+### Fixed
+
+- **`--min-age` now looks at the newest write anywhere in an artifact.** It was answered from the
+  artifact directory's own mtime, which cargo never updates when it writes below `target/` — so an
+  active build whose root was created last week was reported as weeks old and would have been
+  removed by a scheduled sweep. Observed on a `CARGO_TARGET_DIR` that was writing 16 minutes
+  before a `--min-age 90m` dry run listed it for removal. The walk is paid only when `min_age` is
+  set.
+
 ## [0.14.0] - 2026-10-31
 
 ### Added
@@ -912,7 +923,8 @@ nothing; this is the tool.
 - Size accounting sums allocated blocks, so on a copy-on-write filesystem such as APFS the bytes
   reported can exceed the space actually freed where files are shared between clones.
 
-[Unreleased]: https://github.com/Goldziher/voom/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/Goldziher/voom/compare/v0.14.1...HEAD
+[0.14.1]: https://github.com/Goldziher/voom/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/Goldziher/voom/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/Goldziher/voom/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Goldziher/voom/compare/v0.11.3...v0.12.0

@@ -634,6 +634,34 @@ mod tests {
     }
 
     #[test]
+    fn should_hold_an_artifact_whose_root_is_old_but_which_is_being_written_inside() {
+        let fixture = tree(&["Cargo.toml", "target/debug/app"]);
+        let root = fixture.path().join("target");
+        let old = std::time::SystemTime::now() - Duration::from_secs(86_400 * 30);
+        std::fs::File::open(&root)
+            .expect("the artifact root opens")
+            .set_modified(old)
+            .expect("the fixture root can be dated");
+
+        let keep = KeepPolicy {
+            min_age: Some(Duration::from_secs(86_400)),
+            ..KeepPolicy::default()
+        };
+        let result = run(&with_keep(fixture.path(), keep)).expect("the run completes");
+
+        assert!(
+            result.entries.is_empty(),
+            "a build writing below an old target root is not swept: {:?}",
+            result.entries
+        );
+        assert!(fixture.path().join("target/debug/app").exists());
+        assert!(matches!(
+            result.skips[0].reason,
+            SkipReason::KeptByPolicy { rule: "min_age", .. }
+        ));
+    }
+
+    #[test]
     fn should_hold_an_artifact_below_min_size() {
         let fixture = tree(&["Cargo.toml", "target/debug/app"]);
         let keep = KeepPolicy {

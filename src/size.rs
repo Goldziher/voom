@@ -112,6 +112,44 @@ pub fn measure_fully(path: &Path) -> Measured {
     }
 }
 
+/// The most recent modification anywhere in `path`, `path` itself included.
+///
+/// A directory's own modification time changes only when an entry is added or removed *directly*
+/// in it. Cargo writes deep inside `target/debug/`, so the root of an active build keeps the
+/// mtime it had when it was created — and answering `min_age` from that timestamp reported a
+/// build that was writing seconds ago as weeks old. The walk is paid only when `min_age` is set,
+/// which is the one policy that has to see below the root.
+///
+/// Symlinks are not followed, matching the measurement and removal rules: a linked directory's
+/// mtimes belong to a tree this artifact does not contain.
+#[must_use]
+pub fn newest_mtime(path: &Path) -> Option<std::time::SystemTime> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    let mut newest = metadata.modified().ok();
+    if !metadata.is_dir() {
+        return newest;
+    }
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            // `DirEntry::metadata` does not follow a symlink, which is the rule here as well.
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            if let Ok(modified) = metadata.modified() {
+                newest = Some(newest.map_or(modified, |current| current.max(modified)));
+            }
+            if metadata.is_dir() {
+                stack.push(entry.path());
+            }
+        }
+    }
+    newest
+}
+
 /// The multiply-linked files already counted in one artifact.
 ///
 /// A hard link is a second *name* for one extent, so counting both names counts the bytes twice
@@ -293,6 +331,23 @@ mod tests {
     fn should_measure_a_file() {
         let fixture = tree(&["file.txt"]);
         assert!(measure(&fixture.path().join("file.txt")) > 0);
+    }
+
+    #[test]
+    fn should_find_the_newest_file_below_a_directory_rather_than_the_directory_itself() {
+        let fixture = tree(&["artifact/debug/deps/app.o"]);
+        let root = fixture.path().join("artifact");
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(86_400 * 30);
+        std::fs::File::open(&root)
+            .expect("the fixture root opens")
+            .set_modified(old)
+            .expect("the fixture root can be dated");
+
+        let newest = newest_mtime(&root).expect("the tree has a timestamp");
+        assert!(
+            newest > old + std::time::Duration::from_secs(86_400),
+            "a fresh file below an old root is seen"
+        );
     }
 
     /// The recursion runs on a `rayon` worker's stack rather than the main one, so a long chain
