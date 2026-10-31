@@ -292,6 +292,7 @@ impl Visitor<'_> {
                 }
             }
             Verdict::NotACandidate => {
+                self.note_if_tagged_skipped(path, is_dir, sender);
                 if self.take_if_tagged(path, is_dir, sender) {
                     return Some(WalkState::Skip);
                 }
@@ -299,6 +300,19 @@ impl Visitor<'_> {
         }
 
         None
+    }
+
+    /// Reports a self-declaring directory the run did not ask to remove.
+    ///
+    /// Only where skips are collected: the probe is one `symlink_metadata` and a short read per
+    /// directory, which is affordable in a verbose run and not in the default one. Nothing is
+    /// pruned on this path — a tagged directory may still hold a catalog artifact, and pruning
+    /// it would make `--verbose` change what the run finds.
+    fn note_if_tagged_skipped(&self, path: &Path, is_dir: bool, sender: &mpsc::Sender<Message>) {
+        if self.options.clean_tagged || !self.options.collect_skips || !is_dir || !crate::tagged::is_tagged(path) {
+            return;
+        }
+        self.note_skip(sender, path, SkipReason::TaggedNotEnabled);
     }
 
     /// Claims `path` when the run asked for tagged directories and this one declares itself.

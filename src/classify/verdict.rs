@@ -176,6 +176,14 @@ pub enum SkipReason {
         /// Why it is off by default, when the catalog says.
         note: Option<&'static str>,
     },
+    /// A directory declares itself regenerable with a `CACHEDIR.TAG`, but the run did not ask
+    /// for tagged directories.
+    ///
+    /// Reported only where skips are collected (`--verbose`): probing costs a read per
+    /// directory, and the default walk deliberately does not pay it. It exists because the
+    /// silence is the trap — voom says `0 artifacts` over a tree full of relocated build
+    /// output, and nothing tells the reader that one flag reaches it.
+    TaggedNotEnabled,
     /// It is a machine-global tool cache or an installed toolchain (ADR 0001).
     ToolCache,
     /// A configured `exclude` matched.
@@ -217,6 +225,7 @@ impl SkipReason {
             Self::NoInnerMarker { .. } => "no_inner_marker",
             Self::MarkerOutOfReach { .. } => "marker_out_of_reach",
             Self::NotEnabled { .. } => "not_enabled",
+            Self::TaggedNotEnabled => "tagged_not_enabled",
             Self::ToolCache => "tool_cache",
             Self::Excluded { .. } => "excluded",
             Self::KeptByPolicy { .. } => "kept_by_policy",
@@ -255,6 +264,12 @@ impl fmt::Display for SkipReason {
                 None => write!(f, "not enabled — enable with `{spec}`"),
             },
             Self::ToolCache => write!(f, "a tool cache, not build output"),
+            Self::TaggedNotEnabled => {
+                write!(
+                    f,
+                    "declares itself regenerable (CACHEDIR.TAG); pass `--clean-tagged` to remove it"
+                )
+            }
             Self::Excluded { pattern } => write!(f, "excluded by `{pattern}`"),
             Self::KeptByPolicy { rule, detail } => write!(f, "kept by {rule} ({detail})"),
             Self::FilesystemBoundary => write!(f, "on a different filesystem than the scan root"),

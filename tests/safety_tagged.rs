@@ -295,3 +295,25 @@ fn should_reach_a_tagged_subdirectory_of_an_unproven_parent() {
     );
     assert!(alef.exists(), "and its unproven parent is untouched");
 }
+
+/// The flag is off by default, and silence is the trap: a tree of relocated build output reports
+/// `0 artifacts` with nothing saying one flag would reach it. A verbose run names it.
+#[test]
+fn should_point_at_a_tagged_directory_it_was_not_asked_to_remove() {
+    let root = TempDir::new().unwrap();
+    let relocated = root.path().join("xberg-enterprise-target-20261030");
+    support::tag(&relocated);
+    fs::write(relocated.join("payload.bin"), vec![0u8; 4096]).unwrap();
+
+    let result = run(&support::options(root.path())).unwrap();
+
+    assert!(relocated.exists(), "without the flag a tagged directory is left alone");
+    assert!(
+        result
+            .skips
+            .iter()
+            .any(|skip| skip.reason.code() == "tagged_not_enabled"),
+        "a verbose run names the flag that reaches it: {:?}",
+        result.skips
+    );
+}
