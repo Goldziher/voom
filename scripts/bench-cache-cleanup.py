@@ -1,6 +1,6 @@
 """Compare cleanup binaries and native rm on disposable, allocated small-file trees.
 
-Run through `task bench -- --before /path/to/baseline --after /path/to/candidate`.
+Run through `mise run bench -- --before /path/to/baseline --after /path/to/candidate`.
 Creation, copying, and validation are outside each timed subprocess. These are warm
 filesystem benchmarks, including CLI startup, scan, sizing, and removal. They model
 cache layouts through a marker-proven target/ without touching machine caches.

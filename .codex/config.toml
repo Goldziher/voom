@@ -3,3 +3,7 @@ project_doc_max_bytes = 65536
 [mcp_servers.poly]
 args = ["mcp"]
 command = "poly"
+
+[mcp_servers.ai-rulez]
+args = ["-y", "ai-rulez@5.6.3", "mcp"]
+command = "npx"

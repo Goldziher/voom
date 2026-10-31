@@ -99,11 +99,10 @@ pre-releases.
 
 ## AI governance
 
-Install ai-rulez 5.6.3 (or run it as `npx -y ai-rulez@5.6.3`) and Poly, then run `task governance:hooks`.
-Installing governance hooks requires Python 3.11 or newer. CI uses the reviewed
+Run `mise install`, then `mise run governance:hooks:install`. The governance tasks run the latest
+ai-rulez through `npx -y ai-rulez@latest`, which needs the Node that mise installs. CI uses the reviewed
 5.6.3 source revision `d4a0cbe4712319312104ba3f2a618ef55645ef9f`.
 
-Edit `.ai-rulez/` sources, then run `ai-rulez migrate okf --check`,
-`ai-rulez validate --strict --no-local`, `ai-rulez lock --content-only`, and
-`ai-rulez generate --no-local --strict-config`. Verify generated freshness with
-`ai-rulez generate --no-local --strict-config --check` and `ai-rulez lock --check`.
+Edit `.ai-rulez/` sources, then run `mise run governance:generate` and `npx -y ai-rulez@latest lock`.
+`mise run governance:check` runs `migrate okf --check`, `validate --strict --no-local`, `lock --check`
+and `generate --check --no-local --strict-config`.

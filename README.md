@@ -684,7 +684,7 @@ cache below it. `-j` overrides the removal width and throttles the whole sweep, 
 Compare two release binaries and native `rm` on disposable small-file trees:
 
 ```bash
-task bench -- --before /path/to/baseline --after /path/to/candidate --files 12000 --runs 3
+mise run bench -- --before /path/to/baseline --after /path/to/candidate --files 12000 --runs 3
 ```
 
 The benchmark covers flat, sharded, package-shaped and deeply nested layouts. It creates its
