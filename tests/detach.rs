@@ -92,3 +92,73 @@ fn should_detach_nothing_on_a_dry_run() {
     assert!(tree.path().join("app/target/debug/deps/app.o").exists());
     assert_eq!(pending(trash.path()), 0);
 }
+
+#[test]
+fn should_list_the_trash_without_freeing_it() {
+    let trash = TempDir::new().unwrap();
+    let entry = trash.path().join("1793431468123952000-68131-2-p-target");
+    fs::create_dir_all(&entry).unwrap();
+    fs::write(entry.join("blob.bin"), vec![3u8; 4096]).unwrap();
+
+    voom(trash.path())
+        .arg("reap")
+        .arg("--dry-run")
+        .assert()
+        .success()
+        .stdout(contains("in the trash"));
+
+    assert!(entry.exists(), "a dry run frees nothing");
+
+    voom(trash.path())
+        .arg("reap")
+        .assert()
+        .success()
+        .stdout(contains("freed"));
+    assert_eq!(pending(trash.path()), 0);
+}
+
+#[test]
+fn should_free_an_earlier_runs_leftovers_without_being_asked() {
+    let trash = TempDir::new().unwrap();
+    let entry = trash.path().join("1793388769703569000-13306-0-p-poly");
+    fs::create_dir_all(&entry).unwrap();
+    fs::write(entry.join("blob.bin"), vec![5u8; 4096]).unwrap();
+    let empty = TempDir::new().unwrap();
+
+    voom(trash.path()).arg(empty.path()).assert().success();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while pending(trash.path()) != 0 && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(
+        pending(trash.path()),
+        0,
+        "a real run drains what an interrupted earlier run left in the trash"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn should_free_an_entry_whose_directory_kept_a_read_only_bit() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let trash = TempDir::new().unwrap();
+    let entry = trash.path().join("1793431468123952000-68131-2-p-target");
+    let locked = entry.join("debug");
+    fs::create_dir_all(&locked).unwrap();
+    fs::write(locked.join("app.o"), vec![1u8; 1024]).unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o500)).unwrap();
+
+    voom(trash.path())
+        .arg("reap")
+        .assert()
+        .success()
+        .stdout(contains("freed"));
+
+    assert_eq!(
+        pending(trash.path()),
+        0,
+        "a read-only directory inside an entry does not make it immortal"
+    );
+}

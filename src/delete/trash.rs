@@ -280,13 +280,21 @@ pub fn reap(dir: &Path) -> std::io::Result<Reaped> {
 }
 
 /// Frees one entry and records it in the ledger.
+///
+/// An entry that fails without `--force` is retried once with it. Everything in the trash was
+/// detached by voom after passing every rail, and the trash is owner-only — so a read-only bit
+/// inside a detached checkout is repair work, not a safety question. Before this retry, a
+/// read-only directory made an entry immortal: it failed on every reap and sat in the trash
+/// until a person found it and ran `chmod`.
 fn reap_entry(guard: &Guard, dir: &Path, entry: &Path) -> Reaped {
-    let removal = if forced(entry) {
-        Removal::forced()
-    } else {
-        Removal::new()
-    };
-    let (outcome, bytes) = guard.reclaim(entry, removal);
+    let was_forced = forced(entry);
+    let removal = if was_forced { Removal::forced() } else { Removal::new() };
+    let (mut outcome, mut bytes) = guard.reclaim(entry, removal);
+    if !was_forced && !matches!(outcome, Outcome::Removed | Outcome::Refused(super::Refusal::Vanished)) {
+        let (retried, again) = guard.reclaim(entry, Removal::forced());
+        outcome = retried;
+        bytes += again;
+    }
     let reaped = match outcome {
         Outcome::Removed | Outcome::Refused(super::Refusal::Vanished) => Reaped {
             freed_entries: 1,
@@ -386,6 +394,31 @@ pub fn spawn_reaper() -> std::io::Result<Option<u32>> {
     let Some(location) = trash_location() else {
         return Ok(None);
     };
+    spawn_at(&location)
+}
+
+/// Starts a reaper for entries an earlier run left behind.
+///
+/// A run killed between its first detach and [`spawn_reaper`] leaves those entries in the trash
+/// with nothing scheduled to free them — the next run only collected the ledger and never
+/// reaped. This drains that backlog in the background at the start of a real run, before the
+/// sweep adds to it, and is a no-op when the trash is empty.
+///
+/// # Errors
+///
+/// When the binary cannot be located or the process cannot be started.
+pub fn spawn_reaper_for_pending() -> std::io::Result<Option<u32>> {
+    let Some(location) = trash_location() else {
+        return Ok(None);
+    };
+    if Trash::at(&location)?.pending().is_empty() {
+        return Ok(None);
+    }
+    spawn_at(&location)
+}
+
+/// Spawns the detachable reaper at `location`, returning its pid.
+fn spawn_at(location: &Path) -> std::io::Result<Option<u32>> {
     let mut command = std::process::Command::new(std::env::current_exe()?);
     command
         .args(["reap", "--background"])
@@ -488,7 +521,7 @@ mod tests {
     }
 
     #[test]
-    fn should_leave_an_entry_it_cannot_free_and_say_so() {
+    fn should_repair_an_entry_whose_directory_kept_a_read_only_bit() {
         use std::os::unix::fs::PermissionsExt;
         let root = tree(&["project/target/locked/file"]);
         let trash_dir = root.path().join("trash");
@@ -503,8 +536,10 @@ mod tests {
         let entry = trash.pending().pop().unwrap();
         std::fs::set_permissions(entry.join("locked"), std::fs::Permissions::from_mode(0o500)).unwrap();
         let reaped = reap(&trash_dir).unwrap();
-        std::fs::set_permissions(entry.join("locked"), std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert_eq!(reaped.failed_entries, 1);
-        assert_eq!(trash.pending().len(), 1, "an unforced entry is not repaired");
+        assert_eq!(
+            reaped.failed_entries, 0,
+            "the trash retries with repair, it does not give up"
+        );
+        assert_eq!(trash.pending(), [] as [std::path::PathBuf; 0], "the entry is gone");
     }
 }

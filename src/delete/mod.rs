@@ -38,8 +38,8 @@ pub use outcome::{FailureKind, Outcome, Refusal, RemovalFailure};
 pub use pool::{freed_so_far, limit_removal_workers};
 pub(crate) use pool::{install_removal, note_freed, remove_in_pool};
 pub use trash::{
-    Reaped, TRASH_ENV, Trash, collect_ledger, detach_removals, detached_count, reap, spawn_reaper, trash_location,
-    yield_to_foreground,
+    Reaped, TRASH_ENV, Trash, collect_ledger, detach_removals, detached_count, reap, spawn_reaper,
+    spawn_reaper_for_pending, trash_location, yield_to_foreground,
 };
 
 use crate::error::{Error, Result};

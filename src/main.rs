@@ -209,6 +209,7 @@ fn prune(cli: &Cli) -> anyhow::Result<i32> {
     let options = cli.prune.to_run_options()?;
     let detach = !options.dry_run && !cli.prune.wait && std::env::var_os("VOOM_WAIT").is_none_or(|value| value != "1");
     if detach {
+        start_backlog_reaper()?;
         report_reaped()?;
         voom::delete::detach_removals(true);
     }
@@ -217,6 +218,22 @@ fn prune(cli: &Cli) -> anyhow::Result<i32> {
         start_reaper()?;
     }
     Ok(code)
+}
+
+/// Drains what an interrupted earlier run left in the trash, before this run adds to it.
+fn start_backlog_reaper() -> anyhow::Result<()> {
+    match voom::delete::spawn_reaper_for_pending() {
+        Ok(Some(pid)) => writeln!(
+            anstream::stderr(),
+            "voom: freeing leftovers from an earlier run in the background (reaper pid {pid})"
+        )?,
+        Ok(None) => {}
+        Err(error) => writeln!(
+            anstream::stderr(),
+            "voom: could not start the trash reaper for leftovers ({error}); `voom reap` frees it"
+        )?,
+    }
+    Ok(())
 }
 
 /// Says what background reapers freed since the last run collected their ledger.
