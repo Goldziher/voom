@@ -27,7 +27,7 @@ args = ["mcp"]
 package = "pkg:github/Goldziher/poly@v0.29.0"
 
 [mcp]
-self_server_command = ["npx", "-y", "ai-rulez@5.6.3", "mcp"]
+self_server_command = ["npx", "-y", "ai-rulez@latest", "mcp"]
 
 [lock]
 include_outputs = false
