@@ -338,10 +338,7 @@ mod tests {
         let fixture = tree(&["artifact/debug/deps/app.o"]);
         let root = fixture.path().join("artifact");
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(86_400 * 30);
-        std::fs::File::open(&root)
-            .expect("the fixture root opens")
-            .set_modified(old)
-            .expect("the fixture root can be dated");
+        crate::testing::set_modified(&root, old);
 
         let newest = newest_mtime(&root).expect("the tree has a timestamp");
         assert!(

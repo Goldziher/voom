@@ -638,10 +638,7 @@ mod tests {
         let fixture = tree(&["Cargo.toml", "target/debug/app"]);
         let root = fixture.path().join("target");
         let old = std::time::SystemTime::now() - Duration::from_secs(86_400 * 30);
-        std::fs::File::open(&root)
-            .expect("the artifact root opens")
-            .set_modified(old)
-            .expect("the fixture root can be dated");
+        crate::testing::set_modified(&root, old);
 
         let keep = KeepPolicy {
             min_age: Some(Duration::from_secs(86_400)),

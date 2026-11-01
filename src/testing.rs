@@ -141,4 +141,23 @@ mod tests {
         );
         assert!(paths.iter().all(|path| !path.contains('\\')), "{paths:?}");
     }
+
+    /// Windows refuses `File::open` on a directory, so a fixture that dates a directory through
+    /// it passes on Unix and fails only on the Windows runner. This exercises the directory path
+    /// of the helper on every platform.
+    #[test]
+    fn should_date_a_directory_into_the_past() {
+        let fixture = tree(&["artifact/file.txt"]);
+        let root = fixture.path().join("artifact");
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(86_400 * 30);
+
+        set_modified(&root, old);
+
+        let modified = fs::metadata(&root)
+            .and_then(|metadata| metadata.modified())
+            .expect("the directory has a modification time");
+        // Filesystems round timestamps differently, so only the date has to land.
+        let drift = modified.duration_since(old).unwrap_or_else(|error| error.duration());
+        assert!(drift < std::time::Duration::from_secs(2), "dated {drift:?} off");
+    }
 }
